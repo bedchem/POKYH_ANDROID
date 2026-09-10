@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Base application theme. The app is 100% Jetpack Compose — this only controls the
+         window background before Compose takes over and system bar appearance. Real design
+         tokens (colors, type, shapes) live in ui/theme/*.kt, not here, so light/dark and the
+         POKYH palette stay in one place. -->
+    <style name="Theme.Pokyh" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/splash_background_light</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+
+    <!-- Only used briefly as the launch-activity theme so core-splashscreen can draw the
+         system splash before setContent{} takes over; PokyhSplashScreen in MainActivity
+         switches the activity to Theme.Pokyh right after. -->
+    <style name="Theme.Pokyh.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background_light</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Pokyh</item>
+    </style>
+</resources>

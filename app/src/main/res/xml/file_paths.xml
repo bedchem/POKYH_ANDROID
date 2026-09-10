@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Shared via FileProvider: exported .ics timetable files and share-sheet targets. -->
+    <cache-path name="shared_cache" path="shared/" />
+    <files-path name="shared_files" path="shared/" />
+</paths>

@@ -1,0 +1,7 @@
+## Copy this file to local.properties (gitignored) and fill in real values.
+sdk.dir=/path/to/Android/Sdk
+
+## Must match the POKYH backend's API_KEY / SERVER_KEY env vars exactly.
+## Ask a project maintainer, or read them from pokyh-backend/.env if you have it.
+POKYH_API_KEY=
+POKYH_SERVER_KEY=

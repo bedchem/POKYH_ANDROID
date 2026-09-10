@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash-screen background only; the app's real palette lives in ui/theme/Palette.kt
+         and is intentionally NOT duplicated as XML color resources (Compose reads it directly). -->
+    <color name="splash_background_light">#F1F0F8</color>
+    <color name="splash_background_dark">#09090C</color>
+</resources>

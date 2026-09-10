@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapability="true">
+        <!-- Nothing is backed up: credentials are Keystore-bound (device-only by design)
+             and cached school data should always be re-fetched fresh on a new device. -->
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+        <exclude domain="file" />
+    </cloud-backup>
+</data-extraction-rules>

@@ -65,6 +65,7 @@ class GradeSubjectViewModel @Inject constructor(
                 val all = untisClient.grades(session, session.studentId)
                 _subject.value = all.firstOrNull { it.lessonId == subjectId }
             } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
                 _error.value = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message
             } catch (e: Exception) {
                 _error.value = e.message ?: "Unbekannter Fehler."

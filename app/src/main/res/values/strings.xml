@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">POKYH</string>
+    <string name="widget_next_lesson_description">Nächste Stunde – aktuelle oder nächste Unterrichtsstunde auf einen Blick.</string>
+    <string name="widget_grades_description">Noten – Gesamtschnitt und zuletzt eingetragene Noten.</string>
 </resources>

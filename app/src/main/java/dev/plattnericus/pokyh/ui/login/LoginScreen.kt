@@ -97,6 +97,11 @@ fun LoginScreen(
     val passwordFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
 
+    // LoginView.swift `.onAppear { app.error = nil }` — runs once per screen instance (matches
+    // SwiftUI's onAppear semantics), so a stale error from a previous failed attempt never
+    // flashes on a freshly (re)opened "Konto hinzufügen" sheet.
+    LaunchedEffect(Unit) { viewModel.clearError() }
+
     // LoginView.swift `.onAppear { if let u = app.prefillUsername { username = u; ...; focus = .pass } }`
     LaunchedEffect(prefillUsername) {
         prefillUsername?.let {

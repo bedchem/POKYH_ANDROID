@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.plattnericus.pokyh.core.util.SchoolDates
+import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.data.untis.UntisClient
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 class GradesViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
+    private val widgetDataBridge: WidgetDataBridge,
 ) : ViewModel() {
 
     enum class SortMode(val label: String) {
@@ -72,8 +74,11 @@ class GradesViewModel @Inject constructor(
                 // `year == currentSchoolYear ? nil : year` — the client resolves `null` to the
                 // WebUntis "current" schoolyear itself, exactly like the iOS call site.
                 val requestedYear = if (_year.value == SchoolDates.currentSchoolYear) null else _year.value
-                _subjects.value = untisClient.grades(session, session.studentId, requestedYear)
+                val subjects = untisClient.grades(session, session.studentId, requestedYear)
+                _subjects.value = subjects
+                if (appState.isDefaultAccountActive()) widgetDataBridge.publishGrades(subjects)
             } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
                 _error.value = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message
             } catch (e: Exception) {
                 _error.value = e.message ?: "Unbekannter Fehler."

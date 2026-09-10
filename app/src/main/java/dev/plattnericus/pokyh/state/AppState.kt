@@ -1,15 +1,19 @@
 package dev.plattnericus.pokyh.state
 
 import android.os.SystemClock
+import dev.plattnericus.pokyh.core.notifications.PokyhNotifications
+import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
 import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.BackendStatus
+import dev.plattnericus.pokyh.data.model.MessageFolder
 import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.data.storage.DiskCache
 import dev.plattnericus.pokyh.data.storage.PreferencesStore
 import dev.plattnericus.pokyh.data.storage.SecureCredentialStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
+import dev.plattnericus.pokyh.core.util.SchoolDates
 import dev.plattnericus.pokyh.ui.navigation.AppTab
 import dev.plattnericus.pokyh.ui.theme.PokyhThemeMode
 import java.io.IOException
@@ -46,6 +50,8 @@ class AppState @Inject constructor(
     private val credentialStore: SecureCredentialStore,
     private val prefsStore: PreferencesStore,
     private val diskCache: DiskCache,
+    private val notifications: PokyhNotifications,
+    private val widgetDataBridge: WidgetDataBridge,
 ) {
     /** `AppState.Phase` (Store.swift) — which top-level screen currently owns the UI. */
     sealed interface Phase {
@@ -94,6 +100,13 @@ class AppState @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    /** LoginView.swift `.onAppear { app.error = nil }` — called when [dev.plattnericus.pokyh.ui.
+     * login.LoginScreen] (re)appears, so a stale error from a previous failed attempt doesn't
+     * flash on a freshly (re)opened "Konto hinzufügen" sheet. */
+    fun clearError() {
+        _error.value = null
+    }
+
     private val _selectedTab = MutableStateFlow(AppTab.Home)
     val selectedTab: StateFlow<AppTab> = _selectedTab.asStateFlow()
 
@@ -118,6 +131,16 @@ class AppState @Inject constructor(
      * until then so the very first frame never flashes the wrong phase/light-dark scheme. */
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
+
+    /** One-shot signal for MainActivity to launch the POST_NOTIFICATIONS system prompt — flipped
+     * true by [onAuthenticated] the first time ever (mirrors iOS's `pokyh_notif_asked` UserDefaults
+     * flag/`requestNotificationPermissionIfNeeded`), back to false once MainActivity has acted on it. */
+    private val _requestNotifPermission = MutableStateFlow(false)
+    val requestNotifPermission: StateFlow<Boolean> = _requestNotifPermission.asStateFlow()
+
+    fun notifPermissionRequested() {
+        _requestNotifPermission.value = false
+    }
 
     init {
         scope.launch { prefsStore.themeMode.collect { _themeMode.value = it } }
@@ -300,6 +323,68 @@ class AppState @Inject constructor(
         _phase.value = Phase.Authed
         _showAddAccount.value = false
         _isOffline.value = false
+        onAuthenticated()
+    }
+
+    // ── Nach erfolgreichem Login: Benachrichtigungen einrichten ───────────────
+    // Store.swift `onAuthenticated()` — bewusst erst NACH dem Login (UI bereits aktiv), nicht
+    // beim App-Start.
+    private fun onAuthenticated() {
+        scope.launch {
+            if (!prefsStore.notifAsked.first()) {
+                prefsStore.setNotifAsked(true)
+                _requestNotifPermission.value = true
+            }
+        }
+        scope.launch { syncNotifications() }
+    }
+
+    /** Store.swift `syncNotifications()` — messages + reminders on every call (throttled to at
+     * most once/minute), grades + cancelled-lesson checks additionally throttled to every 30 min
+     * (heavier: grades load per-subject). [lastNotifSync]/[lastHeavySync] reset with the process,
+     * same as iOS's in-memory `Date.distantPast`-seeded timestamps. */
+    private var lastNotifSync = 0L
+    private var lastHeavySync = 0L
+
+    private suspend fun syncNotifications() {
+        val s = _session.value ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastNotifSync <= NOTIF_SYNC_THROTTLE_MS) return
+        lastNotifSync = now
+
+        if (s.hasUntis) {
+            runCatching { untisClient.messages(s, MessageFolder.Inbox) }.getOrNull()
+                ?.let { notifications.checkNewMessages(it) }
+        }
+        val token = s.apiToken
+        val classId = s.classId
+        if (token != null && classId != null) {
+            runCatching { backendClient.reminders(classId, token) }.getOrNull()
+                ?.let { notifications.scheduleReminders(it) }
+        }
+
+        if (s.hasUntis && now - lastHeavySync > HEAVY_SYNC_INTERVAL_MS) {
+            lastHeavySync = now
+            if (s.isStudent) {
+                runCatching { untisClient.grades(s, s.studentId, null) }.getOrNull()?.let {
+                    notifications.checkNewGrades(it)
+                    if (isDefaultAccountActive()) widgetDataBridge.publishGrades(it)
+                }
+            }
+            runCatching { untisClient.timetable(s, s.studentId, SchoolDates.mondayIso()) }.getOrNull()
+                ?.let { notifications.checkTimetableChanges(it) }
+        }
+    }
+
+    /** A WebUntis call came back with an expired/invalid session (`AppError.sessionExpired`,
+     * detected by [dev.plattnericus.pokyh.data.untis.UntisClient]'s HTML/auth-error sniffing) —
+     * drop the live session and bounce to Lock (saved accounts exist → biometric re-login) or
+     * Login (none saved). Store.swift `handleSessionExpired()`, called from every screen's
+     * WebUntis load catch block the same way. */
+    fun handleSessionExpired() {
+        _session.value = null
+        _isOffline.value = false
+        _phase.value = if (_accounts.value.isEmpty()) Phase.Login else Phase.Lock
     }
 
     /** Switch into offline mode: show the cached (token-less) session. */
@@ -324,6 +409,7 @@ class AppState @Inject constructor(
         if (s.hasUntis) diskCache.write(sessionKey(s.username), offlineSnapshot(s), UserSession.serializer())
         _session.value = s
         _isOffline.value = false
+        onAuthenticated()
     }
 
     // ── Offline helpers ──────────────────────────────────────────────────────
@@ -392,6 +478,13 @@ class AppState @Inject constructor(
 
     fun accountHasPassword(username: String): Boolean = credentialStore.hasCredentialsSync(username)
 
+    /** Widgets show the **default account**'s data — with none set, the single-user case falls
+     * back to whichever account is currently active. Store.swift `isDefaultAccountActive`. */
+    fun isDefaultAccountActive(): Boolean {
+        val active = _session.value?.username ?: return false
+        return _defaultUsername.value == null || _defaultUsername.value == active
+    }
+
     /** Opens the "add account" flow — a screens-phase LoginScreen reacts to [showAddAccount]. */
     fun addAccount() {
         _prefillUsername.value = null
@@ -458,18 +551,30 @@ class AppState @Inject constructor(
 
     private var backgroundedAt: Long? = null
 
+    /** Bumped on every "was backgrounded, now foregrounded" transition that DIDN'T hard-lock —
+     * [HomeViewModel] reloads on each bump so a WebUntis session that quietly expired while the
+     * app sat in the background/app-switcher gets caught (→ [handleSessionExpired]) as soon as
+     * the user comes back, instead of only on the next manual pull-to-refresh. No iOS equivalent
+     * (Store.swift only re-checks the hard-lock timer on `appDidBecomeActive`) — an Android-side
+     * strengthening of the same "don't leave a dead session on screen" intent. */
+    private val _resumeSignal = MutableStateFlow(0)
+    val resumeSignal: StateFlow<Int> = _resumeSignal.asStateFlow()
+
     /** Wired to `ON_STOP` by MainActivity via `ProcessLifecycleOwner`. */
     fun onAppBackgrounded() {
         backgroundedAt = if (_phase.value == Phase.Authed) SystemClock.elapsedRealtime() else null
     }
 
-    /** Wired to `ON_START`. Force-locks if the app spent >= [AUTO_LOCK_INTERVAL_MS] backgrounded. */
+    /** Wired to `ON_START`. Force-locks if the app spent >= [AUTO_LOCK_INTERVAL_MS] backgrounded,
+     * otherwise bumps [resumeSignal] so still-authed screens can silently revalidate. */
     fun onAppForegrounded() {
         val since = backgroundedAt
         backgroundedAt = null
         if (since == null || _phase.value != Phase.Authed) return
         if (SystemClock.elapsedRealtime() - since >= AUTO_LOCK_INTERVAL_MS) {
             _phase.value = Phase.Lock
+        } else {
+            _resumeSignal.value += 1
         }
     }
 
@@ -479,5 +584,12 @@ class AppState @Inject constructor(
 
         /** Time spent backgrounded before auto-locking — 10 minutes, same as iOS. */
         const val AUTO_LOCK_INTERVAL_MS = 600_000L
+
+        /** [syncNotifications] throttle — at most once/minute, same as iOS's `lastNotifSync`. */
+        const val NOTIF_SYNC_THROTTLE_MS = 60_000L
+
+        /** Grades/cancelled-lesson check throttle within [syncNotifications] — every 30 min,
+         * same as iOS's `heavySyncInterval` (grades load per-subject, too heavy for the 60-s tick). */
+        const val HEAVY_SYNC_INTERVAL_MS = 1_800_000L
     }
 }

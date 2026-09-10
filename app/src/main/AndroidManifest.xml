@@ -32,6 +32,49 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".core.notifications.ReminderAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".core.widgets.NextLessonWidgetReceiver"
+            android:exported="false"
+            android:label="POKYH – Nächste Stunde">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/next_lesson_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".core.widgets.GradesWidgetReceiver"
+            android:exported="false"
+            android:label="POKYH – Noten">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/grades_widget_info" />
+        </receiver>
+
+        <!-- Disables WorkManager's own on-demand default-config initializer so
+             PokyhApplication.onCreate()'s explicit WorkManager.initialize(...) call (using the
+             Hilt-aware Configuration.Provider) is the only one that ever runs — auto-detecting
+             Configuration.Provider off Application isn't reliable across WorkManager versions. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

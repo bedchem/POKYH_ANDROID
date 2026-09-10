@@ -59,4 +59,7 @@ class LoginViewModel @Inject constructor(
         if (username.isBlank() || password.isBlank()) return
         viewModelScope.launch { appState.login(username, password, saveCredentials) }
     }
+
+    /** LoginView.swift `.onAppear { app.error = nil }`. */
+    fun clearError() = appState.clearError()
 }

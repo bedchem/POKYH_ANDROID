@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -35,9 +37,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.state.AppState
+import dev.plattnericus.pokyh.ui.components.PokyhAvatar
 import dev.plattnericus.pokyh.ui.navigation.AppTab
+import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.navigation.PokyhNavHost
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
@@ -133,6 +139,11 @@ private fun AuthedShell(appState: AppState) {
         }
     }
 
+    // ProfileToolbar.swift — shown on every main/section screen, hidden on detail pushes
+    // (grade subject, dish, message/reminder detail) and on Profile/Messages themselves.
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    val showHeaderBar = currentRoute in HEADER_BAR_ROUTES
+
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
@@ -180,11 +191,64 @@ private fun AuthedShell(appState: AppState) {
             }
         },
     ) { innerPadding ->
-        PokyhNavHost(
-            navController = navController,
-            startDestination = effectiveTab.route,
-            modifier = Modifier.padding(innerPadding),
-        )
+        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+            if (showHeaderBar) {
+                HeaderBar(
+                    session = session,
+                    onMessages = { navController.navigate(PokyhDestinations.MESSAGES) },
+                    onProfile = { navController.navigate(PokyhDestinations.PROFILE) },
+                )
+            }
+            PokyhNavHost(
+                navController = navController,
+                startDestination = effectiveTab.route,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** Routes that carry [HeaderBar] — the five tab roots plus the section screens pushed from them,
+ * mirroring exactly which iOS screens call `.profileToolbar()`. Deliberately excludes detail
+ * pushes (grade subject, dish, message/reminder detail) and Profile/Messages themselves. */
+private val HEADER_BAR_ROUTES = setOf(
+    PokyhDestinations.HOME,
+    PokyhDestinations.TIMETABLE,
+    PokyhDestinations.SCHOOL_HUB,
+    PokyhDestinations.GRADES,
+    PokyhDestinations.MENSA,
+    PokyhDestinations.ABSENCES,
+    PokyhDestinations.CLASSROOM,
+    PokyhDestinations.CLASSREG_EVENTS,
+    PokyhDestinations.REMINDERS,
+    PokyhDestinations.TODOS,
+)
+
+/** ProfileToolbar.swift — top-right header actions: Nachrichten (envelope) + Profil (avatar).
+ * A plain Row rather than a Material [androidx.compose.material3.TopAppBar] since the app's flat,
+ * bar-less design language (see [HomeScreen]'s own inline header) has no top-bar chrome elsewhere. */
+@Composable
+private fun HeaderBar(
+    session: UserSession?,
+    onMessages: () -> Unit,
+    onProfile: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onMessages) {
+            Icon(PokyhIcons.envelope, contentDescription = "Nachrichten", tint = PokyhTheme.colors.textPrimary)
+        }
+        IconButton(onClick = onProfile) {
+            if (session != null) {
+                PokyhAvatar(url = session.imageUrl, name = session.personName ?: session.username, size = 28.dp)
+            } else {
+                Icon(PokyhIcons.person_crop_circle, contentDescription = "Profil", tint = PokyhTheme.colors.textPrimary)
+            }
+        }
     }
 }
 

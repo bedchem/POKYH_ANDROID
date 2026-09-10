@@ -44,6 +44,9 @@ class PreferencesStore @Inject constructor(
         val AVATAR_HUES = stringPreferencesKey("pokyh_avatar_hues")
         val GRADE_DRAFTS = stringPreferencesKey("pokyh_grade_drafts")
         val SEEN_MESSAGE_IDS = stringPreferencesKey("pokyh_seen_message_ids")
+        val SEEN_GRADE_IDS = stringPreferencesKey("pokyh_seen_grade_ids")
+        val SEEN_CANCELLED_LESSONS = stringPreferencesKey("pokyh_seen_cancelled_lessons")
+        val SCHEDULED_REMINDER_IDS = stringPreferencesKey("pokyh_scheduled_reminder_ids")
         val NOTIF_ASKED = booleanPreferencesKey("pokyh_notif_asked")
 
         const val KEY_PREFIX = "pokyh_"
@@ -139,6 +142,40 @@ class PreferencesStore @Inject constructor(
         context.dataStore.edit { it[SEEN_MESSAGE_IDS] = json.encodeToString(SetIntSerializer, ids) }
     }
 
+    // ── Bereits gesehene Noten-IDs (NotificationManager.checkNewGrades) ────
+
+    val seenGradeIds: Flow<Set<Int>> = context.dataStore.data.map { prefs ->
+        prefs[SEEN_GRADE_IDS]?.let { decodeOrNull(it, SetIntSerializer) } ?: emptySet()
+    }
+
+    suspend fun setSeenGradeIds(ids: Set<Int>) {
+        context.dataStore.edit { it[SEEN_GRADE_IDS] = json.encodeToString(SetIntSerializer, ids) }
+    }
+
+    // ── Bereits gemeldete Stundenausfälle (NotificationManager.checkTimetableChanges) ──
+    // Key je Ausfall: "date-startTime-lessonId" (siehe PokyhNotifications).
+
+    val seenCancelledLessons: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+        prefs[SEEN_CANCELLED_LESSONS]?.let { decodeOrNull(it, SetStringSerializer) } ?: emptySet()
+    }
+
+    suspend fun setSeenCancelledLessons(keys: Set<String>) {
+        context.dataStore.edit { it[SEEN_CANCELLED_LESSONS] = json.encodeToString(SetStringSerializer, keys) }
+    }
+
+    // ── Aktuell per AlarmManager geplante Erinnerungs-IDs ───────────────────
+    // Ersetzt iOS' `getPendingNotificationRequests` (keine Android-Entsprechung) — dieser Bestand
+    // verrät PokyhNotifications.scheduleReminders, welche Alarme bei einer gelöschten Erinnerung
+    // noch explizit storniert werden müssen.
+
+    val scheduledReminderIds: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+        prefs[SCHEDULED_REMINDER_IDS]?.let { decodeOrNull(it, SetStringSerializer) } ?: emptySet()
+    }
+
+    suspend fun setScheduledReminderIds(ids: Set<String>) {
+        context.dataStore.edit { it[SCHEDULED_REMINDER_IDS] = json.encodeToString(SetStringSerializer, ids) }
+    }
+
     // ── Benachrichtigungs-Berechtigung bereits angefragt? ──────────────────
 
     val notifAsked: Flow<Boolean> = context.dataStore.data.map { it[NOTIF_ASKED] ?: false }
@@ -169,6 +206,7 @@ class PreferencesStore @Inject constructor(
 private val SavedAccountsSerializer = ListSerializer(SavedAccount.serializer())
 private val MapStringDoubleSerializer = MapSerializer(serializer<String>(), serializer<Double>())
 private val SetIntSerializer = SetSerializer(serializer<Int>())
+private val SetStringSerializer = SetSerializer(serializer<String>())
 
 /** Port of `GradeDraft` (GradeMath.swift) — local "what-if" grades per lesson (lessonId), kept
  * out of `data.model` since it's calculator-scratch state, not a WebUntis/backend domain model. */

@@ -226,6 +226,7 @@ class AbsencesViewModel @Inject constructor(
                 }
                 _totalPossibleMins.value = maxOf(1, possible)
             } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
                 _error.value = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message
             } catch (e: Exception) {
                 _error.value = e.message ?: "Unbekannter Fehler."

@@ -65,6 +65,7 @@ class MessagesViewModel @Inject constructor(
                 val result = untisClient.messages(session, folder)
                 _list.update { it.copy(cache = it.cache + (folder to result), loadingFolders = it.loadingFolders - folder) }
             } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
                 _list.update {
                     it.copy(
                         loadingFolders = it.loadingFolders - folder,
@@ -108,6 +109,7 @@ class MessagesViewModel @Inject constructor(
                 val d = untisClient.messageDetail(session, id)
                 _detail.value = DetailUiState(loading = false, detail = d)
             } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
                 val msg = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message
                 _detail.value = DetailUiState(loading = false, error = msg)
             } catch (e: Exception) {

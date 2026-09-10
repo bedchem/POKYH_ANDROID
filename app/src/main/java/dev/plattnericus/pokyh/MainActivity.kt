@@ -2,13 +2,18 @@ package dev.plattnericus.pokyh
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -55,6 +60,22 @@ class MainActivity : ComponentActivity() {
         setContent {
             val themeMode by appState.themeMode.collectAsStateWithLifecycle()
             val isReady by appState.isReady.collectAsStateWithLifecycle()
+
+            // Store.swift `requestNotificationPermissionIfNeeded()` — one system prompt, right
+            // after the first successful login (AppState.onAuthenticated flips this true once).
+            val requestNotifPermission by appState.requestNotifPermission.collectAsStateWithLifecycle()
+            val notifPermissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission(),
+            ) { /* granted or not — iOS doesn't branch on the outcome either, just asks once */ }
+            LaunchedEffect(requestNotifPermission) {
+                if (requestNotifPermission) {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    appState.notifPermissionRequested()
+                }
+            }
+
             PokyhAppTheme(themeMode) {
                 if (isReady) {
                     PokyhApp(appState)

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.untis.MergedSlot
@@ -59,6 +60,7 @@ private val MONTH_ABBR = listOf("Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul"
 class TimetableViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
+    private val widgetDataBridge: WidgetDataBridge,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(TimetableUiState())
@@ -176,7 +178,13 @@ class TimetableViewModel @Inject constructor(
         try {
             val entries = untisClient.timetable(session, session.studentId, mondayOf(offset).toString())
             _pages.update { it + (offset to WeekPageState.Data(entries)) }
+            // Current week of the default account → widget stays fresh (WidgetBridge.publish).
+            if (offset == 0 && appState.isDefaultAccountActive()) widgetDataBridge.publishTimetable(entries)
         } catch (e: Exception) {
+            if (e is AppError && e.isSessionExpired) {
+                appState.handleSessionExpired()
+                return
+            }
             if (!silent) {
                 val message = (e as? AppError)?.message ?: e.message ?: "Unbekannter Fehler."
                 _pages.update { it + (offset to WeekPageState.Error(message)) }

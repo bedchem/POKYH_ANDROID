@@ -8,6 +8,7 @@ import dev.plattnericus.pokyh.core.util.isoWeekNumber
 import dev.plattnericus.pokyh.core.util.mondayOfWeek
 import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.backend.BackendClient
+import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.Dish
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
@@ -65,6 +66,18 @@ class HomeViewModel @Inject constructor(
     init {
         viewModelScope.launch { appState.session.collect { s -> _state.update { it.copy(session = s) } } }
         viewModelScope.launch { loadAll() }
+        // Silently re-check on every background→foreground return (AppState.resumeSignal) — a
+        // WebUntis session that expired while backgrounded surfaces via loadToday's
+        // AppError.isSessionExpired catch instead of leaving stale data on screen.
+        viewModelScope.launch {
+            var seen = appState.resumeSignal.value
+            appState.resumeSignal.collect { signal ->
+                if (signal != seen) {
+                    seen = signal
+                    loadAll()
+                }
+            }
+        }
     }
 
     /** Bound to [dev.plattnericus.pokyh.ui.components.ErrorStateView]'s retry action. */
@@ -111,6 +124,9 @@ class HomeViewModel @Inject constructor(
             val today = SchoolDates.todayNum()
             val slots = TimetableSlots.buildSlots(all.filter { it.date == today })
             _state.update { it.copy(todaySlots = slots, loadingToday = false) }
+        } catch (e: AppError) {
+            if (e.isSessionExpired) appState.handleSessionExpired()
+            _state.update { it.copy(loadingToday = false) }
         } catch (e: Exception) {
             _state.update { it.copy(loadingToday = false) }
         }

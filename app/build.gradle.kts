@@ -106,6 +106,8 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
+    implementation(libs.hilt.work)
+    ksp(libs.hilt.work.compiler)
 
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
@@ -120,4 +122,7 @@ dependencies {
     implementation(libs.biometric)
     implementation(libs.datastore.preferences)
     implementation(libs.work.runtime.ktx)
+
+    implementation(libs.glance.appwidget)
+    implementation(libs.glance.material3)
 }

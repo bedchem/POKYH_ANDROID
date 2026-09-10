@@ -59,6 +59,7 @@ class ClassregViewModel @Inject constructor(
             } catch (e: AppError) {
                 if (e.isSessionExpired) {
                     // Same handling as ClassregEventsView.swift's `app.handleSessionExpired()`.
+                    appState.handleSessionExpired()
                     _error.value = "Sitzung abgelaufen. Bitte erneut anmelden."
                 } else {
                     _error.value = e.message

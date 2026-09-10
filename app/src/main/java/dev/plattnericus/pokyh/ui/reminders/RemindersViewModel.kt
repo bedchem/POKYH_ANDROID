@@ -3,6 +3,7 @@ package dev.plattnericus.pokyh.ui.reminders
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.plattnericus.pokyh.core.notifications.PokyhNotifications
 import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.backend.SseClient
 import dev.plattnericus.pokyh.data.model.ApiReminder
@@ -33,6 +34,7 @@ class RemindersViewModel @Inject constructor(
     private val appState: AppState,
     private val backendClient: BackendClient,
     private val sseClient: SseClient,
+    private val notifications: PokyhNotifications,
 ) : ViewModel() {
 
     data class UiState(
@@ -69,13 +71,19 @@ class RemindersViewModel @Inject constructor(
         load(classId, token)
         sseClient.sseReminders(classId, token)
             .catch { /* stream dropped for good — last loaded list stays, user can pull to refresh */ }
-            .collect { list -> _ui.update { it.copy(loading = false, error = null, reminders = list) } }
+            .collect { list ->
+                _ui.update { it.copy(loading = false, error = null, reminders = list) }
+                notifications.scheduleReminders(list)
+            }
     }
 
     private suspend fun load(classId: String, token: String) {
         _ui.update { it.copy(loading = it.reminders.isEmpty(), error = null) }
         runCatching { backendClient.reminders(classId, token) }
-            .onSuccess { list -> _ui.update { it.copy(loading = false, error = null, reminders = list) } }
+            .onSuccess { list ->
+                _ui.update { it.copy(loading = false, error = null, reminders = list) }
+                notifications.scheduleReminders(list)
+            }
             .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.") } }
     }
 

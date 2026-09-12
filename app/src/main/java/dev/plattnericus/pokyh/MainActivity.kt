@@ -5,7 +5,6 @@ import androidx.compose.runtime.getValue
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -31,7 +31,10 @@ import javax.inject.Inject
  * threaded down as a parameter, rather than fetched from inside a composable with `hiltViewModel()`.
  */
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+// A FragmentActivity, not a plain ComponentActivity: androidx.biometric hosts its prompt in a
+// fragment, so the Lock screen's `LocalContext as FragmentActivity` lookup — and with it the
+// whole fingerprint unlock — silently did nothing while this was a ComponentActivity.
+class MainActivity : FragmentActivity() {
 
     @Inject lateinit var appState: AppState
 

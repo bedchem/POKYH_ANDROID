@@ -32,6 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -76,7 +78,7 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
     var showAddAccountSheet by rememberSaveable { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
-    val activity = LocalContext.current as? FragmentActivity
+    val activity = LocalContext.current.findFragmentActivity()
     val biometricAuthenticator = remember(activity) { activity?.let { BiometricAuthenticator(it) } }
     val biometricAvailable = viewModel.biometricAvailable && biometricAuthenticator != null
     val showFallback = failures >= 3
@@ -256,4 +258,19 @@ private fun AccountChooser(
             )
         }
     }
+}
+
+/**
+ * `LocalContext` is not necessarily the Activity itself — Compose can hand back a
+ * `ContextWrapper` (theme, locale, config wrappers), and a plain `as?` cast then quietly yields
+ * null. That is silent: no biometric authenticator, no prompt, no error. Walk the wrapper chain
+ * instead of casting.
+ */
+private fun Context.findFragmentActivity(): FragmentActivity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is FragmentActivity) return current
+        current = current.baseContext
+    }
+    return null
 }

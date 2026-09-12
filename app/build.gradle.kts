@@ -120,6 +120,8 @@ dependencies {
     implementation(libs.coil.network.okhttp)
 
     implementation(libs.biometric)
+    // FragmentActivity — androidx.biometric's BiometricPrompt can only be hosted by one.
+    implementation(libs.fragment.ktx)
     implementation(libs.datastore.preferences)
     implementation(libs.work.runtime.ktx)
 

@@ -1,13 +1,11 @@
 package dev.plattnericus.pokyh.ui.lock
 
 import android.content.Context
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
-import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.plattnericus.pokyh.core.biometric.biometricUnlockAvailable
 import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.data.storage.PreferencesStore
 import dev.plattnericus.pokyh.state.AppState
@@ -29,9 +27,10 @@ class LockViewModel @Inject constructor(
     @ApplicationContext context: Context,
 ) : ViewModel() {
 
-    /** Gates whether the "Entsperren" flow even attempts a biometric prompt. */
-    val biometricAvailable: Boolean = BiometricManager.from(context)
-        .canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS
+    /** Gates whether the "Entsperren" flow even attempts a biometric prompt — asks for exactly
+     * the authenticators [dev.plattnericus.pokyh.core.biometric.BiometricAuthenticator] then
+     * requests, so this can never report "available" for a prompt that would be rejected. */
+    val biometricAvailable: Boolean = biometricUnlockAvailable(context)
 
     val busy: StateFlow<Boolean> = appState.busy
     val statusText: StateFlow<String> = appState.statusText

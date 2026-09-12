@@ -1,9 +1,9 @@
 package dev.plattnericus.pokyh.ui.login
-import androidx.compose.foundation.layout.*
-import androidx.compose.runtime.saveable.rememberSaveable
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.Image
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn as animateFadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,72 +15,64 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.plattnericus.pokyh.R
+import dev.plattnericus.pokyh.ui.components.PokyhMark
+import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
+import dev.plattnericus.pokyh.ui.components.PokyhTextField
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
+import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
-import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhMotion
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
-import dev.plattnericus.pokyh.ui.theme.cardSurface
 import dev.plattnericus.pokyh.ui.theme.centeredForm
 import dev.plattnericus.pokyh.ui.theme.fadeIn
-import dev.plattnericus.pokyh.ui.theme.smoothCorner
 
 /**
- * LoginView.swift, ported. `isAdditional` mirrors the sheet-presented "Konto hinzufügen" /
- * "Mit Passwort anmelden" flow from ProfileView/LockView: [AppState.addAccount] flips
- * `showAddAccount` true, whatever hosts this screen in that case shows it (dialog/bottom
- * sheet) while `showAddAccount` is true, and [onCancel] fires both on an explicit "Abbrechen"
- * tap AND automatically once [AppState.finalize] flips `showAddAccount` back to false after a
- * successful login — the same signal `.sheet(isPresented: $app.showAddAccount)` reacts to on iOS.
+ * Anmeldung. `isAdditional` mirrors the sheet-presented "Konto hinzufügen" / "Mit Passwort
+ * anmelden" flow from Profil/Lock: [dev.plattnericus.pokyh.state.AppState.addAccount] flips
+ * `showAddAccount` true, whatever hosts this screen in that case shows it while `showAddAccount`
+ * is true, and [onCancel] fires both on an explicit "Abbrechen" tap AND automatically once
+ * `finalize` flips `showAddAccount` back to false after a successful login.
+ *
+ * Visually the auth screens are the app's calmest surface: mark, wordmark, two fields, one
+ * button, all on the plain page canvas with no card. Nothing here competes with the one thing
+ * there is to do, and the fields are the app's standard [PokyhTextField] rather than the
+ * bespoke neutral-gray input this screen used to carry — which was the only place in the app
+ * with its own input color.
  */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
     isAdditional: Boolean = false,
@@ -93,23 +85,19 @@ fun LoginScreen(
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var saveCredentials by rememberSaveable { mutableStateOf(true) }
-
     val passwordFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
 
-    // LoginView.swift `.onAppear { app.error = nil }` — runs once per screen instance (matches
-    // SwiftUI's onAppear semantics), so a stale error from a previous failed attempt never
+    // Runs once per screen instance, so a stale error from a previous failed attempt never
     // flashes on a freshly (re)opened "Konto hinzufügen" sheet.
     LaunchedEffect(Unit) { viewModel.clearError() }
 
-    // LoginView.swift `.onAppear { if let u = app.prefillUsername { username = u; ...; focus = .pass } }`
     LaunchedEffect(prefillUsername) {
         prefillUsername?.let {
             username = it
             passwordFocusRequester.requestFocus()
         }
     }
-
     LaunchedEffect(isAdditional, uiState.showAddAccount) {
         if (isAdditional && !uiState.showAddAccount) onCancel()
     }
@@ -120,32 +108,15 @@ fun LoginScreen(
         viewModel.submit(username, password, saveCredentials)
     }
 
-    val bgColor = PokyhTheme.colors.bg
-    val gradient = remember(bgColor) {
-        Brush.verticalGradient(
-            colorStops = arrayOf(
-                0f to Brand.accent.copy(alpha = 0.22f),
-                0.5f to Brand.accentSoft.copy(alpha = 0.10f),
-                1f to bgColor,
-            ),
-        )
-    }
-
-    Box(Modifier.fillMaxSize().background(gradient)) {
+    // Login/Lock render straight into the window (not inside the tab shell's Scaffold, which is
+    // what applies the status-bar inset for every other screen), so they pad for it themselves.
+    Box(Modifier.fillMaxSize().background(PokyhTheme.colors.bg).statusBarsPadding()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
             topBar = {
                 if (isAdditional) {
-                    TopAppBar(
-                        title = {},
-                        navigationIcon = {
-                            TextButton(onClick = onCancel) {
-                                Text("Abbrechen", color = Brand.accent)
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                    )
+                    PokyhTopBar(title = null, nav = TopBarNav.Close(onCancel))
                 }
             },
         ) { innerPadding ->
@@ -155,85 +126,99 @@ fun LoginScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(innerPadding)
                     .centeredForm()
-                    .padding(horizontal = 20.dp),
+                    .padding(horizontal = PokyhSpacing.screenH),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Spacer(Modifier.height(if (isAdditional) 24.dp else 64.dp))
+                Spacer(Modifier.height(if (isAdditional) PokyhSpacing.xxl else 72.dp))
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
                     modifier = Modifier.fadeIn(),
                 ) {
-                    LoginLogo(size = 84.dp)
+                    PokyhMark(size = 76.dp)
                     Text("POKYH", style = PokyhType.wordmark, color = PokyhTheme.colors.textPrimary)
                     Text(
-                        "Schulapp für die LBS Brixen",
-                        style = PokyhType.subheadline,
+                        text = "Schulapp für die LBS Brixen",
+                        style = PokyhType.callout,
                         color = PokyhTheme.colors.textSecondary,
                     )
                 }
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(PokyhSpacing.huge))
 
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .cardSurface(radius = 24.dp)
-                        .padding(20.dp)
-                        .fadeIn(delayMillis = 50),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.fillMaxWidth().fadeIn(delayMillis = 50),
+                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
                 ) {
-                    LoginField(
-                        placeholder = "Benutzername",
+                    PokyhTextField(
                         value = username,
                         onValueChange = { username = it },
-                        icon = PokyhIcons.person_fill,
-                        isPassword = false,
-                        imeAction = ImeAction.Next,
-                        onImeAction = { passwordFocusRequester.requestFocus() },
+                        placeholder = "Benutzername",
+                        leadingIcon = PokyhIcons.person,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(
+                            autoCorrectEnabled = false,
+                            keyboardType = KeyboardType.Text,
+                            capitalization = KeyboardCapitalization.None,
+                            imeAction = ImeAction.Next,
+                        ),
+                        keyboardActions = KeyboardActions(onNext = { passwordFocusRequester.requestFocus() }),
                     )
-                    LoginField(
-                        placeholder = "Passwort",
+                    PokyhTextField(
                         value = password,
                         onValueChange = { password = it },
-                        icon = PokyhIcons.lock,
+                        placeholder = "Passwort",
+                        leadingIcon = PokyhIcons.password,
                         isPassword = true,
-                        imeAction = ImeAction.Go,
-                        onImeAction = { submit() },
+                        modifier = Modifier.fillMaxWidth(),
                         focusRequester = passwordFocusRequester,
+                        keyboardOptions = KeyboardOptions(
+                            autoCorrectEnabled = false,
+                            keyboardType = KeyboardType.Password,
+                            capitalization = KeyboardCapitalization.None,
+                            imeAction = ImeAction.Go,
+                        ),
+                        keyboardActions = KeyboardActions(onGo = { submit() }),
                     )
 
                     if (viewModel.biometricAvailable) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = PokyhSpacing.xs),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
                             ) {
                                 Icon(
-                                    PokyhIcons.faceid,
+                                    imageVector = PokyhIcons.biometrics,
                                     contentDescription = null,
                                     tint = PokyhTheme.colors.textSecondary,
-                                    modifier = Modifier.size(18.dp),
+                                    modifier = Modifier.size(20.dp),
                                 )
-                                Text("Mit Biometrie speichern", style = PokyhType.subheadline, color = PokyhTheme.colors.textPrimary)
+                                Text(
+                                    text = "Mit Biometrie speichern",
+                                    style = PokyhType.callout,
+                                    color = PokyhTheme.colors.textPrimary,
+                                )
                             }
                             Switch(
                                 checked = saveCredentials,
                                 onCheckedChange = { saveCredentials = it },
-                                colors = SwitchDefaults.colors(checkedTrackColor = Brand.accent, checkedThumbColor = Color.White),
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = Brand.accent,
+                                    checkedThumbColor = Brand.onAccent,
+                                ),
                             )
                         }
                     }
 
                     AnimatedVisibility(
                         visible = uiState.error != null,
-                        enter = androidx.compose.animation.fadeIn(),
-                        exit = androidx.compose.animation.fadeOut(),
+                        enter = animateFadeIn(tween(PokyhMotion.durationFast)),
+                        exit = fadeOut(tween(PokyhMotion.durationFast)),
                     ) {
                         Text(
                             text = uiState.error.orEmpty(),
@@ -243,120 +228,38 @@ fun LoginScreen(
                         )
                     }
 
-                    val fieldsEmpty = username.isBlank() || password.isBlank()
-                    Button(
+                    Spacer(Modifier.height(PokyhSpacing.xs))
+                    PokyhPrimaryButton(
+                        text = if (uiState.busy) uiState.statusText.ifEmpty { "Anmelden…" } else "Anmelden",
                         onClick = { submit() },
-                        enabled = !uiState.busy && !fieldsEmpty,
-                        shape = PokyhShapes.r16,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Brand.accent,
-                            contentColor = Color.White,
-                            disabledContainerColor = Brand.accent,
-                            disabledContentColor = Color.White,
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .alpha(if (fieldsEmpty) 0.6f else 1f),
-                    ) {
-                        if (uiState.busy) {
-                            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(
-                            text = if (uiState.busy) uiState.statusText.ifEmpty { "Anmelden…" } else "Anmelden",
-                            style = PokyhType.headline,
-                        )
-                    }
+                        enabled = username.isNotBlank() && password.isNotBlank(),
+                        loading = uiState.busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
 
-                Spacer(Modifier.height(24.dp))
-
+                Spacer(Modifier.height(PokyhSpacing.xxl))
                 Text(
-                    "Melde dich mit deinem WebUntis-Konto an.",
-                    style = PokyhType.caption,
+                    text = "Melde dich mit deinem WebUntis-Konto an.",
+                    style = PokyhType.footnote,
                     color = PokyhTheme.colors.textTertiary,
                     textAlign = TextAlign.Center,
                 )
-
-                Spacer(Modifier.height(40.dp))
+                Spacer(Modifier.height(PokyhSpacing.huge))
             }
         }
     }
 }
 
+/** The "Konto hinzufügen"/"Mit Passwort anmelden" sheet — a full-screen [Dialog] hosting
+ * [LoginScreen] in its `isAdditional` mode. Shared by [dev.plattnericus.pokyh.ui.PokyhApp] and
+ * [dev.plattnericus.pokyh.ui.lock.LockScreen], which both used to duplicate this wrapper. */
 @Composable
-private fun LoginField(
-    placeholder: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    icon: ImageVector,
-    isPassword: Boolean,
-    imeAction: ImeAction,
-    onImeAction: () -> Unit,
-    modifier: Modifier = Modifier,
-    focusRequester: FocusRequester? = null,
-) {
-    val colors = PokyhTheme.colors
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .height(50.dp)
-            .background(colors.cardAlt, PokyhShapes.r12)
-            .padding(horizontal = 14.dp),
+fun AddAccountDialog(onDismiss: () -> Unit) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Icon(icon, contentDescription = null, tint = Brand.accent, modifier = Modifier.size(22.dp))
-        Box(Modifier.weight(1f)) {
-            if (value.isEmpty()) {
-                Text(placeholder, style = PokyhType.body, color = colors.textTertiary)
-            }
-            var fieldModifier = Modifier.fillMaxWidth()
-            if (focusRequester != null) fieldModifier = fieldModifier.focusRequester(focusRequester)
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                singleLine = true,
-                textStyle = PokyhType.body.copy(color = colors.textPrimary),
-                cursorBrush = SolidColor(Brand.accent),
-                visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
-                keyboardOptions = KeyboardOptions(
-                    autoCorrectEnabled = false,
-                    keyboardType = if (isPassword) KeyboardType.Password else KeyboardType.Text,
-                    capitalization = KeyboardCapitalization.None,
-                    imeAction = imeAction,
-                ),
-                keyboardActions = KeyboardActions(
-                    onNext = { onImeAction() },
-                    onGo = { onImeAction() },
-                ),
-                modifier = fieldModifier,
-            )
-        }
-    }
-}
-
-/** AppLogo (LockView.swift) — no dedicated "AppLogo" asset ships on Android yet, so the launcher's
- * gradient + glyph (`ic_launcher_background`/`_foreground`) stand in, composited manually at the
- * same 0.26x-radius squircle iOS uses (the adaptive-icon XML itself isn't a `painterResource`-
- * loadable format — only its two layer drawables are). */
-@Composable
-private fun LoginLogo(size: Dp) {
-    Box(
-        modifier = Modifier.size(size).clip(smoothCorner(size * 0.26f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Image(
-            painter = painterResource(R.drawable.ic_launcher_background),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
-        Image(
-            painter = painterResource(R.drawable.ic_launcher_foreground),
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-        )
+        LoginScreen(isAdditional = true, onCancel = onDismiss)
     }
 }

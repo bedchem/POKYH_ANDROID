@@ -1,30 +1,23 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package dev.plattnericus.pokyh.ui.classroom
-import androidx.compose.foundation.layout.*
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.getValue
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -37,18 +30,33 @@ import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.ListSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhAvatar
+import dev.plattnericus.pokyh.ui.components.PokyhCard
+import dev.plattnericus.pokyh.ui.components.PokyhLabel
+import dev.plattnericus.pokyh.ui.components.PokyhListCard
+import dev.plattnericus.pokyh.ui.components.PokyhRow
+import dev.plattnericus.pokyh.ui.components.PokyhSection
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
+import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
-import dev.plattnericus.pokyh.ui.theme.PokyhType.bold
+import dev.plattnericus.pokyh.ui.theme.accentSurface
 import dev.plattnericus.pokyh.ui.theme.appBackground
+import dev.plattnericus.pokyh.ui.theme.fadeIn
 
-/** Port of `ClassView` (ClassView.swift) — Klasseninfo (Name/Code) + Mitgliederliste, geladen
- * über den POKYH-Backend (kein WebUntis-Äquivalent). */
+/**
+ * Klasse — class info (name + join code) over the member list. Loaded from the POKYH backend
+ * (no WebUntis equivalent).
+ *
+ * The class card is the screen's hero: the name at [PokyhType.statMedium] with the join code as
+ * an accent-tinted monospace capsule under it, because the code is the one thing anyone opens
+ * this screen to read out loud.
+ */
 @Composable
-fun ClassScreen(viewModel: ClassViewModel = hiltViewModel()) {
+fun ClassScreen(onNavigateBack: () -> Unit = {}, viewModel: ClassViewModel = hiltViewModel()) {
     val klass by viewModel.klass.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
@@ -58,15 +66,7 @@ fun ClassScreen(viewModel: ClassViewModel = hiltViewModel()) {
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
-        topBar = {
-            TopAppBar(
-                title = { Text("Klasse", style = PokyhType.headline) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PokyhTheme.colors.bg,
-                    titleContentColor = PokyhTheme.colors.textPrimary,
-                ),
-            )
-        },
+        topBar = { PokyhTopBar(title = "Klasse", nav = TopBarNav.Back(onNavigateBack)) },
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
@@ -76,48 +76,25 @@ fun ClassScreen(viewModel: ClassViewModel = hiltViewModel()) {
                 klass != null -> {
                     val c = klass!!
                     Column(
-                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = PokyhSpacing.screenH)
+                            .padding(bottom = PokyhSpacing.xxxl),
+                        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(PokyhTheme.colors.card, PokyhShapes.r18)
-                                .padding(20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ClassHeaderCard(name = c.name, code = c.code, modifier = Modifier.fadeIn())
+                        PokyhSection(
+                            title = "Mitglieder",
+                            trailing = { PokyhLabel("${c.members.size}") },
+                            modifier = Modifier.fadeIn(delayMillis = 40),
                         ) {
-                            Icon(
-                                imageVector = PokyhIcons.person_3_fill,
-                                contentDescription = null,
-                                tint = Brand.accent,
-                                modifier = Modifier.size(34.dp),
-                            )
-                            Text(c.name, style = PokyhType.title2.bold(), color = PokyhTheme.colors.textPrimary)
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("Code:", style = PokyhType.subheadline, color = PokyhTheme.colors.textSecondary)
-                                Box(
-                                    modifier = Modifier
-                                        .background(Brand.accent.copy(alpha = 0.12f), RoundedCornerShape(50)),
-                                ) {
-                                    Text(
-                                        text = c.code,
-                                        style = PokyhType.body.copy(fontFamily = FontFamily.Monospace).bold(),
-                                        color = PokyhTheme.colors.textPrimary,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                    )
-                                }
-                            }
-                        }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("${c.members.size} Mitglieder", style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
-                            c.members.forEach { m -> MemberRow(member = m) }
+                            PokyhListCard(items = c.members) { member -> MemberRow(member) }
                         }
                     }
                 }
                 else -> EmptyStateView(
-                    icon = PokyhIcons.person_3_fill,
+                    icon = PokyhIcons.classMembers,
                     title = "Keine Klasse",
                     subtitle = "Du bist noch keiner Klasse beigetreten.",
                 )
@@ -127,17 +104,41 @@ fun ClassScreen(viewModel: ClassViewModel = hiltViewModel()) {
 }
 
 @Composable
-private fun MemberRow(member: ApiClassMember) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(PokyhTheme.colors.cardAlt, PokyhShapes.r12)
-            .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        PokyhAvatar(url = null, name = member.username, size = 36.dp)
-        Text(member.username, style = PokyhType.body, color = PokyhTheme.colors.textPrimary)
-        Spacer(Modifier.weight(1f))
+private fun ClassHeaderCard(name: String, code: String, modifier: Modifier = Modifier) {
+    val colors = PokyhTheme.colors
+    PokyhCard(modifier = modifier) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                imageVector = PokyhIcons.classMembers,
+                contentDescription = null,
+                tint = Brand.accent,
+                modifier = Modifier.size(32.dp),
+            )
+            Spacer(Modifier.size(PokyhSpacing.md))
+            Text(name, style = PokyhType.statMedium, color = colors.textPrimary)
+            Spacer(Modifier.size(PokyhSpacing.md))
+            PokyhLabel("Beitrittscode")
+            Spacer(Modifier.size(PokyhSpacing.sm))
+            Text(
+                text = code,
+                style = PokyhType.title3.copy(fontFamily = FontFamily.Monospace),
+                color = colors.accentText,
+                modifier = Modifier
+                    .accentSurface(PokyhShapes.pill)
+                    .padding(horizontal = PokyhSpacing.lg, vertical = PokyhSpacing.sm),
+            )
+        }
     }
+}
+
+@Composable
+private fun MemberRow(member: ApiClassMember) {
+    PokyhRow(
+        title = member.username,
+        showChevron = false,
+        leading = { PokyhAvatar(url = null, name = member.username, size = 38.dp) },
+    )
 }

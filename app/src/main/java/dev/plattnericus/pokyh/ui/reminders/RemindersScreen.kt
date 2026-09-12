@@ -2,8 +2,6 @@
 
 package dev.plattnericus.pokyh.ui.reminders
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,24 +15,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
@@ -47,7 +36,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -56,16 +44,26 @@ import dev.plattnericus.pokyh.data.model.ApiReminder
 import dev.plattnericus.pokyh.ui.components.BackendUnavailableView
 import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
+import dev.plattnericus.pokyh.ui.components.IconTile
 import dev.plattnericus.pokyh.ui.components.ListSkeleton
+import dev.plattnericus.pokyh.ui.components.PokyhFab
+import dev.plattnericus.pokyh.ui.components.PokyhLabel
+import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
+import dev.plattnericus.pokyh.ui.components.PokyhTextButton
+import dev.plattnericus.pokyh.ui.components.PokyhTextField
+import dev.plattnericus.pokyh.ui.components.PokyhTileRow
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
+import dev.plattnericus.pokyh.ui.components.StatusLabel
+import dev.plattnericus.pokyh.ui.components.SwipeToDeleteBackground
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
-import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.appBackground
-import dev.plattnericus.pokyh.ui.theme.cardSurface
 import dev.plattnericus.pokyh.ui.theme.fadeIn
+import dev.plattnericus.pokyh.ui.theme.insetSurface
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -77,7 +75,8 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.launch
 
-/** RemindersView.swift, ported. */
+/** Klassen-Erinnerungen — the same swipe-to-delete tile-row list as Todos, so the two screens
+ * that sit next to each other in the School hub behave identically. */
 @Composable
 fun RemindersScreen(
     onReminderClick: (String) -> Unit,
@@ -88,7 +87,6 @@ fun RemindersScreen(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val hasBackend = session?.apiToken != null
     val hasClass = session?.classId != null
-
     var showAdd by remember { mutableStateOf(false) }
     val visible = remember(ui.reminders) { visibleReminders(ui.reminders) }
 
@@ -96,19 +94,14 @@ fun RemindersScreen(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
-            TopAppBar(
-                title = { Text("Erinnerungen", style = PokyhType.headline) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PokyhTheme.colors.bg,
-                    titleContentColor = PokyhTheme.colors.textPrimary,
-                ),
+            PokyhTopBar(
+                title = "Erinnerungen",
+                eyebrow = if (visible.isEmpty()) null else "${visible.size} anstehend",
             )
         },
         floatingActionButton = {
             if (hasBackend && hasClass) {
-                FloatingActionButton(onClick = { showAdd = true }, containerColor = Brand.accent, contentColor = Color.White) {
-                    Icon(PokyhIcons.plus, contentDescription = "Neue Erinnerung")
-                }
+                PokyhFab(text = "Neu", icon = PokyhIcons.add, onClick = { showAdd = true })
             }
         },
     ) { innerPadding ->
@@ -116,21 +109,26 @@ fun RemindersScreen(
             when {
                 !hasBackend -> BackendUnavailableView(feature = "Erinnerungen", status = backendStatus)
                 ui.loading && ui.reminders.isEmpty() -> ListSkeleton()
-                ui.error != null && ui.reminders.isEmpty() -> ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
+                ui.error != null && ui.reminders.isEmpty() ->
+                    ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
                 !hasClass -> EmptyStateView(
-                    icon = PokyhIcons.person_3_fill,
+                    icon = PokyhIcons.classMembers,
                     title = "Keine Klasse",
                     subtitle = "Du bist noch keiner Klasse beigetreten.",
                 )
                 visible.isEmpty() -> EmptyStateView(
-                    icon = PokyhIcons.bell_fill,
+                    icon = PokyhIcons.reminders,
                     title = "Keine Erinnerungen",
-                    subtitle = "Lege eine Klassen-Erinnerung an.",
+                    subtitle = "Lege eine Klassen-Erinnerung an, um sie hier zu sehen.",
                 )
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(
+                        start = PokyhSpacing.screenH,
+                        end = PokyhSpacing.screenH,
+                        bottom = PokyhSpacing.huge + PokyhSpacing.xxxl,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
                 ) {
                     items(visible, key = { it.id }) { reminder ->
                         ReminderSwipeRow(
@@ -168,21 +166,7 @@ private fun ReminderSwipeRow(reminder: ApiReminder, onClick: () -> Unit, onDelet
     SwipeToDismissBox(
         state = dismissState,
         modifier = Modifier.fadeIn(),
-        backgroundContent = {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Brand.danger, PokyhShapes.r14)
-                    .padding(horizontal = 18.dp),
-                contentAlignment = if (dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart) {
-                    Alignment.CenterEnd
-                } else {
-                    Alignment.CenterStart
-                },
-            ) {
-                Icon(PokyhIcons.trash, contentDescription = "Löschen", tint = Color.White)
-            }
-        },
+        backgroundContent = { SwipeToDeleteBackground(dismissState.dismissDirection) },
     ) {
         ReminderRow(reminder = reminder, onClick = onClick)
     }
@@ -190,36 +174,22 @@ private fun ReminderSwipeRow(reminder: ApiReminder, onClick: () -> Unit, onDelet
 
 @Composable
 private fun ReminderRow(reminder: ApiReminder, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .cardSurface(radius = 14.dp)
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .background(Brand.tint.copy(alpha = 0.14f), PokyhShapes.r10),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(PokyhIcons.bell_fill, contentDescription = null, tint = Brand.tint)
-        }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(reminder.title, style = PokyhType.subheadline.semibold(), color = PokyhTheme.colors.textPrimary)
+    val colors = PokyhTheme.colors
+    PokyhTileRow(onClick = onClick, verticalAlignment = Alignment.Top) {
+        IconTile(icon = PokyhIcons.reminders, color = Brand.accent, size = 40.dp)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
+            Text(reminder.title, style = PokyhType.headline, color = colors.textPrimary)
             if (reminder.body.isNotEmpty()) {
                 Text(
-                    reminder.body,
-                    style = PokyhType.caption,
-                    color = PokyhTheme.colors.textSecondary,
+                    text = reminder.body,
+                    style = PokyhType.footnote,
+                    color = colors.textSecondary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
             parseRemindAt(reminder.remindAt)?.let { instant ->
-                Text(dueText(instant), style = PokyhType.caption2, color = Brand.orange)
+                StatusLabel(text = dueText(instant), color = Brand.orange, icon = PokyhIcons.timetable)
             }
         }
     }
@@ -234,7 +204,9 @@ private fun AddReminderSheet(
     var title by remember { mutableStateOf("") }
     var body by remember { mutableStateOf("") }
     val now = remember { LocalDateTime.now() }
-    var dateMillis by remember { mutableStateOf(now.toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()) }
+    var dateMillis by remember {
+        mutableStateOf(now.toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
+    }
     var time by remember { mutableStateOf(LocalTime.of(now.hour, now.minute)) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
@@ -247,65 +219,83 @@ private fun AddReminderSheet(
 
     val pickedDate = remember(dateMillis) { Instant.ofEpochMilli(dateMillis).atZone(ZoneOffset.UTC).toLocalDate() }
 
-    ModalBottomSheet(onDismissRequest = ::dismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        onDismissRequest = ::dismiss,
+        sheetState = sheetState,
+        containerColor = PokyhTheme.colors.card,
+        shape = PokyhShapes.topXxl,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(horizontal = PokyhSpacing.screenH)
+                .padding(bottom = PokyhSpacing.xxl),
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
         ) {
-            Text("Neue Erinnerung", style = PokyhType.title3, color = PokyhTheme.colors.textPrimary)
+            Text("Neue Erinnerung", style = PokyhType.title1, color = PokyhTheme.colors.textPrimary)
 
-            OutlinedTextField(
+            PokyhTextField(
                 value = title,
                 onValueChange = { title = it },
-                label = { Text("Titel") },
-                singleLine = true,
+                placeholder = "Titel",
+                label = "Titel",
                 modifier = Modifier.fillMaxWidth(),
-                colors = pokyhTextFieldColors(),
             )
-            OutlinedTextField(
+            PokyhTextField(
                 value = body,
                 onValueChange = { body = it },
-                label = { Text("Beschreibung (optional)") },
+                placeholder = "Optional",
+                label = "Beschreibung",
+                singleLine = false,
                 minLines = 2,
                 modifier = Modifier.fillMaxWidth(),
-                colors = pokyhTextFieldColors(),
             )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .cardSurface(radius = 12.dp)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Erinnern am", style = PokyhType.subheadline, color = PokyhTheme.colors.textSecondary)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { showDatePicker = true }) {
-                        Text(pickedDate.format(DueDateFormatter), color = Brand.accent)
-                    }
-                    TextButton(onClick = { showTimePicker = true }) {
-                        Text(time.format(TimeFormatter), color = Brand.accent)
-                    }
+            Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+                PokyhLabel("Erinnern am", color = PokyhTheme.colors.textSecondary)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .insetSurface(PokyhShapes.md)
+                        .padding(horizontal = PokyhSpacing.sm, vertical = PokyhSpacing.xs),
+                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PokyhTextButton(
+                        text = pickedDate.format(DueDateFormatter),
+                        icon = PokyhIcons.timetable,
+                        onClick = { showDatePicker = true },
+                    )
+                    Spacer(Modifier.weight(1f))
+                    PokyhTextButton(
+                        text = time.format(TimeFormatter),
+                        icon = PokyhIcons.clock,
+                        onClick = { showTimePicker = true },
+                    )
                 }
             }
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = ::dismiss) { Text("Abbrechen") }
-                Spacer(Modifier.size(8.dp))
-                Button(
+            Spacer(Modifier.size(PokyhSpacing.xs))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PokyhTextButton(
+                    text = "Abbrechen",
+                    onClick = ::dismiss,
+                    color = PokyhTheme.colors.textSecondary,
+                )
+                Spacer(Modifier.weight(1f))
+                PokyhPrimaryButton(
+                    text = "Hinzufügen",
                     onClick = {
                         val remindAt = pickedDate.atTime(time).atZone(ZoneId.systemDefault()).toInstant().toString()
                         onAdd(title.trim(), body, remindAt)
                     },
-                    enabled = title.isNotBlank() && !submitting,
-                    colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
-                ) {
-                    Text("Hinzufügen")
-                }
+                    enabled = title.isNotBlank(),
+                    loading = submitting,
+                )
             }
         }
     }
@@ -315,13 +305,20 @@ private fun AddReminderSheet(
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { dateMillis = it }
-                    showDatePicker = false
-                }) { Text("Übernehmen") }
+                PokyhTextButton(
+                    text = "Übernehmen",
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { dateMillis = it }
+                        showDatePicker = false
+                    },
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Abbrechen") }
+                PokyhTextButton(
+                    text = "Abbrechen",
+                    onClick = { showDatePicker = false },
+                    color = PokyhTheme.colors.textSecondary,
+                )
             },
         ) {
             DatePicker(state = datePickerState)
@@ -329,33 +326,35 @@ private fun AddReminderSheet(
     }
 
     if (showTimePicker) {
-        val timePickerState = rememberTimePickerState(initialHour = time.hour, initialMinute = time.minute, is24Hour = true)
+        val timePickerState = rememberTimePickerState(
+            initialHour = time.hour,
+            initialMinute = time.minute,
+            is24Hour = true,
+        )
         AlertDialog(
             onDismissRequest = { showTimePicker = false },
+            shape = PokyhShapes.xl,
+            containerColor = PokyhTheme.colors.card,
             confirmButton = {
-                TextButton(onClick = {
-                    time = LocalTime.of(timePickerState.hour, timePickerState.minute)
-                    showTimePicker = false
-                }) { Text("Übernehmen") }
+                PokyhTextButton(
+                    text = "Übernehmen",
+                    onClick = {
+                        time = LocalTime.of(timePickerState.hour, timePickerState.minute)
+                        showTimePicker = false
+                    },
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showTimePicker = false }) { Text("Abbrechen") }
+                PokyhTextButton(
+                    text = "Abbrechen",
+                    onClick = { showTimePicker = false },
+                    color = PokyhTheme.colors.textSecondary,
+                )
             },
             text = { TimePicker(state = timePickerState) },
         )
     }
 }
-
-@Composable
-private fun pokyhTextFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Brand.accent,
-    unfocusedBorderColor = PokyhTheme.colors.border,
-    focusedLabelColor = Brand.accent,
-    unfocusedLabelColor = PokyhTheme.colors.textSecondary,
-    cursorColor = Brand.accent,
-    focusedTextColor = PokyhTheme.colors.textPrimary,
-    unfocusedTextColor = PokyhTheme.colors.textPrimary,
-)
 
 private val DueDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("d. MMM yyyy", Locale.GERMAN)
 private val TimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.GERMAN)
@@ -372,7 +371,8 @@ internal fun visibleReminders(list: List<ApiReminder>): List<ApiReminder> {
 }
 
 /** `TodoRow.dueText`, ported — date only (no time), matching the iOS source 1:1. */
-internal fun dueText(instant: Instant): String = instant.atZone(ZoneId.systemDefault()).toLocalDate().format(DueDateFormatter)
+internal fun dueText(instant: Instant): String =
+    instant.atZone(ZoneId.systemDefault()).toLocalDate().format(DueDateFormatter)
 
 /** `MessageFormat.parse`, ported — tries ISO-8601 first, then a handful of common backend
  * timestamp shapes, else `null`. */
@@ -381,7 +381,9 @@ internal fun parseRemindAt(raw: String): Instant? {
     runCatching { return OffsetDateTime.parse(raw).toInstant() }
     for (pattern in listOf("yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm")) {
         runCatching {
-            return LocalDateTime.parse(raw, DateTimeFormatter.ofPattern(pattern)).atZone(ZoneId.systemDefault()).toInstant()
+            return LocalDateTime.parse(raw, DateTimeFormatter.ofPattern(pattern))
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
         }
     }
     runCatching { return LocalDate.parse(raw).atStartOfDay(ZoneId.systemDefault()).toInstant() }

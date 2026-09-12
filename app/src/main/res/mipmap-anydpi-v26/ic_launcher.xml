@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The real POKYH mark. `pokyh_logo.png` is already an icon-shaped rounded square whose artwork
+     (fork … clock/"P" … knife) runs nearly edge to edge, so it can't be used full-bleed here: a
+     circular launcher mask would clip the cutlery. The foreground bitmap is therefore the logo
+     scaled into the adaptive safe zone (central 72 of the 108 canvas) over the logo's own
+     sampled background color — generated from the source PNG, see the repo's icon-generation
+     notes. `monochrome` is deliberately absent: a themed-icon silhouette needs its own
+     single-color artwork, and derived-from-a-gradient-bitmap versions look wrong. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>

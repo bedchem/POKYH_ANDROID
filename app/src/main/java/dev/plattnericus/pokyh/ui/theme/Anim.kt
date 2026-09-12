@@ -32,15 +32,76 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 
 /**
- * Motion tokens ported from Theme.swift's `PressableStyle` / `fadeIn` / `popIn` /
- * `slideInTrailing` / Shimmer. Spring "response/dampingFraction" params are translated to
- * Compose's stiffness/dampingRatio using the standard conversion
- * `stiffness = (2*PI/response)^2`, `dampingRatio` carried over directly.
+ * Motion tokens. Spring "response/dampingFraction" params are translated to Compose's
+ * stiffness/dampingRatio using the standard conversion `stiffness = (2*PI/response)^2`, with
+ * `dampingRatio` carried over directly.
+ *
+ * Motion here is all short and all in service of showing what changed: content settles in on
+ * first appearance ([fadeIn]), a tap answers immediately ([pressable] for whole surfaces,
+ * [pressHighlight] for rows), selection changes crossfade, and pushes slide. Nothing bounces
+ * decoratively and nothing runs long enough to wait on.
  */
 private fun springOf(response: Float, dampingFraction: Float) = spring<Float>(
     dampingRatio = dampingFraction,
     stiffness = ((2 * Math.PI) / response).let { (it * it).toFloat() },
 )
+
+/** Durations and springs shared by nav transitions, state flips and new components, so no call
+ * site invents its own timing. */
+object PokyhMotion {
+    /** Press/release, a chip switching state — should feel instant. */
+    const val durationFast = 140
+
+    /** The default: nav transitions, expand/collapse, crossfades. */
+    const val durationStandard = 260
+
+    /** Reserved for a large surface moving a long way (a sheet, a full-screen overlay). */
+    const val durationSlow = 400
+
+    /** Quick, slightly bouncy — press feedback, small state flips. */
+    fun springSnappy() = spring<Float>(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium)
+
+    /** Slower, more settled — nav transitions, larger surfaces. */
+    fun springSmooth() = spring<Float>(dampingRatio = 0.62f, stiffness = Spring.StiffnessLow)
+}
+
+/**
+ * Press feedback for something that shouldn't move: a row inside a grouped list, a card. Fades
+ * a faint scrim of the theme's text color over the surface while held, instead of scaling it.
+ *
+ * [pressable]'s scale is right for a standalone tile (it looks like the tile is being pushed),
+ * but scaling one row of a grouped list makes it visibly break out of the card it lives in —
+ * hence two press tokens, chosen by shape rather than by taste. Pass the [shape] the surface is
+ * clipped to, or `null` for a square-cornered region (a row inside an already-clipped card).
+ */
+fun Modifier.pressHighlight(
+    interactionSource: MutableInteractionSource,
+    shape: androidx.compose.ui.graphics.Shape?,
+): Modifier = composed {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val colors = PokyhTheme.colors
+    val alpha by animateFloatAsState(
+        targetValue = if (pressed) if (colors.isDark) 0.07f else 0.045f else 0f,
+        animationSpec = tween(durationMillis = PokyhMotion.durationFast),
+        label = "pressHighlight",
+    )
+    val scrim = colors.textPrimary.copy(alpha = alpha)
+    drawWithContent {
+        drawContent()
+        if (alpha <= 0f) return@drawWithContent
+        if (shape == null) {
+            drawRect(color = scrim)
+        } else {
+            val outline = shape.createOutline(size, layoutDirection, this)
+            when (outline) {
+                is androidx.compose.ui.graphics.Outline.Generic -> drawPath(outline.path, scrim)
+                is androidx.compose.ui.graphics.Outline.Rounded ->
+                    drawPath(androidx.compose.ui.graphics.Path().apply { addRoundRect(outline.roundRect) }, scrim)
+                is androidx.compose.ui.graphics.Outline.Rectangle -> drawRect(color = scrim)
+            }
+        }
+    }
+}
 
 /** `.buttonStyle(.pressable)` — scale to 0.96 while pressed, `spring(response: 0.3, dampingFraction: 0.6)`. */
 fun Modifier.pressable(interactionSource: MutableInteractionSource): Modifier = composed {
@@ -73,7 +134,7 @@ fun Modifier.fadeIn(delayMillis: Int = 0): Modifier {
         }
 }
 
-/** `.popIn()` — scale 0.5→1 + fade, `spring(response: 0.4, dampingFraction: 0.55)`, delay 50ms. */
+/** `.popIn()` — scale 0.5→1 + fade, `spring(response: 0.4, dampingFraction: 0.55)`. */
 @Composable
 fun Modifier.popIn(): Modifier {
     var shown by remember { mutableFloatStateOf(0f) }
@@ -91,9 +152,9 @@ fun Modifier.popIn(): Modifier {
 }
 
 /**
- * `.slideInTrailing()` — offsetX 44dp→0, blur 5dp→0 (API 31+ only, no-op below), scale
- * 0.92→1 anchored trailing, `spring(response: 0.5, dampingFraction: 0.62)`, delay 80ms.
- * Used for the year-picker menu label appearing top-right in Grades/Absences/Classreg.
+ * `.slideInTrailing()` — offsetX 44dp→0, scale 0.92→1 anchored trailing,
+ * `spring(response: 0.5, dampingFraction: 0.62)`. Used for the year-picker menu label
+ * appearing top-right in Grades/Absences/Classreg.
  */
 @Composable
 fun Modifier.slideInTrailing(): Modifier {
@@ -166,5 +227,6 @@ private fun Modifier.drawWithShimmer(phase: Float, widthPx: Float): Modifier = c
     }
 }
 
-/** Theme light/dark crossfade veil — see PokyhApp.kt for the phase-switch usage. */
+/** Theme light/dark crossfade duration — wired up in the redesign's motion pass to crossfade
+ * colors when the Profile "Erscheinungsbild" setting changes at runtime, instead of hard-cutting. */
 val ThemeCrossfadeDurationMillis = 220

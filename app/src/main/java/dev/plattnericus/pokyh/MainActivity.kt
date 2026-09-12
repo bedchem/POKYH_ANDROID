@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -37,12 +38,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Android 12+ (API 31+) already shows the themed splash (Theme.Pokyh.Splash /
-        // windowSplashScreenBackground) purely from the manifest/theme, no code needed. Below
-        // that, the activity's own windowBackground (same color) covers the gap. Either way, we
-        // additionally hold a plain colored screen in Compose itself — not the core-splashscreen
-        // library — until the persisted theme preference has loaded, so the very first *composed*
-        // frame never flashes System-default before switching to the real theme.
+        // Now actually wired up (AndroidManifest.xml launches into Theme.Pokyh.Splash, which
+        // installSplashScreen() below reads): keeps the themed system splash on screen until
+        // AppState.isReady, covering the pre-Compose gap the in-Compose Box below never could.
+        // Theme-invariant splash background (see Theme.Pokyh.Splash's doc) means this can't
+        // flash a mismatched color against the in-app dark-mode override either. Called after
+        // super.onCreate() (not before, despite most installSplashScreen() samples) because
+        // Hilt's field injection into `appState` happens inside that super call.
+        val splashScreen = installSplashScreen()
+        splashScreen.setKeepOnScreenCondition { !appState.isReady.value }
+
         enableEdgeToEdge()
 
         // App-wide (not per-Activity) background/foreground signal for auto-lock — the Android
@@ -80,7 +85,8 @@ class MainActivity : ComponentActivity() {
                 if (isReady) {
                     PokyhApp(appState)
                 } else {
-                    // Compose-level splash hold — see the onCreate() comment above.
+                    // Belt-and-suspenders only — the real splash (kept via
+                    // setKeepOnScreenCondition above) already covers this gap visually.
                     Box(androidx.compose.ui.Modifier.fillMaxSize().background(dev.plattnericus.pokyh.ui.theme.PokyhTheme.colors.bg))
                 }
             }

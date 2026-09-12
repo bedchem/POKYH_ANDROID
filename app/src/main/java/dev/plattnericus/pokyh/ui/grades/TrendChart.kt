@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,6 +37,9 @@ import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
+import dev.plattnericus.pokyh.ui.components.PokyhLabel
+import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.cardSurface
 import dev.plattnericus.pokyh.ui.theme.gradeColor
@@ -72,11 +74,14 @@ fun TrendChart(values: List<Double>, modifier: Modifier = Modifier) {
     val gradePts = remember(values) { pointsFor(values) }
     val avgPts = remember(cumulativeAverages) { pointsFor(cumulativeAverages) }
 
-    Column(modifier = modifier.fillMaxWidth().cardSurface().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = modifier.fillMaxWidth().cardSurface().padding(PokyhSpacing.card),
+        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+    ) {
         // Header + legend.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(PokyhIcons.chart_xyaxis_line, contentDescription = null, tint = PokyhTheme.colors.textSecondary, modifier = Modifier.size(13.dp))
-            Text("Notenverlauf", style = PokyhType.caption.copy(fontWeight = FontWeight.Bold), color = PokyhTheme.colors.textSecondary)
+            Icon(PokyhIcons.gradeTrend, contentDescription = null, tint = PokyhTheme.colors.textSecondary, modifier = Modifier.size(13.dp))
+            PokyhLabel("Notenverlauf", color = PokyhTheme.colors.textSecondary)
             Spacer(Modifier.weight(1f))
             LegendDot(Brand.accent.copy(alpha = 0.6f), "Noten")
             LegendDot(avgColor, "Ø")
@@ -91,7 +96,7 @@ fun TrendChart(values: List<Double>, modifier: Modifier = Modifier) {
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                YTicks.forEach { t -> Text(Fmt.num(t, digits = 0), fontSize = 9.sp, color = textTertiary) }
+                YTicks.forEach { t -> Text(Fmt.num(t, digits = 0), style = PokyhType.caption2, color = textTertiary) }
             }
 
             BoxWithConstraints(modifier = Modifier.weight(1f).height(ChartHeight)) {
@@ -166,9 +171,9 @@ fun TrendChart(values: List<Double>, modifier: Modifier = Modifier) {
 
         // X-Achse (Reihenfolge der Noten).
         Row(modifier = Modifier.fillMaxWidth().padding(start = 24.dp)) {
-            Text("Note 1", fontSize = 9.sp, color = textTertiary)
+            Text("Note 1", style = PokyhType.caption2, color = textTertiary)
             Spacer(Modifier.weight(1f))
-            Text("Note ${values.size}", fontSize = 9.sp, color = textTertiary)
+            Text("Note ${values.size}", style = PokyhType.caption2, color = textTertiary)
         }
     }
 }
@@ -179,8 +184,8 @@ fun TrendChart(values: List<Double>, modifier: Modifier = Modifier) {
 @Composable
 private fun CenteredBadge(xPx: Float, yPx: Float, color: Color, label: String) {
     Layout(content = {
-        Box(modifier = Modifier.background(color, CircleShape).padding(horizontal = 5.dp, vertical = 1.5.dp)) {
-            Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Box(modifier = Modifier.background(color, PokyhShapes.pill).padding(horizontal = 6.dp, vertical = 2.dp)) {
+            Text(label, style = PokyhType.badgeChip, color = Brand.onAccent)
         }
     }) { measurables, constraints ->
         val placeable = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
@@ -195,8 +200,8 @@ private fun CenteredBadge(xPx: Float, yPx: Float, color: Color, label: String) {
 @Composable
 private fun LegendDot(color: Color, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        Box(Modifier.size(6.dp).background(color, CircleShape))
-        Text(text, fontSize = 9.sp, color = PokyhTheme.colors.textTertiary)
+        Box(Modifier.size(6.dp).background(color, PokyhShapes.pill))
+        Text(text, style = PokyhType.caption2, color = PokyhTheme.colors.textTertiary)
     }
 }
 

@@ -2,7 +2,6 @@
 
 package dev.plattnericus.pokyh.ui.todos
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,28 +14,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -46,7 +35,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -56,13 +44,24 @@ import dev.plattnericus.pokyh.ui.components.BackendUnavailableView
 import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.ListSkeleton
+import dev.plattnericus.pokyh.ui.components.PokyhFab
+import dev.plattnericus.pokyh.ui.components.PokyhIconButton
+import dev.plattnericus.pokyh.ui.components.PokyhLabel
+import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
+import dev.plattnericus.pokyh.ui.components.PokyhSecondaryButton
+import dev.plattnericus.pokyh.ui.components.PokyhTextButton
+import dev.plattnericus.pokyh.ui.components.PokyhTextField
+import dev.plattnericus.pokyh.ui.components.PokyhTileRow
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
+import dev.plattnericus.pokyh.ui.components.StatusLabel
+import dev.plattnericus.pokyh.ui.components.SwipeToDeleteBackground
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.appBackground
-import dev.plattnericus.pokyh.ui.theme.cardSurface
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import java.time.Instant
 import java.time.LocalDate
@@ -73,33 +72,30 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.launch
 
-/** TodosView.swift, ported. */
+/** Todos — a swipe-to-delete list of [PokyhTileRow]s, with the add action as a labelled
+ * [PokyhFab]. Rows stand on their own surface rather than in a grouped card, because each one is
+ * independently swipeable and a swipe out of a grouped card would tear the card. */
 @Composable
 fun TodosScreen(viewModel: TodosViewModel = hiltViewModel()) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val backendStatus by viewModel.backendStatus.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val hasBackend = session?.apiToken != null
-
     var showAdd by remember { mutableStateOf(false) }
+    val openCount = ui.todos.count { !it.done }
 
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
-            TopAppBar(
-                title = { Text("Todos", style = PokyhType.headline) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PokyhTheme.colors.bg,
-                    titleContentColor = PokyhTheme.colors.textPrimary,
-                ),
+            PokyhTopBar(
+                title = "Todos",
+                eyebrow = if (ui.todos.isEmpty()) null else "$openCount offen · ${ui.todos.size} gesamt",
             )
         },
         floatingActionButton = {
             if (hasBackend) {
-                FloatingActionButton(onClick = { showAdd = true }, containerColor = Brand.accent, contentColor = Color.White) {
-                    Icon(PokyhIcons.plus, contentDescription = "Neues Todo")
-                }
+                PokyhFab(text = "Neu", icon = PokyhIcons.add, onClick = { showAdd = true })
             }
         },
     ) { innerPadding ->
@@ -107,16 +103,28 @@ fun TodosScreen(viewModel: TodosViewModel = hiltViewModel()) {
             when {
                 !hasBackend -> BackendUnavailableView(feature = "Todos", status = backendStatus)
                 ui.loading && ui.todos.isEmpty() -> ListSkeleton()
-                ui.error != null && ui.todos.isEmpty() -> ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
+                ui.error != null && ui.todos.isEmpty() ->
+                    ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
                 ui.todos.isEmpty() -> EmptyStateView(
-                    icon = PokyhIcons.checklist,
+                    icon = PokyhIcons.todos,
                     title = "Keine Todos",
-                    subtitle = "Tippe auf +, um eine Aufgabe anzulegen.",
+                    subtitle = "Lege eine Aufgabe an, um sie hier zu sehen.",
+                    action = {
+                        PokyhSecondaryButton(
+                            text = "Aufgabe anlegen",
+                            icon = PokyhIcons.add,
+                            onClick = { showAdd = true },
+                        )
+                    },
                 )
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(
+                        start = PokyhSpacing.screenH,
+                        end = PokyhSpacing.screenH,
+                        bottom = PokyhSpacing.huge + PokyhSpacing.xxxl,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
                 ) {
                     items(ui.todos, key = { it.id }) { todo ->
                         TodoSwipeRow(
@@ -154,21 +162,7 @@ private fun TodoSwipeRow(todo: ApiTodo, onToggle: () -> Unit, onDelete: () -> Un
     SwipeToDismissBox(
         state = dismissState,
         modifier = Modifier.fadeIn(),
-        backgroundContent = {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Brand.danger, PokyhShapes.r14)
-                    .padding(horizontal = 18.dp),
-                contentAlignment = if (dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart) {
-                    Alignment.CenterEnd
-                } else {
-                    Alignment.CenterStart
-                },
-            ) {
-                Icon(PokyhIcons.trash, contentDescription = "Löschen", tint = Color.White)
-            }
-        },
+        backgroundContent = { SwipeToDeleteBackground(dismissState.dismissDirection) },
     ) {
         TodoRow(todo = todo, onToggle = onToggle)
     }
@@ -176,36 +170,35 @@ private fun TodoSwipeRow(todo: ApiTodo, onToggle: () -> Unit, onDelete: () -> Un
 
 @Composable
 private fun TodoRow(todo: ApiTodo, onToggle: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .cardSurface(radius = 14.dp)
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        IconButton(onClick = onToggle, modifier = Modifier.size(28.dp)) {
-            Icon(
-                imageVector = if (todo.done) PokyhIcons.checkmark_circle_fill else PokyhIcons.circle_outline,
-                contentDescription = if (todo.done) "Erledigt" else "Offen",
-                tint = if (todo.done) Brand.tint else PokyhTheme.colors.textSecondary,
-            )
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    val colors = PokyhTheme.colors
+    PokyhTileRow(verticalAlignment = Alignment.Top) {
+        PokyhIconButton(
+            icon = if (todo.done) PokyhIcons.radioOn else PokyhIcons.radioOff,
+            contentDescription = if (todo.done) "Erledigt" else "Offen",
+            onClick = onToggle,
+            tint = if (todo.done) Brand.success else colors.textTertiary,
+            size = 32.dp,
+            iconSize = 24.dp,
+        )
+        Column(
+            modifier = Modifier.weight(1f).padding(top = PokyhSpacing.xs),
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+        ) {
             Text(
                 text = todo.title,
                 style = PokyhType.body,
-                color = if (todo.done) PokyhTheme.colors.textSecondary else PokyhTheme.colors.textPrimary,
+                color = if (todo.done) colors.textTertiary else colors.textPrimary,
                 textDecoration = if (todo.done) TextDecoration.LineThrough else TextDecoration.None,
             )
             if (todo.details.isNotEmpty()) {
-                Text(todo.details, style = PokyhType.caption, color = PokyhTheme.colors.textSecondary)
+                Text(todo.details, style = PokyhType.footnote, color = colors.textSecondary)
             }
             todo.dueAt?.let { due -> parseDueDate(due) }?.let { date ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Icon(PokyhIcons.calendar, contentDescription = null, tint = Brand.orange, modifier = Modifier.size(12.dp))
-                    Text(date.format(DueDateFormatter), style = PokyhType.caption2, color = Brand.orange)
-                }
+                StatusLabel(
+                    text = date.format(DueDateFormatter),
+                    color = Brand.orange,
+                    icon = PokyhIcons.timetable,
+                )
             }
         }
     }
@@ -229,84 +222,86 @@ private fun AddTodoSheet(
         scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
     }
 
-    ModalBottomSheet(onDismissRequest = ::dismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        onDismissRequest = ::dismiss,
+        sheetState = sheetState,
+        containerColor = PokyhTheme.colors.card,
+        shape = PokyhShapes.topXxl,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(horizontal = PokyhSpacing.screenH)
+                .padding(bottom = PokyhSpacing.xxl),
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
         ) {
-            Text("Neues Todo", style = PokyhType.title3, color = PokyhTheme.colors.textPrimary)
-
-            OutlinedTextField(
+            Text("Neues Todo", style = PokyhType.title1, color = PokyhTheme.colors.textPrimary)
+            PokyhTextField(
                 value = title,
                 onValueChange = { title = it },
-                label = { Text("Titel") },
-                singleLine = true,
+                placeholder = "Titel",
+                label = "Titel",
                 modifier = Modifier.fillMaxWidth(),
-                colors = pokyhTextFieldColors(),
             )
-            OutlinedTextField(
+            PokyhTextField(
                 value = details,
                 onValueChange = { details = it },
-                label = { Text("Details (optional)") },
+                placeholder = "Optional",
+                label = "Details",
+                singleLine = false,
                 minLines = 2,
                 modifier = Modifier.fillMaxWidth(),
-                colors = pokyhTextFieldColors(),
             )
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Fälligkeitsdatum", style = PokyhType.body, color = PokyhTheme.colors.textPrimary)
+                Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
+                    Text("Fälligkeitsdatum", style = PokyhType.body, color = PokyhTheme.colors.textPrimary)
+                    if (hasDue) {
+                        PokyhTextButton(
+                            text = Instant.ofEpochMilli(dueMillis)
+                                .atZone(ZoneId.of("UTC"))
+                                .toLocalDate()
+                                .format(DueDateFormatter),
+                            onClick = { showDatePicker = true },
+                        )
+                    }
+                }
                 Switch(
                     checked = hasDue,
                     onCheckedChange = { checked ->
                         hasDue = checked
                         if (checked) showDatePicker = true
                     },
-                    colors = SwitchDefaults.colors(checkedTrackColor = Brand.accent, checkedThumbColor = Color.White),
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Brand.accent,
+                        checkedThumbColor = Brand.onAccent,
+                    ),
                 )
             }
-            if (hasDue) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .cardSurface(radius = 12.dp)
-                        .padding(horizontal = 14.dp, vertical = 12.dp)
-                        .then(Modifier),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Fällig am", style = PokyhType.subheadline, color = PokyhTheme.colors.textSecondary)
-                    TextButton(onClick = { showDatePicker = true }) {
-                        Text(
-                            Instant.ofEpochMilli(dueMillis).atZone(ZoneId.of("UTC")).toLocalDate().format(DueDateFormatter),
-                            color = Brand.accent,
-                        )
-                    }
-                }
-            }
-
+            Spacer(Modifier.size(PokyhSpacing.xs))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = ::dismiss) { Text("Abbrechen") }
-                Spacer(Modifier.size(8.dp))
-                Button(
+                PokyhTextButton(
+                    text = "Abbrechen",
+                    onClick = ::dismiss,
+                    color = PokyhTheme.colors.textSecondary,
+                )
+                Spacer(Modifier.weight(1f))
+                PokyhPrimaryButton(
+                    text = "Hinzufügen",
                     onClick = {
                         val dueAt = if (hasDue) Instant.ofEpochMilli(dueMillis).toString() else null
                         onAdd(title.trim(), details, dueAt)
                     },
-                    enabled = title.isNotBlank() && !submitting,
-                    colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
-                ) {
-                    Text("Hinzufügen")
-                }
+                    enabled = title.isNotBlank(),
+                    loading = submitting,
+                )
             }
         }
     }
@@ -316,13 +311,20 @@ private fun AddTodoSheet(
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { dueMillis = it }
-                    showDatePicker = false
-                }) { Text("Übernehmen") }
+                PokyhTextButton(
+                    text = "Übernehmen",
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { dueMillis = it }
+                        showDatePicker = false
+                    },
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Abbrechen") }
+                PokyhTextButton(
+                    text = "Abbrechen",
+                    onClick = { showDatePicker = false },
+                    color = PokyhTheme.colors.textSecondary,
+                )
             },
         ) {
             DatePicker(state = datePickerState)
@@ -330,21 +332,10 @@ private fun AddTodoSheet(
     }
 }
 
-@Composable
-private fun pokyhTextFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Brand.accent,
-    unfocusedBorderColor = PokyhTheme.colors.border,
-    focusedLabelColor = Brand.accent,
-    unfocusedLabelColor = PokyhTheme.colors.textSecondary,
-    cursorColor = Brand.accent,
-    focusedTextColor = PokyhTheme.colors.textPrimary,
-    unfocusedTextColor = PokyhTheme.colors.textPrimary,
-)
-
 private val DueDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("d. MMM yyyy", Locale.GERMAN)
 
 /** `MessageFormat.parse`, ported — tries ISO-8601 first, then a handful of common backend
- * timestamp shapes, else `null` (row's due-date label is simply omitted, matching iOS). */
+ * timestamp shapes, else `null` (the row's due-date label is simply omitted). */
 private fun parseDueDate(raw: String): LocalDate? {
     runCatching { return OffsetDateTime.parse(raw).toLocalDate() }
     runCatching { return Instant.parse(raw).atZone(ZoneId.of("UTC")).toLocalDate() }
@@ -354,3 +345,4 @@ private fun parseDueDate(raw: String): LocalDate? {
     runCatching { return LocalDate.parse(raw) }
     return null
 }
+

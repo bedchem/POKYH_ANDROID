@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -32,7 +31,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,9 +52,11 @@ import dev.plattnericus.pokyh.ui.components.SpecialDaySpec
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.pressable
+import dev.plattnericus.pokyh.ui.theme.softenedFill
 import dev.plattnericus.pokyh.ui.theme.subjectColor
 import kotlinx.datetime.LocalDate
 
@@ -106,7 +106,7 @@ fun WeekGrid(
             modifier = Modifier
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 5.dp)
-                .padding(bottom = 16.dp),
+                .padding(bottom = PokyhSpacing.xxxl),
         ) {
             WeekGridHeaderRow(colW = colW, gutter = gutter, dayLabels = dayLabels, dates = dates, todayNum = todayNum, dayNums = dayNums)
             Row(Modifier.height(totalHeight)) {
@@ -140,19 +140,19 @@ private fun WeekGridHeaderRow(colW: Dp, gutter: Dp, dayLabels: List<String>, dat
             ) {
                 Text(
                     dayLabels.getOrElse(d) { "" },
-                    style = PokyhType.caption2.copy(fontWeight = FontWeight.SemiBold),
+                    style = PokyhType.caption2,
                     color = if (isToday) Brand.accent else PokyhTheme.colors.textSecondary,
                 )
                 Box(
                     modifier = Modifier
                         .size(22.dp)
-                        .background(if (isToday) Brand.accent else Color.Transparent, CircleShape),
+                        .background(if (isToday) Brand.accent else Color.Transparent, PokyhShapes.pill),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         "${dates.getOrNull(d)?.dayOfMonth ?: ""}",
-                        style = PokyhType.footnote.copy(fontWeight = FontWeight.Bold),
-                        color = if (isToday) Color.White else PokyhTheme.colors.textPrimary,
+                        style = PokyhType.caption,
+                        color = if (isToday) Brand.onAccent else PokyhTheme.colors.textPrimary,
                     )
                 }
             }
@@ -241,7 +241,7 @@ private fun GridLessonCell(slot: MergedSlot, height: Dp, modifier: Modifier = Mo
     val d = slot.display
     val color = slotColor(slot)
     val subjectText = d.subjectName.ifEmpty { d.note ?: "—" }
-    val shape = PokyhShapes.r7
+    val shape = PokyhShapes.sm
 
     Box(
         modifier = modifier
@@ -256,12 +256,12 @@ private fun GridLessonCell(slot: MergedSlot, height: Dp, modifier: Modifier = Mo
             SlotKind.EXAM -> Box(Modifier.fillMaxSize().background(Brand.warning.copy(alpha = 0.13f)))
             SlotKind.REPLACEMENT -> Box(Modifier.fillMaxSize().background(Brand.orange.copy(alpha = 0.12f)))
             SlotKind.EVENT -> Box(Modifier.fillMaxSize().background(Brand.accent.copy(alpha = 0.12f)))
-            SlotKind.NORMAL -> Box(Modifier.fillMaxSize().background(PokyhTheme.colors.surface))
+            SlotKind.NORMAL -> Box(Modifier.fillMaxSize().background(PokyhTheme.colors.card))
         }
 
         Row(Modifier.fillMaxSize()) {
             if (slot.kind == SlotKind.NORMAL && !d.isCancelled) {
-                Box(Modifier.width(3.dp).fillMaxHeight().background(color))
+                Box(Modifier.width(3.dp).fillMaxHeight().background(color.softenedFill()))
             }
             Column(
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
@@ -270,7 +270,7 @@ private fun GridLessonCell(slot: MergedSlot, height: Dp, modifier: Modifier = Mo
                 Text(
                     subjectText,
                     style = PokyhType.gridCellSubject,
-                    color = if (d.isCancelled) Brand.danger.copy(alpha = 0.8f) else PokyhTheme.colors.textPrimary,
+                    color = if (d.isCancelled) Brand.danger else PokyhTheme.colors.textPrimary,
                     textDecoration = if (d.isCancelled) TextDecoration.LineThrough else TextDecoration.None,
                     maxLines = if (height > 32.dp) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
@@ -318,11 +318,11 @@ private fun borderColorFor(kind: SlotKind): Color = when (kind) {
 private fun statusIconFor(slot: MergedSlot): ImageVector? {
     val d = slot.display
     return when {
-        d.isCancelled && slot.replacement != null -> PokyhIcons.arrow_left_arrow_right
-        d.isCancelled -> PokyhIcons.xmark
-        d.isExam -> PokyhIcons.doc_text
-        slot.kind == SlotKind.REPLACEMENT -> PokyhIcons.arrow_left_arrow_right
-        slot.kind == SlotKind.EVENT -> PokyhIcons.calendar
+        d.isCancelled && slot.replacement != null -> PokyhIcons.replacement
+        d.isCancelled -> PokyhIcons.close
+        d.isExam -> PokyhIcons.document
+        slot.kind == SlotKind.REPLACEMENT -> PokyhIcons.replacement
+        slot.kind == SlotKind.EVENT -> PokyhIcons.timetable
         else -> null
     }
 }
@@ -341,10 +341,10 @@ fun slotColor(slot: MergedSlot): Color {
 
 /** `SpecialDayCard`'s `config` table (TimetableView.swift), ported to a [SpecialDaySpec]. */
 fun specialDaySpecFor(kind: DayKind): SpecialDaySpec = when (kind) {
-    DayKind.HOLIDAY -> SpecialDaySpec(PokyhIcons.beach_umbrella_fill, Brand.orange, "Ferien", "Kein Unterricht")
-    DayKind.WEEKEND -> SpecialDaySpec(PokyhIcons.sun_max_fill, Brand.tint, "Wochenende", "Frei")
-    DayKind.ALL_CANCELLED -> SpecialDaySpec(PokyhIcons.xmark_circle_fill, Brand.danger, "Entfall", "Alle Stunden ausgefallen")
-    DayKind.ALL_REPLACEMENT -> SpecialDaySpec(PokyhIcons.arrow_left_arrow_right, Brand.accent, "Vertretung", "Tag durchgehend ersetzt")
-    DayKind.FULL_DAY_EVENT -> SpecialDaySpec(PokyhIcons.calendar, Brand.accent, "Veranstaltung", "Ganztägig")
-    DayKind.NORMAL -> SpecialDaySpec(PokyhIcons.calendar, Brand.accent, "", "")
+    DayKind.HOLIDAY -> SpecialDaySpec(PokyhIcons.holiday, Brand.orange, "Ferien", "Kein Unterricht")
+    DayKind.WEEKEND -> SpecialDaySpec(PokyhIcons.weekend, Brand.success, "Wochenende", "Frei")
+    DayKind.ALL_CANCELLED -> SpecialDaySpec(PokyhIcons.failed, Brand.danger, "Entfall", "Alle Stunden ausgefallen")
+    DayKind.ALL_REPLACEMENT -> SpecialDaySpec(PokyhIcons.replacement, Brand.accent, "Vertretung", "Tag durchgehend ersetzt")
+    DayKind.FULL_DAY_EVENT -> SpecialDaySpec(PokyhIcons.timetable, Brand.accent, "Veranstaltung", "Ganztägig")
+    DayKind.NORMAL -> SpecialDaySpec(PokyhIcons.timetable, Brand.accent, "", "")
 }

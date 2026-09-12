@@ -2,7 +2,6 @@ package dev.plattnericus.pokyh.core.widgets
 
 import android.content.Context
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
@@ -31,6 +30,7 @@ import dagger.hilt.android.EntryPointAccessors
 import dev.plattnericus.pokyh.MainActivity
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.ui.theme.Brand
+import dev.plattnericus.pokyh.ui.theme.DarkPokyhColors
 import dev.plattnericus.pokyh.ui.theme.subjectColor
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -91,8 +91,11 @@ private fun NextLessonContent(snapshot: TimetableSnapshot) {
 
 @Composable
 private fun LessonRow(lesson: LessonSnapshot, current: Boolean) {
+    // A widget renders outside the app's theme, so it can't read PokyhTheme.colors and has to
+    // pick a fixed neutral for "cancelled" — DarkPokyhColors.textTertiary, which is legible on
+    // both the light and dark widget backgrounds Glance may give us.
     val barColor = when {
-        lesson.isCancelled -> Color(0xFF9A98B0)
+        lesson.isCancelled -> DarkPokyhColors.textTertiary
         lesson.isExam -> Brand.warning
         else -> subjectColor(lesson.subject)
     }

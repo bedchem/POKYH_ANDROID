@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- POKYH brand mark: a clock-face ring (timetable) with 12 tick marks, a "P" monogram
+     centered inside, flanked by a fork and knife (cafeteria) — recreated as vector paths from
+     the app's real icon set (github.com/bedchem/POKYH), at the canonical brand colors
+     (Brand.accent / Brand.accentSoft). Self-contained: bakes in its own rounded-square
+     background, for in-app hero use.
+
+     Not referenced from code: PokyhMark.kt draws the real `pokyh_logo.png`, the launcher icon is
+     that same bitmap (mipmap-anydpi-v26/ic_launcher.xml), and so is the system splash icon — so
+     the mark is pixel-identical everywhere it appears. Kept as the scalable fallback. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Background: rounded square, indigo -> violet (Brand.accent / Brand.accentSoft). -->
+    <path android:pathData="M24,0 L84,0 A24,24 0 0 1 108,24 L108,84 A24,24 0 0 1 84,108 L24,108 A24,24 0 0 1 0,84 L0,24 A24,24 0 0 1 24,0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0"
+                android:startY="0"
+                android:endX="108"
+                android:endY="108"
+                android:startColor="#6366F1"
+                android:endColor="#8B5CF6" />
+        </aapt:attr>
+    </path>
+
+    <!-- Clock-face ring. -->
+    <path
+        android:pathData="M30,54 A24,24 0 1 1 78,54 A24,24 0 1 1 30,54"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3"
+        android:fillColor="#00000000" />
+
+    <!-- 12 clock ticks. -->
+    <path
+        android:pathData="M54,30 L54,26 M66,33.2 L68,29.8 M74.8,42 L78.3,40 M78,54 L82,54 M74.8,66 L78.3,68 M66,74.8 L68,78.3 M54,78 L54,82 M42,74.8 L40,78.3 M33.2,66 L29.8,68 M30,54 L26,54 M33.2,42 L29.8,40 M42,33.2 L40,29.8"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- "P" monogram. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44.3,39 L53.1,39 C58.9,39 63.7,43.8 63.7,49.6 C63.7,55.5 58.9,60.3 53.1,60.3 L49.3,60.3 L49.3,69 L44.3,69 Z M49.3,44 L49.3,55.3 C52.4,55.3 54.9,52.8 54.9,49.6 C54.9,46.5 52.4,44 49.3,44 Z" />
+
+    <!-- Fork (left). -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,20 L9.4,20 L9.4,38 L7,38 Z M11.8,20 L14.2,20 L14.2,38 L11.8,38 Z M16.6,20 L19,20 L19,38 L16.6,38 Z M21.4,20 L23.8,20 L23.8,38 L21.4,38 Z M7,38 L23.8,38 L18,46 L13,46 Z M13,46 L18,46 L18,86 L13,86 Z" />
+
+    <!-- Knife (right). -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M88,46 L88,24 L92,20 L97,24 L97,46 Z M90,46 L95,46 L95,86 L90,86 Z" />
+
+</vector>

@@ -1,5 +1,6 @@
 package dev.plattnericus.pokyh.ui.theme
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -18,15 +19,13 @@ import kotlin.math.sign
 import kotlin.math.sin
 
 /**
- * iOS draws every card/button/sheet with `RoundedRectangle(cornerRadius:, style: .continuous)`
- * — a "squircle" corner, visibly flatter/smoother than a plain circular-arc rounded corner
- * (Compose's default [androidx.compose.foundation.shape.RoundedCornerShape]). This is the one
- * shape used everywhere in the app so that parity holds at every radius (7dp grid cells up to
- * 24dp login card) without pulling in an extra shapes library.
+ * A "squircle" corner — a per-corner superellipse (Lamé curve) sweep, visibly flatter and
+ * smoother than a plain circular-arc corner ([RoundedCornerShape]). At [exponent] == 2 this is
+ * mathematically a circular corner; ~4.4 is the soft, slightly-flattened corner the whole app
+ * is drawn with, and is what keeps generous radii from looking like inflated pills.
  *
- * Implemented as a per-corner superellipse (Lamé curve) sweep: at [exponent] == 2 this is
- * mathematically a plain circular corner; iOS's continuous corner is well approximated by
- * exponent ~4–5, which is the default here.
+ * Everything rounded in the app uses this (via [PokyhRadius]/[smoothCorner]) so the corner
+ * character is identical at every size, from a 12dp timetable cell to a 28dp hero card.
  */
 @Immutable
 class SmoothCornerShape(
@@ -75,22 +74,52 @@ class SmoothCornerShape(
     }
 }
 
-/** Shorthand matching the iOS call-site style `RoundedRectangle(cornerRadius: r, style: .continuous)`. */
+/** A squircle at an arbitrary radius. Prefer a [PokyhShapes] token — this allocates a shape. */
 fun smoothCorner(radius: Dp): Shape = SmoothCornerShape(radius)
 
 /**
- * Precomputed shapes at every radius the iOS app actually uses (Theme.swift / *View.swift),
- * so screens share instances instead of allocating a new [SmoothCornerShape] per recomposition.
+ * The radius scale. Six steps, each tied to a *kind of thing* rather than to a number, so
+ * "what radius does this take?" has one answer and the answer scales with the element:
+ * bigger container -> bigger radius, always in this proportion.
+ *
+ * Reach for the token, never a `.dp` literal. If something seems to need a radius between two
+ * steps, it almost certainly belongs to one of the two.
+ */
+object PokyhRadius {
+    /** Inline chips-that-aren't-pills, tiny accent bars, badge corners. */
+    val xs = 8.dp
+
+    /** Controls and dense cells: inputs, day pills, timetable grid cells, thumbnails. */
+    val sm = 12.dp
+
+    /** Inset blocks inside a card, and small icon tiles. */
+    val md = 16.dp
+
+    /** A list row standing on its own on the canvas. */
+    val lg = 20.dp
+
+    /** The default card/sheet/grouped-list radius. The app's most common corner. */
+    val xl = 24.dp
+
+    /** Hero surfaces: feature tiles, stat cards, images, bottom-sheet tops, the nav bar. */
+    val xxl = 28.dp
+}
+
+/**
+ * Shared shape instances at every step of [PokyhRadius], so screens reuse one object instead of
+ * allocating a [SmoothCornerShape] per recomposition.
  */
 object PokyhShapes {
-    val r7 = SmoothCornerShape(7.dp)    // timetable grid cell
-    val r8 = SmoothCornerShape(8.dp)    // skeleton block, absence info line
-    val r10 = SmoothCornerShape(10.dp)  // day-selector pill, grade/target input, message attachment
-    val r11 = SmoothCornerShape(11.dp)  // home shortcut icon tile
-    val r12 = SmoothCornerShape(12.dp)  // slot row, small info cards, comment row/composer, login field
-    val r14 = SmoothCornerShape(14.dp)  // skeleton rows, subject/absence/classreg rows, lock account row
-    val r16 = SmoothCornerShape(16.dp)  // cardSurface() default, lesson-detail glass card
-    val r18 = SmoothCornerShape(18.dp)  // dish card, grades average card, absences overview, class header
-    val r20 = SmoothCornerShape(20.dp)  // switching overlay
-    val r24 = SmoothCornerShape(24.dp)  // login form card
+    val xs: Shape = SmoothCornerShape(PokyhRadius.xs)
+    val sm: Shape = SmoothCornerShape(PokyhRadius.sm)
+    val md: Shape = SmoothCornerShape(PokyhRadius.md)
+    val lg: Shape = SmoothCornerShape(PokyhRadius.lg)
+    val xl: Shape = SmoothCornerShape(PokyhRadius.xl)
+    val xxl: Shape = SmoothCornerShape(PokyhRadius.xxl)
+
+    /** Full capsule — buttons, chips, segmented tracks, badges, nav pills. */
+    val pill: Shape = RoundedCornerShape(50)
+
+    /** Top-rounded only, for surfaces anchored to the bottom edge (nav bar, sheets). */
+    val topXxl: Shape = RoundedCornerShape(topStart = PokyhRadius.xxl, topEnd = PokyhRadius.xxl)
 }

@@ -3,8 +3,13 @@
 package dev.plattnericus.pokyh.ui.profile
 
 import android.content.Intent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn as animateFadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,21 +18,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,12 +35,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -49,17 +47,31 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.ui.components.PokyhCard
+import dev.plattnericus.pokyh.ui.components.PokyhRow
+import dev.plattnericus.pokyh.ui.components.PokyhRowSeparator
+import dev.plattnericus.pokyh.ui.components.PokyhSection
+import dev.plattnericus.pokyh.ui.components.PokyhTextButton
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
+import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
+import dev.plattnericus.pokyh.ui.theme.PokyhMotion
+import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
+import dev.plattnericus.pokyh.ui.theme.insetSurface
 
 /**
- * ConnectionStatusView.swift, ported — a full-screen route (pushed from [ProfileScreen]'s
- * "POKYH-Konto" row) rather than iOS's sheet. Accessible for EVERY signed-in user (not just
- * ones with backend trouble) — it's the general "what does my POKYH account see" diagnosis.
+ * "Konto & Verbindung" — the general "what does my POKYH account see" diagnosis, reachable for
+ * every signed-in user (not just ones with backend trouble).
+ *
+ * Built from the same hero-then-grouped-rows shape as [ProfileScreen], with the status hero
+ * reusing the empty-state glyph-disc layout — so a screen that only ever appears when something
+ * is confusing still looks like the rest of the app.
+ *
  * Reuses [ProfileViewModel] for the session/status it already surfaces plus the diagnostics
  * plumbing that lives there (see that file's header comment for why).
  */
@@ -80,26 +92,21 @@ fun ConnectionStatusScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = PokyhTheme.colors.bg,
-        topBar = {
-            TopAppBar(
-                title = { Text("Konto & Verbindung", style = PokyhType.headline, color = PokyhTheme.colors.textPrimary) },
-                actions = { TextButton(onClick = onNavigateUp) { Text("Fertig") } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = PokyhTheme.colors.bg),
-            )
-        },
+        topBar = { PokyhTopBar(title = "Konto & Verbindung", nav = TopBarNav.Back(onNavigateUp)) },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().appBackground().padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            contentPadding = PaddingValues(
+                start = PokyhSpacing.screenH,
+                end = PokyhSpacing.screenH,
+                bottom = PokyhSpacing.xxxl,
+            ),
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
         ) {
             item(key = "hero") { HeroSection(backendStatus, Modifier.fadeIn()) }
-
             if (session != null) {
-                item(key = "konto_title") { SectionLabel("Dein Konto") }
                 item(key = "konto") { AccountInfoSection(session!!, Modifier.fadeIn(delayMillis = 40)) }
             }
-
             item(key = "details") {
                 DetailsSection(
                     loading = loadingDiagnostics,
@@ -121,7 +128,7 @@ fun ConnectionStatusScreen(
     }
 }
 
-// ── Hero ─────────────────────────────────────────────────────────────────
+// ── Hero ────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun HeroSection(status: BackendStatus, modifier: Modifier = Modifier) {
@@ -129,18 +136,24 @@ private fun HeroSection(status: BackendStatus, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(
-            modifier = Modifier.size(76.dp).background(tint.copy(alpha = 0.15f), CircleShape),
+            modifier = Modifier.size(80.dp).background(tint.copy(alpha = 0.12f), PokyhShapes.pill),
             contentAlignment = Alignment.Center,
         ) {
             Icon(statusIcon(status), contentDescription = null, tint = tint, modifier = Modifier.size(34.dp))
         }
-        Text(status.uiLabel(), style = PokyhType.title3, color = PokyhTheme.colors.textPrimary)
+        Spacer(Modifier.size(PokyhSpacing.lg))
         Text(
-            statusExplanation(status),
-            style = PokyhType.subheadline,
+            text = status.uiLabel(),
+            style = PokyhType.title2,
+            color = PokyhTheme.colors.textPrimary,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.size(PokyhSpacing.sm))
+        Text(
+            text = statusExplanation(status),
+            style = PokyhType.callout,
             color = PokyhTheme.colors.textSecondary,
             textAlign = TextAlign.Center,
         )
@@ -150,34 +163,41 @@ private fun HeroSection(status: BackendStatus, modifier: Modifier = Modifier) {
 private fun statusTint(status: BackendStatus): Color = when (status) {
     is BackendStatus.Ok -> Brand.success
     is BackendStatus.Failed -> Brand.danger
-    else -> Brand.orange
+    else -> Brand.warning
 }
 
 private fun statusIcon(status: BackendStatus): ImageVector = when (status) {
-    is BackendStatus.Ok -> PokyhIcons.checkmark_seal_fill
-    is BackendStatus.NotStudent -> PokyhIcons.person_fill_xmark
-    is BackendStatus.NoClass -> PokyhIcons.person_2_slash
-    is BackendStatus.Failed -> PokyhIcons.wifi_exclamationmark
-    is BackendStatus.Unknown -> PokyhIcons.questionmark_circle
+    is BackendStatus.Ok -> PokyhIcons.verified
+    is BackendStatus.NotStudent -> PokyhIcons.notAStudent
+    is BackendStatus.NoClass -> PokyhIcons.noClass
+    is BackendStatus.Failed -> PokyhIcons.serverUnreachable
+    is BackendStatus.Unknown -> PokyhIcons.unknown
 }
 
 private fun statusExplanation(status: BackendStatus): String = when (status) {
     is BackendStatus.Ok -> "Dein POKYH-Konto ist aktiv. Todos, Erinnerungen und Klasse stehen zur Verfügung."
     is BackendStatus.NotStudent -> "POKYH-Funktionen sind nur mit einem Schülerkonto verfügbar."
-    is BackendStatus.NoClass -> "Deine WebUntis-Klasse konnte nicht ermittelt werden — dadurch sind Todos & Erinnerungen gesperrt. Tippe auf Erneut prüfen; hilft das nicht, sende die technischen Details an den Support."
+    is BackendStatus.NoClass ->
+        "Deine WebUntis-Klasse konnte nicht ermittelt werden — dadurch sind Todos & Erinnerungen " +
+            "gesperrt. Tippe auf Erneut prüfen; hilft das nicht, sende die technischen Details an den Support."
     is BackendStatus.Failed -> "Verbindung zum POKYH-Server fehlgeschlagen: ${status.message}"
     is BackendStatus.Unknown -> "Status noch nicht ermittelt."
 }
 
-// ── Dein Konto ───────────────────────────────────────────────────────────
+// ── Dein Konto ──────────────────────────────────────────────────────────────
 
 @Composable
 private fun AccountInfoSection(session: UserSession, modifier: Modifier = Modifier) {
-    PokyhCard(modifier = modifier) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    PokyhSection(title = "Dein Konto", modifier = modifier) {
+        PokyhCard(padding = 0.dp) {
             InfoRow("Name", session.personName ?: session.username)
-            if (session.klasseName.isNotEmpty()) InfoRow("Klasse", session.klasseName)
+            if (session.klasseName.isNotEmpty()) {
+                PokyhRowSeparator()
+                InfoRow("Klasse", session.klasseName)
+            }
+            PokyhRowSeparator()
             InfoRow("Schule", "LBS Brixen")
+            PokyhRowSeparator()
             InfoRow("Rolle", roleLabel(session))
         }
     }
@@ -189,7 +209,16 @@ private fun roleLabel(session: UserSession): String = when {
     else -> "Lehrkraft/Verwaltung"
 }
 
-// ── Technische Details / Erneut prüfen ──────────────────────────────────
+@Composable
+private fun InfoRow(label: String, value: String) {
+    PokyhRow(
+        title = value,
+        subtitle = label,
+        showChevron = false,
+    )
+}
+
+// ── Technische Details / Erneut prüfen ──────────────────────────────────────
 
 @Composable
 private fun DetailsSection(
@@ -201,103 +230,104 @@ private fun DetailsSection(
     onShare: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    PokyhCard(modifier = modifier) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = !loading, onClick = onReload)
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+    PokyhSection(title = "Diagnose", modifier = modifier) {
+        PokyhCard(padding = 0.dp) {
+            PokyhRow(
+                title = "Erneut prüfen",
+                titleColor = PokyhTheme.colors.accentText,
+                leading = {
+                    if (loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Brand.accent,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = PokyhIcons.refresh,
+                            contentDescription = null,
+                            tint = PokyhTheme.colors.accentText,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                },
+                onClick = onReload,
+                enabled = !loading,
+                showChevron = false,
+            )
+            PokyhRowSeparator()
+            PokyhRow(
+                title = "Technische Details",
+                subtitle = "Für den Support",
+                leading = {
+                    Icon(
+                        imageVector = PokyhIcons.document,
+                        contentDescription = null,
+                        tint = PokyhTheme.colors.textTertiary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                onClick = onToggleExpanded,
+                showChevron = false,
+                trailing = {
+                    Icon(
+                        imageVector = PokyhIcons.chevronRight,
+                        contentDescription = null,
+                        tint = PokyhTheme.colors.textTertiary,
+                        modifier = Modifier.size(18.dp).rotate(if (expanded) 90f else 0f),
+                    )
+                },
+            )
+            AnimatedVisibility(
+                visible = expanded,
+                enter = animateFadeIn(tween(PokyhMotion.durationFast)) + expandVertically(tween(PokyhMotion.durationStandard)),
+                exit = fadeOut(tween(PokyhMotion.durationFast)) + shrinkVertically(tween(PokyhMotion.durationStandard)),
             ) {
-                if (loading) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Brand.accent)
-                } else {
-                    Icon(PokyhIcons.arrow_clockwise, contentDescription = null, tint = Brand.accent, modifier = Modifier.size(18.dp))
-                }
-                Text("Erneut prüfen", style = PokyhType.body, color = Brand.accent)
-            }
-
-            HorizontalDivider(color = PokyhTheme.colors.separator, thickness = 0.5.dp)
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggleExpanded)
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "Technische Details (für Support)",
-                    style = PokyhType.body,
-                    color = PokyhTheme.colors.textPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    PokyhIcons.chevron_right,
-                    contentDescription = null,
-                    tint = PokyhTheme.colors.textTertiary,
-                    modifier = Modifier
-                        .size(14.dp)
-                        .graphicsLayer { rotationZ = if (expanded) 90f else 0f },
-                )
-            }
-
-            if (expanded) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PokyhSpacing.card)
+                        .padding(bottom = PokyhSpacing.card),
+                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
                 ) {
                     SelectionContainer {
                         Text(
-                            diagnostics ?: "Wird geladen…",
+                            text = diagnostics ?: "Wird geladen…",
                             style = PokyhType.caption2.copy(fontFamily = FontFamily.Monospace),
                             color = PokyhTheme.colors.textSecondary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .insetSurface(PokyhShapes.sm)
+                                .padding(PokyhSpacing.md),
                         )
                     }
                     if (diagnostics != null) {
-                        Row(
-                            modifier = Modifier.clickable { onShare(diagnostics) },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Icon(PokyhIcons.square_and_arrow_up, contentDescription = null, tint = Brand.accent, modifier = Modifier.size(14.dp))
-                            Text("Teilen", style = PokyhType.caption, color = Brand.accent)
-                        }
+                        PokyhTextButton(
+                            text = "Teilen",
+                            icon = PokyhIcons.share,
+                            onClick = { onShare(diagnostics) },
+                        )
                     }
                 }
             }
-
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(PokyhIcons.lock_shield, contentDescription = null, tint = PokyhTheme.colors.textTertiary, modifier = Modifier.size(12.dp))
+            PokyhRowSeparator()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(PokyhSpacing.card),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+            ) {
+                Icon(
+                    imageVector = PokyhIcons.security,
+                    contentDescription = null,
+                    tint = PokyhTheme.colors.textTertiary,
+                    modifier = Modifier.size(14.dp),
+                )
                 Text(
-                    "Enthält nur deine WebUntis-Daten – keine Passwörter.",
+                    text = "Enthält nur deine WebUntis-Daten – keine Passwörter.",
                     style = PokyhType.caption2,
                     color = PokyhTheme.colors.textTertiary,
                 )
             }
         }
-    }
-}
-
-// ── Bausteine ────────────────────────────────────────────────────────────
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = PokyhType.footnote.copy(fontWeight = FontWeight.SemiBold),
-        color = PokyhTheme.colors.textSecondary,
-        modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
-    )
-}
-
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
-        Text(label, style = PokyhType.body, color = PokyhTheme.colors.textSecondary, modifier = Modifier.weight(1f))
-        Text(value, style = PokyhType.body, color = PokyhTheme.colors.textPrimary)
     }
 }

@@ -1,9 +1,6 @@
 package dev.plattnericus.pokyh.ui.home
-import androidx.compose.runtime.setValue
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -26,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,23 +40,31 @@ import dev.plattnericus.pokyh.data.untis.SlotKind
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.IconTile
 import dev.plattnericus.pokyh.ui.components.PokyhCard
-import dev.plattnericus.pokyh.ui.components.SkeletonBlock
+import dev.plattnericus.pokyh.ui.components.PokyhFeatureTile
+import dev.plattnericus.pokyh.ui.components.PokyhInlineNotice
+import dev.plattnericus.pokyh.ui.components.PokyhLabel
+import dev.plattnericus.pokyh.ui.components.PokyhListCard
+import dev.plattnericus.pokyh.ui.components.PokyhRow
+import dev.plattnericus.pokyh.ui.components.PokyhSection
+import dev.plattnericus.pokyh.ui.components.PokyhTileRow
+import dev.plattnericus.pokyh.ui.components.TabRootActions
+import dev.plattnericus.pokyh.ui.components.TileRowSkeleton
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
+import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
 import dev.plattnericus.pokyh.ui.theme.Brand
+import dev.plattnericus.pokyh.ui.theme.DecorativeTone
+import dev.plattnericus.pokyh.ui.theme.PokyhDecorative
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
+import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
-import dev.plattnericus.pokyh.ui.theme.PokyhType.bold
-import dev.plattnericus.pokyh.ui.theme.PokyhType.medium
 import dev.plattnericus.pokyh.ui.theme.PokyhType.monospacedDigits
-import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.appBackground
-import dev.plattnericus.pokyh.ui.theme.cardSurface
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import dev.plattnericus.pokyh.ui.theme.gradeColor
-import dev.plattnericus.pokyh.ui.theme.pressable
-import dev.plattnericus.pokyh.ui.theme.shimmer
-import dev.plattnericus.pokyh.ui.theme.smoothCorner
+import dev.plattnericus.pokyh.ui.theme.insetSurface
+import dev.plattnericus.pokyh.ui.theme.softenedFill
 import dev.plattnericus.pokyh.ui.theme.subjectColor
 import kotlin.math.round
 import kotlin.time.Clock
@@ -71,7 +74,14 @@ import kotlinx.datetime.daysUntil
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 
-/** HomeView.swift, ported. */
+/**
+ * Home. The one screen with a personal greeting instead of a
+ * [dev.plattnericus.pokyh.ui.components.PokyhTopBar] title, so the greeting itself carries the
+ * screen's [PokyhType.display] heading and hosts the Messages/Profile actions.
+ *
+ * Structure: greeting, the four shortcut tiles, then one [PokyhSection] per data source in the
+ * order the day happens — next exam, today's lessons, today's menu, newest grades.
+ */
 @Composable
 fun HomeScreen(
     onNavigate: (String) -> Unit,
@@ -89,10 +99,16 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+                .padding(horizontal = PokyhSpacing.screenH)
+                .padding(top = PokyhSpacing.lg, bottom = PokyhSpacing.xxxl),
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
         ) {
-            HeaderSection(session = state.session, modifier = Modifier.fadeIn())
+            GreetingHeader(
+                session = state.session,
+                onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
+                onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                modifier = Modifier.fadeIn(),
+            )
 
             ShortcutsGrid(
                 onGrades = viewModel::selectGradesTab,
@@ -134,20 +150,51 @@ fun HomeScreen(
     }
 }
 
-// ── Header ───────────────────────────────────────────────────────────────────
+// ── Greeting ────────────────────────────────────────────────────────────────
 
+/**
+ * Two [PokyhType.display] lines — the greeting in the text color, the name in the accent — so
+ * the page opens on a heading with some personality rather than a generic bar. The class/school
+ * line under it is the eyebrow's job, set small and quiet.
+ */
 @Composable
-private fun HeaderSection(session: UserSession?, modifier: Modifier = Modifier) {
+private fun GreetingHeader(
+    session: UserSession?,
+    onMessages: () -> Unit,
+    onProfile: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val colors = PokyhTheme.colors
     val greeting = remember { currentGreeting() }
     val firstName = remember(session) { firstNameOf(session) }
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("$greeting,", style = PokyhType.largeTitle, color = colors.textPrimary)
-        Text(firstName.ifEmpty { "Willkommen" }, style = PokyhType.largeTitle, color = Brand.accent)
-        if (session != null) {
-            val klasse = session.klasseName.ifEmpty { "LBS Brixen" }
-            Text("$klasse · LBS Brixen", style = PokyhType.subheadline, color = colors.textSecondary)
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+        ) {
+            if (session != null) {
+                val klasse = session.klasseName.ifEmpty { "LBS Brixen" }
+                PokyhLabel("$klasse · LBS Brixen", modifier = Modifier.weight(1f))
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            TabRootActions(
+                avatarContent = { CurrentUserAvatar() },
+                onMessages = onMessages,
+                onProfile = onProfile,
+            )
         }
+        Spacer(Modifier.size(PokyhSpacing.md))
+        Text("$greeting,", style = PokyhType.display, color = colors.textPrimary)
+        Text(
+            text = firstName.ifEmpty { "Willkommen" },
+            style = PokyhType.display,
+            color = Brand.accent,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -170,10 +217,19 @@ private fun firstNameOf(session: UserSession?): String {
     return session?.username ?: ""
 }
 
-// ── Shortcuts ────────────────────────────────────────────────────────────────
+// ── Shortcuts ───────────────────────────────────────────────────────────────
 
-private data class ShortcutItem(val title: String, val icon: ImageVector, val color: Color, val onClick: () -> Unit)
+private data class ShortcutItem(
+    val title: String,
+    val tone: DecorativeTone,
+    val glyph: ImageVector,
+    val onClick: () -> Unit,
+)
 
+/**
+ * Four destinations, one per [PokyhDecorative] tone, in a fixed order — so a tile keeps its
+ * color for good and the grid is learnable by color as well as by label.
+ */
 @Composable
 private fun ShortcutsGrid(
     onGrades: () -> Unit,
@@ -182,21 +238,24 @@ private fun ShortcutsGrid(
     onReminders: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val isDark = PokyhTheme.colors.isDark
     val items = listOf(
-        ShortcutItem("Noten", PokyhIcons.chart_bar_fill, Brand.accent, onGrades),
-        ShortcutItem("Abwesenheiten", PokyhIcons.person_fill_xmark, Brand.orange, onAbsences),
-        ShortcutItem("Todos", PokyhIcons.checklist, Brand.accentSoft, onTodos),
-        ShortcutItem("Erinnerungen", PokyhIcons.bell_fill, Brand.tint, onReminders),
+        ShortcutItem("Noten", PokyhDecorative.periwinkle(isDark), PokyhIcons.decorSubjects, onGrades),
+        ShortcutItem("Abwesenheiten", PokyhDecorative.butter(isDark), PokyhIcons.decorAbsences, onAbsences),
+        ShortcutItem("Todos", PokyhDecorative.sage(isDark), PokyhIcons.decorTodos, onTodos),
+        ShortcutItem("Erinnerungen", PokyhDecorative.blush(isDark), PokyhIcons.decorReminders, onReminders),
     )
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
         items.chunked(2).forEach { rowItems ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
                 rowItems.forEach { item ->
-                    val interactionSource = remember { MutableInteractionSource() }
-                    ShortcutCard(
-                        item = item,
-                        interactionSource = interactionSource,
-                        modifier = Modifier.weight(1f).pressable(interactionSource),
+                    PokyhFeatureTile(
+                        title = item.title,
+                        tone = item.tone,
+                        glyph = item.glyph,
+                        onClick = item.onClick,
+                        minHeight = 132.dp,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
@@ -204,45 +263,29 @@ private fun ShortcutsGrid(
     }
 }
 
-@Composable
-private fun ShortcutCard(item: ShortcutItem, interactionSource: MutableInteractionSource, modifier: Modifier = Modifier) {
-    PokyhCard(
-        modifier = modifier.clickable(interactionSource = interactionSource, indication = null, onClick = item.onClick),
-        padding = 14.dp,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            IconTile(icon = item.icon, color = item.color, size = 40.dp, cornerRadius = 11.dp)
-            Text(
-                text = item.title,
-                style = PokyhType.subheadline.semibold(),
-                color = PokyhTheme.colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-// ── Nächste Schularbeit ────────────────────────────────────────────────────
+// ── Nächste Schularbeit ─────────────────────────────────────────────────────
 
 @Composable
 private fun ExamCard(exam: TimetableEntry, modifier: Modifier = Modifier) {
-    PokyhCard(modifier = modifier, padding = 14.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(icon = PokyhIcons.pencil_and_list_clipboard, color = Brand.warning, size = 40.dp, cornerRadius = 11.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Nächste Schularbeit", style = PokyhType.caption, color = PokyhTheme.colors.textSecondary)
+    val colors = PokyhTheme.colors
+    PokyhCard(modifier = modifier, padding = PokyhSpacing.row) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
+        ) {
+            IconTile(icon = PokyhIcons.exam, color = Brand.warning)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs),
+            ) {
+                PokyhLabel("Nächste Schularbeit")
                 val subject = exam.subjectLong.ifEmpty { exam.subjectName.ifEmpty { "Prüfung" } }
-                Text(subject, style = PokyhType.subheadline.semibold(), color = PokyhTheme.colors.textPrimary)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Icon(PokyhIcons.calendar, contentDescription = null, tint = Brand.warning, modifier = Modifier.size(12.dp))
-                    Text(
-                        "${examWhen(exam.date)} · ${Fmt.time(exam.startTime)}",
-                        style = PokyhType.caption2,
-                        color = Brand.warning,
-                    )
-                }
+                Text(subject, style = PokyhType.headline, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = "${examWhen(exam.date)} · ${Fmt.time(exam.startTime)}",
+                    style = PokyhType.caption,
+                    color = Brand.warning,
+                )
             }
         }
     }
@@ -250,13 +293,16 @@ private fun ExamCard(exam: TimetableEntry, modifier: Modifier = Modifier) {
 
 @Composable
 private fun NoExamCard(modifier: Modifier = Modifier) {
-    PokyhCard(modifier = modifier, padding = 14.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(icon = PokyhIcons.checkmark_seal_fill, color = Brand.tint, size = 40.dp, cornerRadius = 11.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Nächste Schularbeit", style = PokyhType.caption, color = PokyhTheme.colors.textSecondary)
-                Text("Keine Tests in Zukunft", style = PokyhType.subheadline.semibold(), color = PokyhTheme.colors.textPrimary)
+    val colors = PokyhTheme.colors
+    PokyhCard(modifier = modifier, padding = PokyhSpacing.row) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
+        ) {
+            IconTile(icon = PokyhIcons.noExam, color = Brand.success)
+            Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
+                PokyhLabel("Nächste Schularbeit")
+                Text("Keine Tests in Zukunft", style = PokyhType.headline, color = colors.textPrimary)
             }
         }
     }
@@ -272,103 +318,66 @@ private fun examWhen(dateNum: Int): String {
     }
 }
 
-// ── Bausteine ────────────────────────────────────────────────────────────────
-
-@Composable
-private fun SectionHeader(title: String, icon: ImageVector) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(icon, contentDescription = null, tint = PokyhTheme.colors.textPrimary, modifier = Modifier.size(20.dp))
-        Text(title, style = PokyhType.title3, color = PokyhTheme.colors.textPrimary)
-    }
-}
-
-@Composable
-private fun InfoCard(icon: ImageVector, color: Color, text: String) {
-    PokyhCard(padding = 14.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(icon, contentDescription = null, tint = color)
-            Text(text, style = PokyhType.body, color = PokyhTheme.colors.textSecondary)
-        }
-    }
-}
-
-@Composable
-private fun SkeletonRows(n: Int) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        repeat(n) {
-            Row(
-                modifier = Modifier.fillMaxWidth().cardSurface(radius = 12.dp).padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Box(
-                    Modifier
-                        .width(5.dp)
-                        .height(42.dp)
-                        .background(PokyhTheme.colors.cardAlt, smoothCorner(3.dp))
-                        .shimmer(),
-                )
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SkeletonBlock(height = 13.dp, width = 140.dp)
-                    SkeletonBlock(height = 10.dp, width = 90.dp)
-                }
-            }
-        }
-    }
-}
-
 // ── Heute (Unterricht) ──────────────────────────────────────────────────────
 
 @Composable
 private fun TodaySection(loading: Boolean, slots: List<MergedSlot>, modifier: Modifier = Modifier) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader("Heute", PokyhIcons.calendar)
+    PokyhSection(modifier = modifier, title = "Heute") {
         when {
-            loading -> SkeletonRows(2)
-            slots.isEmpty() -> InfoCard(PokyhIcons.checkmark_circle_fill, Brand.tint, "Heute kein Unterricht")
-            else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                slots.forEachIndexed { idx, slot ->
-                    HomeSlotRow(slot = slot, modifier = Modifier.fadeIn(idx * 30))
-                }
+            loading -> TileRowSkeleton(rows = 2)
+            slots.isEmpty() -> PokyhInlineNotice(
+                icon = PokyhIcons.noExam,
+                text = "Heute kein Unterricht",
+                tint = Brand.success,
+            )
+            else -> slots.forEachIndexed { idx, slot ->
+                HomeSlotRow(slot = slot, modifier = Modifier.fadeIn(idx * 30))
             }
         }
     }
 }
 
-/** Lightweight local slot row (bar + subject + teacher/room + time) — a shared `SlotRow` is
- * introduced by the Timetable screen; Home inlines an equivalent instead of depending on it. */
+/**
+ * A lesson as its own row-surface rather than a grouped-list row: lessons are distinct events
+ * with their own accent bar, and each one being its own object is what makes the accent read.
+ * The Timetable day view uses the same shape, so the two screens agree.
+ */
 @Composable
 private fun HomeSlotRow(slot: MergedSlot, modifier: Modifier = Modifier) {
+    val colors = PokyhTheme.colors
     val display = slot.display
-    val color = when (slot.kind) {
-        SlotKind.CANCELLED -> PokyhTheme.colors.textTertiary
+    val accent = when (slot.kind) {
+        SlotKind.CANCELLED -> colors.textTertiary
         SlotKind.EXAM -> Brand.warning
         SlotKind.REPLACEMENT -> Brand.orange
         SlotKind.EVENT -> Brand.accentSoft
         SlotKind.NORMAL -> subjectColor(display.subjectName)
     }
-    PokyhCard(modifier = modifier, padding = 12.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.width(5.dp).height(44.dp).background(color, smoothCorner(3.dp)))
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                val subject = display.subjectName.ifEmpty { display.subjectLong.ifEmpty { "Veranstaltung" } }
-                Text(subject, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val teacherRoom = listOf(display.teacherName, display.roomName).filter { it.isNotEmpty() }.joinToString(" · ")
-                if (teacherRoom.isNotEmpty()) {
-                    Text(teacherRoom, style = PokyhType.caption, color = PokyhTheme.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+    PokyhTileRow(modifier = modifier) {
+        Box(Modifier.width(4.dp).height(40.dp).background(accent.softenedFill(), PokyhShapes.xs))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
+            val subject = display.subjectName.ifEmpty { display.subjectLong.ifEmpty { "Veranstaltung" } }
+            Text(subject, style = PokyhType.headline, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val teacherRoom = listOf(display.teacherName, display.roomName)
+                .filter { it.isNotEmpty() }
+                .joinToString(" · ")
+            if (teacherRoom.isNotEmpty()) {
+                Text(teacherRoom, style = PokyhType.footnote, color = colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(
-                "${Fmt.time(display.startTime)}–${Fmt.time(display.endTime)}",
-                style = PokyhType.caption2,
-                color = PokyhTheme.colors.textTertiary,
-            )
         }
+        Text(
+            text = "${Fmt.time(display.startTime)}\n${Fmt.time(display.endTime)}",
+            style = PokyhType.caption2.monospacedDigits(),
+            color = colors.textTertiary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+        )
     }
 }
 
 // ── Mensa heute ─────────────────────────────────────────────────────────────
 
+/** Today's dishes as one grouped card — three dishes are one answer to "what's for lunch", not
+ * three separate objects, and one card keeps the screen's surface count down. */
 @Composable
 private fun MensaSection(
     loading: Boolean,
@@ -377,37 +386,37 @@ private fun MensaSection(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(if (dayLabel.isEmpty()) "Mensa heute" else "Mensa · $dayLabel", PokyhIcons.fork_knife)
+    PokyhSection(
+        modifier = modifier,
+        title = "Mensa",
+        trailing = if (dayLabel.isEmpty()) null else {
+            { PokyhLabel(dayLabel) }
+        },
+    ) {
         when {
-            loading && dishes.isEmpty() -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(2) { MensaSkeletonRow() }
-            }
-            dishes.isEmpty() -> InfoCard(PokyhIcons.fork_knife, Brand.accent, "Kein Speiseplan verfügbar")
-            else -> {
-                val interactionSource = remember { MutableInteractionSource() }
-                Column(
-                    modifier = Modifier
-                        .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-                        .pressable(interactionSource),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    dishes.take(3).forEach { dish -> MensaDishRow(dish) }
-                }
+            loading && dishes.isEmpty() -> TileRowSkeleton(rows = 2)
+            dishes.isEmpty() -> PokyhInlineNotice(icon = PokyhIcons.mensa, text = "Kein Speiseplan verfügbar")
+            else -> PokyhListCard(items = dishes.take(3)) { dish ->
+                MensaDishRow(dish = dish, onClick = onClick)
             }
         }
     }
 }
 
 @Composable
-private fun MensaDishRow(dish: Dish) {
-    PokyhCard(padding = 10.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+private fun MensaDishRow(dish: Dish, onClick: () -> Unit) {
+    val colors = PokyhTheme.colors
+    PokyhRow(
+        title = dish.name,
+        subtitle = dish.category.ifEmpty { null }?.uppercase(),
+        onClick = onClick,
+        showChevron = false,
+        leading = {
             Box(
                 modifier = Modifier
-                    .size(56.dp)
-                    .clip(smoothCorner(10.dp))
-                    .background(PokyhTheme.colors.cardAlt),
+                    .size(48.dp)
+                    .clip(PokyhShapes.sm)
+                    .insetSurface(PokyhShapes.sm),
             ) {
                 if (!dish.imageUrl.isNullOrBlank()) {
                     AsyncImage(
@@ -416,71 +425,67 @@ private fun MensaDishRow(dish: Dish) {
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
+                } else {
+                    Icon(
+                        PokyhIcons.dish,
+                        contentDescription = null,
+                        tint = colors.textTertiary,
+                        modifier = Modifier.align(Alignment.Center).size(22.dp),
+                    )
                 }
             }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (dish.category.isNotEmpty()) {
-                    Text(dish.category.uppercase(), style = PokyhType.caption2.bold(), color = Brand.accent)
-                }
-                Text(
-                    dish.name,
-                    style = PokyhType.subheadline.medium(),
-                    color = PokyhTheme.colors.textPrimary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
+        },
+    )
 }
 
-@Composable
-private fun MensaSkeletonRow() {
-    Row(
-        modifier = Modifier.fillMaxWidth().cardSurface(radius = 12.dp).padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(Modifier.size(56.dp).background(PokyhTheme.colors.cardAlt, smoothCorner(10.dp)).shimmer())
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            SkeletonBlock(height = 11.dp, width = 80.dp)
-            SkeletonBlock(height = 13.dp, width = 160.dp)
-        }
-    }
-}
-
-// ── Zuletzt eingetragene Noten ────────────────────────────────────────────────
+// ── Zuletzt eingetragene Noten ──────────────────────────────────────────────
 
 @Composable
-private fun GradesSection(loading: Boolean, grades: List<HomeViewModel.RecentGrade>, modifier: Modifier = Modifier) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader("Zuletzt eingetragen", PokyhIcons.chart_bar_fill)
+private fun GradesSection(
+    loading: Boolean,
+    grades: List<HomeViewModel.RecentGrade>,
+    modifier: Modifier = Modifier,
+) {
+    PokyhSection(modifier = modifier, title = "Zuletzt eingetragen") {
         if (loading) {
-            SkeletonRows(2)
+            TileRowSkeleton(rows = 2)
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                grades.forEach { g -> GradeRow(g) }
-            }
+            PokyhListCard(items = grades) { grade -> GradeRow(grade) }
         }
     }
 }
 
 @Composable
-private fun GradeRow(g: HomeViewModel.RecentGrade) {
-    val color = gradeColor(g.value)
-    PokyhCard(padding = 12.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(
-                modifier = Modifier.size(42.dp).background(color.copy(alpha = 0.18f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                val digits = if (g.value == round(g.value)) 0 else 1
-                Text(Fmt.num(g.value, digits = digits), style = PokyhType.headline.monospacedDigits(), color = color)
-            }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(g.subject, style = PokyhType.subheadline.medium(), color = PokyhTheme.colors.textPrimary)
-                Text(Fmt.dateFull(g.date), style = PokyhType.caption2, color = PokyhTheme.colors.textTertiary)
-            }
-        }
+private fun GradeRow(grade: HomeViewModel.RecentGrade) {
+    PokyhRow(
+        title = grade.subject,
+        subtitle = Fmt.dateFull(grade.date),
+        showChevron = false,
+        leading = { GradeBubble(grade.value) },
+    )
+}
+
+/** The grade number in a tinted disc — the app's one way of showing a single grade, shared by
+ * Home, Grades and the subject detail's calculator. */
+@Composable
+internal fun GradeBubble(
+    value: Double,
+    modifier: Modifier = Modifier,
+    muted: Boolean = false,
+) {
+    val color = if (muted) PokyhTheme.colors.textTertiary else gradeColor(value)
+    val digits = if (value == round(value)) 0 else 1
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .background(color.copy(alpha = 0.14f), PokyhShapes.pill),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = Fmt.num(value, digits = digits),
+            style = PokyhType.statSmall,
+            color = color,
+        )
     }
 }
+

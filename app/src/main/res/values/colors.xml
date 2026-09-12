@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Splash-screen background only; the app's real palette lives in ui/theme/Palette.kt
-         and is intentionally NOT duplicated as XML color resources (Compose reads it directly). -->
-    <color name="splash_background_light">#F1F0F8</color>
-    <color name="splash_background_dark">#09090C</color>
+    <!-- The POKYH logo's own background indigo, sampled from `pokyh_logo.png`.
+         Both the adaptive launcher icon's background layer AND the system splash use it, so the
+         mark always sits on exactly the color it was drawn on — that's what keeps a seam from
+         showing at whatever shape a launcher masks the icon to, and what lets the splash use the
+         same full-bleed logo bitmap without a visible square around it. -->
+    <color name="pokyh_mark_indigo">#534AB7</color>
+
+    <!-- Conventional name the adaptive-icon XML expects. -->
+    <color name="ic_launcher_background">@color/pokyh_mark_indigo</color>
+
+    <!-- Window background before Compose draws its first frame — mirrors PokyhColors.bg
+         (ui/theme/Palette.kt) for light mode; see values-night/colors.xml for dark. The real
+         palette otherwise intentionally isn't duplicated as XML resources (Compose reads it
+         directly). -->
+    <color name="window_background">#F5F2ED</color>
 </resources>

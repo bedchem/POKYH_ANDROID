@@ -1,7 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 
 package dev.plattnericus.pokyh.ui.timetable
-import androidx.compose.foundation.layout.*
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -17,28 +16,27 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
+
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,7 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -63,20 +61,32 @@ import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.SlotKind
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
+import dev.plattnericus.pokyh.ui.components.PokyhDayPills
+import dev.plattnericus.pokyh.ui.components.PokyhIconButton
+import dev.plattnericus.pokyh.ui.components.PokyhSegmentedControl
+import dev.plattnericus.pokyh.ui.components.PokyhTextButton
+import dev.plattnericus.pokyh.ui.components.PokyhTileRow
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.SpecialDayCard
+import dev.plattnericus.pokyh.ui.components.TabRootActions
 import dev.plattnericus.pokyh.ui.components.TagChip
+import dev.plattnericus.pokyh.ui.components.TopBarNav
+import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
+import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
-import dev.plattnericus.pokyh.ui.theme.PokyhType.bold
+
 import dev.plattnericus.pokyh.ui.theme.PokyhType.monospacedDigits
-import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
+
 import dev.plattnericus.pokyh.ui.theme.appBackground
-import dev.plattnericus.pokyh.ui.theme.cardSurface
+
 import dev.plattnericus.pokyh.ui.theme.fadeIn
-import dev.plattnericus.pokyh.ui.theme.pressable
+
+import dev.plattnericus.pokyh.ui.theme.softenedFill
 import kotlin.math.abs
 import kotlinx.datetime.LocalDate
 
@@ -86,7 +96,7 @@ import kotlinx.datetime.LocalDate
  * day-mode list with a horizontal drag-to-change-day gesture, and the `.ics` export menu.
  */
 @Composable
-fun TimetableScreen(viewModel: TimetableViewModel = hiltViewModel()) {
+fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel = hiltViewModel()) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val pages by viewModel.pages.collectAsStateWithLifecycle()
     val detail by viewModel.detail.collectAsStateWithLifecycle()
@@ -114,34 +124,36 @@ fun TimetableScreen(viewModel: TimetableViewModel = hiltViewModel()) {
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
-            TopAppBar(
-                title = { Text("Stundenplan", style = PokyhType.headline) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PokyhTheme.colors.bg,
-                    titleContentColor = PokyhTheme.colors.textPrimary,
-                ),
-                navigationIcon = {
+            PokyhTopBar(
+                title = "Stundenplan",
+                nav = TopBarNav.None,
+                actions = {
                     Box {
-                        IconButton(onClick = { menuExpanded = true }, enabled = !ui.exporting) {
-                            Icon(
-                                PokyhIcons.square_and_arrow_up,
-                                contentDescription = "Exportieren",
-                                tint = if (ui.exporting) PokyhTheme.colors.textTertiary else PokyhTheme.colors.textPrimary,
-                            )
-                        }
+                        PokyhIconButton(
+                            icon = PokyhIcons.share,
+                            contentDescription = "Exportieren",
+                            onClick = { menuExpanded = true },
+                            enabled = !ui.exporting,
+                            tinted = true,
+                        )
                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                             DropdownMenuItem(
-                                text = { Text("Diese Woche exportieren") },
-                                leadingIcon = { Icon(PokyhIcons.calendar, contentDescription = null) },
+                                text = { Text("Diese Woche exportieren", style = PokyhType.body) },
+                                leadingIcon = { Icon(PokyhIcons.timetable, contentDescription = null) },
                                 onClick = { menuExpanded = false; viewModel.exportWeek(context) },
                             )
                             DropdownMenuItem(
-                                text = { Text("Prüfungen exportieren") },
-                                leadingIcon = { Icon(PokyhIcons.graduationcap_fill, contentDescription = null) },
+                                text = { Text("Prüfungen exportieren", style = PokyhType.body) },
+                                leadingIcon = { Icon(PokyhIcons.school, contentDescription = null) },
                                 onClick = { menuExpanded = false; viewModel.exportExams(context) },
                             )
                         }
                     }
+                    TabRootActions(
+                        avatarContent = { CurrentUserAvatar() },
+                        onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
+                        onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                    )
                 },
             )
         },
@@ -156,7 +168,6 @@ fun TimetableScreen(viewModel: TimetableViewModel = hiltViewModel()) {
                 onToday = { viewModel.goToday() },
             )
             ModeSegmentedControl(mode = ui.mode, onModeChange = viewModel::setMode)
-            HorizontalDivider(color = PokyhTheme.colors.separator, thickness = 0.5.dp)
 
             if (ui.mode == TimetableMode.WEEK) {
                 HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
@@ -182,60 +193,65 @@ fun TimetableScreen(viewModel: TimetableViewModel = hiltViewModel()) {
 
 // ── Week header (chevrons / range / "Heute" · KW n) ─────────────────────────
 
+/**
+ * The week stepper. Its own quiet row under the screen title rather than part of it: the title
+ * says where you are in the app, this says where you are in time, and the two change on
+ * different schedules.
+ */
 @Composable
 private fun WeekHeader(offset: Int, rangeText: String, weekNumber: Int, onPrev: () -> Unit, onNext: () -> Unit, onToday: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PokyhSpacing.screenH)
+            .padding(bottom = PokyhSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onPrev, modifier = Modifier.size(44.dp)) {
-            Icon(PokyhIcons.chevron_left, contentDescription = "Vorherige Woche", tint = Brand.accent)
-        }
-        Spacer(Modifier.weight(1f))
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(rangeText, style = PokyhType.subheadline.bold(), color = PokyhTheme.colors.textPrimary)
+        PokyhIconButton(
+            icon = PokyhIcons.chevronLeft,
+            contentDescription = "Vorherige Woche",
+            onClick = onPrev,
+            tinted = true,
+            iconSize = 18.dp,
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs),
+        ) {
+            Text(rangeText, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
             if (offset != 0) {
-                val interactionSource = remember { MutableInteractionSource() }
-                Text(
-                    "Heute",
-                    style = PokyhType.caption2,
-                    color = Brand.accent,
-                    modifier = Modifier.clickable(interactionSource = interactionSource, indication = null, onClick = onToday),
-                )
+                PokyhTextButton(text = "Zu heute", onClick = onToday)
             } else {
-                Text("KW $weekNumber · Diese Woche", style = PokyhType.caption2, color = Brand.accent)
+                Text(
+                    text = "KW $weekNumber · Diese Woche",
+                    style = PokyhType.caption,
+                    color = PokyhTheme.colors.textSecondary,
+                )
             }
         }
-        Spacer(Modifier.weight(1f))
-        IconButton(onClick = onNext, modifier = Modifier.size(44.dp)) {
-            Icon(PokyhIcons.chevron_right, contentDescription = "Nächste Woche", tint = Brand.accent)
-        }
+        PokyhIconButton(
+            icon = PokyhIcons.chevronRight,
+            contentDescription = "Nächste Woche",
+            onClick = onNext,
+            tinted = true,
+            iconSize = 18.dp,
+        )
     }
 }
 
 @Composable
 private fun ModeSegmentedControl(mode: TimetableMode, onModeChange: (TimetableMode) -> Unit) {
-    val modes = TimetableMode.entries
-    SingleChoiceSegmentedButtonRow(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp),
-    ) {
-        modes.forEachIndexed { idx, m ->
-            SegmentedButton(
-                selected = mode == m,
-                onClick = { onModeChange(m) },
-                shape = SegmentedButtonDefaults.itemShape(index = idx, count = modes.size),
-                colors = SegmentedButtonDefaults.colors(
-                    activeContainerColor = Brand.accent,
-                    activeContentColor = Color.White,
-                    activeBorderColor = Brand.accent,
-                    inactiveContainerColor = PokyhTheme.colors.surface,
-                    inactiveContentColor = PokyhTheme.colors.textPrimary,
-                ),
-            ) {
-                Text(m.label, style = PokyhType.subheadline)
-            }
-        }
-    }
+    PokyhSegmentedControl(
+        options = TimetableMode.entries,
+        selected = mode,
+        onSelect = onModeChange,
+        label = { it.label },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PokyhSpacing.screenH)
+            .padding(bottom = PokyhSpacing.lg),
+    )
 }
 
 // ── Week mode (one pager page) ───────────────────────────────────────────────
@@ -258,10 +274,10 @@ private fun WeekPageContent(
         is WeekPageState.Data -> {
             if (state.entries.isEmpty()) {
                 Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                    // SpecialDayCard(compact = false) sizes itself (380dp) — see its own file.
+                    // SpecialDayCard(compact = false) sizes itself — see its own file.
                     SpecialDayCard(
                         spec = specialDaySpecFor(DayKind.HOLIDAY),
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.screenH),
                     )
                 }
             } else {
@@ -329,26 +345,26 @@ private fun DayModeContent(viewModel: TimetableViewModel, ui: TimetableUiState, 
                         Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                             SpecialDayCard(
                                 spec = specialDaySpecFor(kind),
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.screenH),
                             )
                         }
                     } else {
                         val slots = TimetableSlots.buildSlots(dayEntries)
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(
+                                start = PokyhSpacing.screenH,
+                                end = PokyhSpacing.screenH,
+                                bottom = PokyhSpacing.xxxl,
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
                         ) {
                             itemsIndexed(slots, key = { _, s -> s.id }) { idx, slot ->
-                                val interactionSource = remember(slot.id) { MutableInteractionSource() }
-                                Box(
-                                    modifier = Modifier
-                                        .fadeIn(delayMillis = idx * 30)
-                                        .pressable(interactionSource)
-                                        .clickable(interactionSource = interactionSource, indication = null) { viewModel.showDetail(slot) },
-                                ) {
-                                    SlotRow(slot = slot)
-                                }
+                                SlotRow(
+                                    slot = slot,
+                                    onClick = { viewModel.showDetail(slot) },
+                                    modifier = Modifier.fadeIn(delayMillis = idx * 30),
+                                )
                             }
                         }
                     }
@@ -367,76 +383,70 @@ private fun DayChipsRow(
     dayNums: List<Int>,
     onSelect: (Int) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        for (i in 0 until 6) {
-            val isSelected = selectedDay == i
-            val isToday = dayNums.getOrNull(i) == todayNum
-            val interactionSource = remember { MutableInteractionSource() }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .background(if (isSelected) Brand.accent else Color.Transparent, PokyhShapes.r10)
-                    .pressable(interactionSource)
-                    .clickable(interactionSource = interactionSource, indication = null) { onSelect(i) }
-                    .padding(vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                val fg = if (isSelected) Color.White else if (isToday) Brand.accent else PokyhTheme.colors.textPrimary
-                Text(dayLabels.getOrElse(i) { "" }, style = PokyhType.caption2.semibold(), color = fg)
-                Text("${dates.getOrNull(i)?.dayOfMonth ?: ""}", style = PokyhType.subheadline.bold(), color = fg)
-            }
-        }
-    }
+    PokyhDayPills(
+        count = 6,
+        selectedIndex = selectedDay,
+        onSelect = onSelect,
+        weekdayLabel = { dayLabels.getOrElse(it) { "" } },
+        dayNumberLabel = { "${dates.getOrNull(it)?.dayOfMonth ?: ""}" },
+        isToday = { dayNums.getOrNull(it) == todayNum },
+        modifier = Modifier
+            .padding(horizontal = PokyhSpacing.screenH)
+            .padding(bottom = PokyhSpacing.lg),
+    )
 }
 
-// ── Day-mode row (`SlotRow`, TimetableView.swift) ───────────────────────────
+// ── Day-mode row ────────────────────────────────────────────────────────────
 
+/** Same shape as Home's lesson row, so a lesson looks the same wherever it appears. */
 @Composable
-private fun SlotRow(slot: MergedSlot) {
+private fun SlotRow(slot: MergedSlot, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = PokyhTheme.colors
     val d = slot.display
-    val color = slotColor(slot)
-    Row(
-        modifier = Modifier.fillMaxWidth().cardSurface(radius = 12.dp).padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(width = 5.dp, height = 44.dp)
-                .background(color, RoundedCornerShape(3.dp)),
-        )
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    val accent = slotColor(slot)
+
+    PokyhTileRow(modifier = modifier, onClick = onClick, verticalAlignment = Alignment.Top) {
+        Box(Modifier.width(4.dp).height(44.dp).background(accent.softenedFill(), PokyhShapes.xs))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+            ) {
                 Text(
-                    d.subjectName.ifEmpty { d.note ?: "—" },
-                    style = PokyhType.subheadline.bold(),
-                    color = if (d.isCancelled) Brand.danger.copy(alpha = 0.85f) else PokyhTheme.colors.textPrimary,
+                    text = d.subjectName.ifEmpty { d.note ?: "—" },
+                    style = PokyhType.headline,
+                    color = if (d.isCancelled) Brand.danger else colors.textPrimary,
                     textDecoration = if (d.isCancelled) TextDecoration.LineThrough else TextDecoration.None,
                 )
                 slotBadge(slot)
             }
             val meta = listOf(d.teacherName, d.roomName).filter { it.isNotEmpty() }.joinToString(" · ")
             if (meta.isNotEmpty()) {
-                Text(meta, style = PokyhType.caption, color = PokyhTheme.colors.textSecondary)
+                Text(meta, style = PokyhType.footnote, color = colors.textSecondary)
             }
             slot.replacement?.let { r ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Icon(PokyhIcons.arrow_left_arrow_right, contentDescription = null, tint = Brand.orange, modifier = Modifier.size(11.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+                ) {
+                    Icon(
+                        imageVector = PokyhIcons.replacement,
+                        contentDescription = null,
+                        tint = Brand.orange,
+                        modifier = Modifier.size(12.dp),
+                    )
                     Text(
-                        "Ersatz: ${r.subjectName.ifEmpty { r.note ?: "" }}",
-                        style = PokyhType.caption2,
+                        text = "Ersatz: ${r.subjectName.ifEmpty { r.note ?: "" }}",
+                        style = PokyhType.caption,
                         color = Brand.orange,
                     )
                 }
             }
         }
         Text(
-            "${Fmt.time(d.startTime)}\n${Fmt.time(d.endTime)}",
+            text = "${Fmt.time(d.startTime)}\n${Fmt.time(d.endTime)}",
             style = PokyhType.caption2.monospacedDigits(),
-            color = PokyhTheme.colors.textSecondary,
+            color = colors.textTertiary,
             textAlign = TextAlign.End,
         )
     }

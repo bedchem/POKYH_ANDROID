@@ -1,11 +1,8 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package dev.plattnericus.pokyh.ui.mensa
-import androidx.compose.runtime.setValue
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,16 +20,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -44,26 +36,33 @@ import dev.plattnericus.pokyh.data.model.Dish
 import dev.plattnericus.pokyh.data.model.DishRatingsData
 import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
+import dev.plattnericus.pokyh.ui.components.MediaCardSkeleton
 import dev.plattnericus.pokyh.ui.components.MiniStars
-import dev.plattnericus.pokyh.ui.components.SkeletonBlock
-import dev.plattnericus.pokyh.ui.theme.Brand
+import dev.plattnericus.pokyh.ui.components.PokyhBleedCard
+import dev.plattnericus.pokyh.ui.components.PokyhSectionHeader
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
+import dev.plattnericus.pokyh.ui.components.TabRootActions
+import dev.plattnericus.pokyh.ui.components.TagChip
+import dev.plattnericus.pokyh.ui.components.TopBarNav
+import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
+import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
-import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
-import dev.plattnericus.pokyh.ui.theme.PokyhType.bold
-import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.appBackground
-import dev.plattnericus.pokyh.ui.theme.cardSurface
 import dev.plattnericus.pokyh.ui.theme.fadeIn
-import dev.plattnericus.pokyh.ui.theme.pressable
-import dev.plattnericus.pokyh.ui.theme.shimmer
 import dev.plattnericus.pokyh.ui.theme.subjectColor
 
-/** MensaView.swift, ported — grouped-by-day dish list, read-only stars, pushes [DishDetailScreen]. */
+/**
+ * Mensa — dishes grouped by day. The one screen in the app built out of image cards rather than
+ * list rows, because the photo is most of what you're choosing by; each dish is genuinely its
+ * own object, so here a card per dish is right where a grouped list would be wrong.
+ */
 @Composable
 fun MensaScreen(
     onDishClick: (String) -> Unit,
+    onNavigate: (String) -> Unit,
     viewModel: MensaViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -72,39 +71,60 @@ fun MensaScreen(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
-            TopAppBar(
-                title = { Text("Mensa", style = PokyhType.headline) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PokyhTheme.colors.bg,
-                    titleContentColor = PokyhTheme.colors.textPrimary,
-                ),
+            PokyhTopBar(
+                title = "Mensa",
+                nav = TopBarNav.None,
+                actions = {
+                    TabRootActions(
+                        avatarContent = { CurrentUserAvatar() },
+                        onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
+                        onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                    )
+                },
             )
         },
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                ui.loading && ui.groups.isEmpty() -> LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ui.loading && ui.groups.isEmpty() -> Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = PokyhSpacing.screenH),
+                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
                 ) {
-                    items(3) { MensaSkeletonCard() }
+                    repeat(2) { MediaCardSkeleton() }
                 }
-                ui.error != null && ui.groups.isEmpty() -> ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
+
+                ui.error != null && ui.groups.isEmpty() ->
+                    ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
+
                 ui.groups.isEmpty() -> EmptyStateView(
-                    icon = PokyhIcons.fork_knife,
+                    icon = PokyhIcons.mensa,
                     title = "Kein Speiseplan",
                     subtitle = "Aktuell ist kein Menü verfügbar.",
                 )
+
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    contentPadding = PaddingValues(
+                        start = PokyhSpacing.screenH,
+                        end = PokyhSpacing.screenH,
+                        bottom = PokyhSpacing.xxxl,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
                 ) {
                     items(ui.groups, key = { it.date.toString() }) { group ->
-                        Column(modifier = Modifier.fadeIn(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(group.label, style = PokyhType.title3.bold(), color = PokyhTheme.colors.textPrimary)
+                        Column(
+                            modifier = Modifier.fadeIn(),
+                            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+                        ) {
+                            PokyhSectionHeader(title = group.label)
                             group.dishes.forEach { dish ->
-                                DishCard(dish = dish, ratings = ui.ratings[dish.id], onClick = { onDishClick(dish.id) })
+                                DishCard(
+                                    dish = dish,
+                                    ratings = ui.ratings[dish.id],
+                                    onClick = { onDishClick(dish.id) },
+                                )
                             }
                         }
                     }
@@ -119,33 +139,28 @@ fun MensaScreen(
 @Composable
 private fun DishCard(dish: Dish, ratings: DishRatingsData?, onClick: () -> Unit) {
     val colors = PokyhTheme.colors
-    val interactionSource = remember { MutableInteractionSource() }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(PokyhShapes.r18)
-            .cardSurface(PokyhShapes.r18)
-            .pressable(interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
-    ) {
-        DishImage(dish = dish, height = 160.dp)
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    PokyhBleedCard(onClick = onClick) {
+        DishImage(dish = dish, height = 150.dp)
+        Column(
+            modifier = Modifier.padding(PokyhSpacing.card),
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (dish.category.isNotEmpty()) {
-                    Text(dish.category.uppercase(), style = PokyhType.caption2.bold(), color = Brand.accent)
+                    TagChip(text = dish.category.uppercase(), color = subjectColor(dish.category))
                 }
                 Spacer(Modifier.weight(1f))
                 val price = dish.price
                 if (price != null && price > 0) {
-                    Text(String.format("%.2f €", price), style = PokyhType.caption.semibold(), color = colors.textSecondary)
+                    Text(String.format("%.2f €", price), style = PokyhType.caption, color = colors.textSecondary)
                 }
             }
-            Text(dish.name, style = PokyhType.headline, color = colors.textPrimary, modifier = Modifier.fillMaxWidth())
+            Text(dish.name, style = PokyhType.title3, color = colors.textPrimary, modifier = Modifier.fillMaxWidth())
             val desc = dish.description
             if (!desc.isNullOrEmpty()) {
                 Text(
-                    desc,
-                    style = PokyhType.subheadline,
+                    text = desc,
+                    style = PokyhType.footnote,
                     color = colors.textSecondary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -159,29 +174,14 @@ private fun DishCard(dish: Dish, ratings: DishRatingsData?, onClick: () -> Unit)
     }
 }
 
-@Composable
-private fun MensaSkeletonCard() {
-    Column(modifier = Modifier.fillMaxWidth().clip(PokyhShapes.r18).cardSurface(PokyhShapes.r18)) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(160.dp)
-                .background(PokyhTheme.colors.cardAlt)
-                .shimmer(),
-        )
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SkeletonBlock(height = 16.dp, width = 180.dp)
-            SkeletonBlock(height = 12.dp, width = 240.dp)
-            SkeletonBlock(height = 16.dp, width = 120.dp)
-        }
-    }
-}
-
 // ── Bild (geteilt mit DishDetailScreen) ─────────────────────────────────────
 
-/** Port of `DishImage` — a fixed-size box the image fills regardless of its native aspect ratio
- * (`scaledToFill` + clip); a category/name-hashed gradient placeholder while loading, on error,
- * or when the dish simply has no image. */
+/**
+ * A fixed-size band the image fills regardless of its native aspect ratio (crop + clip), with a
+ * category/name-hashed gradient placeholder while loading, on error, or when the dish simply has
+ * no image. The placeholder carries the app's own [PokyhIcons.dish] glyph rather than an
+ * illustration, so a missing photo still looks like part of the product.
+ */
 @Composable
 fun DishImage(dish: Dish, height: Dp, modifier: Modifier = Modifier) {
     val url = dish.imageUrl
@@ -206,16 +206,19 @@ private fun DishImagePlaceholder(dish: Dish, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier.background(
             Brush.linearGradient(
-                listOf(subjectColor(dish.category).copy(alpha = 0.5f), subjectColor(dish.name).copy(alpha = 0.3f)),
+                listOf(
+                    subjectColor(dish.category).copy(alpha = 0.34f),
+                    subjectColor(dish.name).copy(alpha = 0.20f),
+                ),
             ),
         ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = PokyhIcons.fork_knife,
+            imageVector = PokyhIcons.dish,
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.7f),
-            modifier = Modifier.size(32.dp),
+            tint = PokyhTheme.colors.card.copy(alpha = 0.85f),
+            modifier = Modifier.size(44.dp),
         )
     }
 }

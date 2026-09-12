@@ -6,7 +6,7 @@
          tokens (colors, type, shapes) live in ui/theme/*.kt, not here, so light/dark and the
          POKYH palette stay in one place. -->
     <style name="Theme.Pokyh" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/splash_background_light</item>
+        <item name="android:windowBackground">@color/window_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar" tools:targetApi="23">true</item>
@@ -14,12 +14,21 @@
         <item name="android:windowIsTranslucent">false</item>
     </style>
 
-    <!-- Only used briefly as the launch-activity theme so core-splashscreen can draw the
-         system splash before setContent{} takes over; PokyhSplashScreen in MainActivity
-         switches the activity to Theme.Pokyh right after. -->
+    <!-- The actual launch-activity theme (see AndroidManifest.xml) so core-splashscreen draws
+         the real system splash before setContent{} takes over; MainActivity's
+         installSplashScreen() keeps it on screen via setKeepOnScreenCondition until
+         AppState.isReady. Theme-invariant (the mark and its indigo never change with day/night),
+         so it needs no values-night override, and — unlike a per-mode background pair — can
+         never show a mismatched flash against the in-app dark-mode override on the first frame.
+
+         The icon is the same generated logo bitmap the launcher icon uses, on the logo's own
+         indigo: the splash icon's safe zone is the inner 2/3 of its canvas, which is exactly the
+         proportion that bitmap is built to (logo inset into the central 72 of 108), so the real
+         mark lands at the right size. Background and bitmap share `pokyh_mark_indigo`, so the
+         bitmap's full-bleed fill is invisible and you see just the mark. -->
     <style name="Theme.Pokyh.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/splash_background_light</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenBackground">@color/pokyh_mark_indigo</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
         <item name="postSplashScreenTheme">@style/Theme.Pokyh</item>
     </style>
 </resources>

@@ -17,7 +17,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Pokyh"
+        android:theme="@style/Theme.Pokyh.Splash"
         tools:targetApi="37"
         xmlns:tools="http://schemas.android.com/tools">
 
@@ -25,7 +25,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
-            android:theme="@style/Theme.Pokyh">
+            android:theme="@style/Theme.Pokyh.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

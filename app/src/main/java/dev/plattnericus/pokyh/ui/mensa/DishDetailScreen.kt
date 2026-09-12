@@ -1,52 +1,50 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package dev.plattnericus.pokyh.ui.mensa
-import androidx.compose.runtime.setValue
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.data.model.Dish
 import dev.plattnericus.pokyh.ui.components.CommentSection
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
+import dev.plattnericus.pokyh.ui.components.LoadingStateView
+import dev.plattnericus.pokyh.ui.components.PokyhCard
+import dev.plattnericus.pokyh.ui.components.PokyhLabel
+import dev.plattnericus.pokyh.ui.components.PokyhSection
+import dev.plattnericus.pokyh.ui.components.PokyhStat
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.StarRating
-import dev.plattnericus.pokyh.ui.theme.Brand
-import dev.plattnericus.pokyh.ui.theme.InterFontFamily
-import dev.plattnericus.pokyh.ui.theme.PokyhIcons
+import dev.plattnericus.pokyh.ui.components.TagChip
+import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
-import dev.plattnericus.pokyh.ui.theme.PokyhType.bold
 import dev.plattnericus.pokyh.ui.theme.appBackground
-import dev.plattnericus.pokyh.ui.theme.cardSurface
+import dev.plattnericus.pokyh.ui.theme.fadeIn
+import dev.plattnericus.pokyh.ui.theme.subjectColor
 
-/** DishDetailView.swift, ported — image, rating (interactive), nutrients, allergens, comments. */
+/** One dish: image, rating, nutrients, allergens, comments. */
 @Composable
 fun DishDetailScreen(
     onBack: () -> Unit,
@@ -54,72 +52,87 @@ fun DishDetailScreen(
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val colors = PokyhTheme.colors
+    val dish = ui.dish
 
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = colors.bg,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = ui.dish?.name ?: "Gericht",
-                        style = PokyhType.headline,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(PokyhIcons.arrow_left, contentDescription = "Zurück", tint = colors.textPrimary)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.bg, titleContentColor = colors.textPrimary),
+            PokyhTopBar(
+                title = dish?.name ?: "Gericht",
+                eyebrow = dish?.category?.ifEmpty { null },
+                nav = TopBarNav.Back(onBack),
             )
         },
     ) { innerPadding ->
-        val dish = ui.dish
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                dish == null && ui.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Brand.accent)
-                }
+                dish == null && ui.loading -> LoadingStateView()
                 dish == null -> ErrorStateView(message = ui.error ?: "Gericht nicht gefunden.")
                 else -> Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                        .padding(horizontal = PokyhSpacing.screenH)
+                        .padding(bottom = PokyhSpacing.xxxl),
+                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
                 ) {
-                    DishImage(dish = dish, height = 220.dp, modifier = Modifier.clip(PokyhShapes.r18))
-
-                    if (dish.category.isNotEmpty()) {
-                        Text(dish.category.uppercase(), style = PokyhType.caption.bold(), color = Brand.accent)
-                    }
-                    Text(dish.name, style = PokyhType.title2.bold(), color = colors.textPrimary)
-                    val desc = dish.description
-                    if (!desc.isNullOrEmpty()) {
-                        Text(desc, style = PokyhType.body, color = colors.textSecondary)
-                    }
-
-                    StarRating(
-                        average = ui.ratings.average,
-                        count = ui.ratings.count,
-                        myRating = ui.ratings.myRating,
-                        onRate = viewModel::rate,
+                    DishImage(
+                        dish = dish,
+                        height = 210.dp,
+                        modifier = Modifier.clip(PokyhShapes.xxl).fadeIn(),
                     )
 
-                    NutrientsRow(dish)
-
-                    if (dish.allergens.isNotEmpty()) {
-                        Text(
-                            "Allergene: ${dish.allergens.joinToString(", ")}",
-                            style = PokyhType.caption,
-                            color = colors.textTertiary,
-                        )
+                    Column(
+                        modifier = Modifier.fadeIn(delayMillis = 40),
+                        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+                    ) {
+                        if (dish.category.isNotEmpty()) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+                                TagChip(
+                                    text = dish.category.uppercase(),
+                                    color = subjectColor(dish.category),
+                                    large = true,
+                                )
+                                val price = dish.price
+                                if (price != null && price > 0) {
+                                    TagChip(
+                                        text = String.format("%.2f €", price),
+                                        color = colors.textSecondary,
+                                        large = true,
+                                    )
+                                }
+                            }
+                        }
+                        val desc = dish.description
+                        if (!desc.isNullOrEmpty()) {
+                            Text(desc, style = PokyhType.body, color = colors.textSecondary)
+                        }
                     }
 
-                    HorizontalDivider(color = colors.separator)
+                    PokyhSection(title = "Bewertung", modifier = Modifier.fadeIn(delayMillis = 80)) {
+                        PokyhCard {
+                            StarRating(
+                                average = ui.ratings.average,
+                                count = ui.ratings.count,
+                                myRating = ui.ratings.myRating,
+                                onRate = viewModel::rate,
+                            )
+                        }
+                    }
+
+                    NutrientsSection(dish, modifier = Modifier.fadeIn(delayMillis = 120))
+
+                    if (dish.allergens.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+                            PokyhLabel("Allergene")
+                            Text(
+                                text = dish.allergens.joinToString(", "),
+                                style = PokyhType.footnote,
+                                color = colors.textSecondary,
+                            )
+                        }
+                    }
 
                     CommentSection(
                         title = "Kommentare",
@@ -127,6 +140,7 @@ fun DishDetailScreen(
                         currentUserId = viewModel.currentUserId,
                         onAdd = viewModel::addComment,
                         onDelete = viewModel::deleteComment,
+                        modifier = Modifier.fadeIn(delayMillis = 160),
                     )
                 }
             }
@@ -134,11 +148,10 @@ fun DishDetailScreen(
     }
 }
 
-/** Port of `DishDetailView.nutrient` — kcal/Protein/KH/Fett, equal-width, only shown when at
- * least one nutrient value is present (matches the iOS `if dish.calories != nil || ...` gate). */
+/** kcal/Protein/KH/Fett as equal-width [PokyhStat]s in one card — only shown when at least one
+ * nutrient value is present. */
 @Composable
-private fun NutrientsRow(dish: Dish) {
-    val colors = PokyhTheme.colors
+private fun NutrientsSection(dish: Dish, modifier: Modifier = Modifier) {
     val items = buildList {
         dish.calories?.let { add(it.toInt().toString() to "kcal") }
         dish.protein?.let { add("${it.toInt()}g" to "Protein") }
@@ -146,18 +159,21 @@ private fun NutrientsRow(dish: Dish) {
         dish.fat?.let { add("${it.toInt()}g" to "Fett") }
     }
     if (items.isEmpty()) return
-    Row(
-        modifier = Modifier.fillMaxWidth().cardSurface().padding(14.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-    ) {
-        items.forEach { (value, label) ->
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(1.dp),
+
+    PokyhSection(title = "Nährwerte", modifier = modifier) {
+        PokyhCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(value, style = PokyhType.subheadline.bold(), color = colors.textPrimary)
-                Text(label, style = TextStyle(fontFamily = InterFontFamily, fontSize = 10.sp), color = colors.textSecondary)
+                items.forEach { (value, label) ->
+                    PokyhStat(
+                        value = value,
+                        label = label,
+                        modifier = Modifier.weight(1f),
+                        alignment = Alignment.CenterHorizontally,
+                    )
+                }
             }
         }
     }

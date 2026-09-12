@@ -220,8 +220,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                     if (resolvedKlasseId <= 0) {
                         extractKlasseIdRaw(appData.raw, resolvedStudentId)?.let { if (it > 0) resolvedKlasseId = it }
                     }
-                    imageUrl = appData.json["user"]["person"]["imageUrl"].string
-                        ?: appData.json["data"]["user"]["person"]["imageUrl"].string
+                    imageUrl = extractImageUrl(appData.json, isParent)
                 }
             }
 
@@ -502,6 +501,45 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         walk(root, 0)
         return matched.firstOrNull() ?: fromStudents.firstOrNull() ?: fromKlassenArr.firstOrNull()
             ?: fromKlasseObj.firstOrNull() ?: fromField.firstOrNull()
+    }
+
+    /**
+     * The profile picture URL out of app-data.
+     *
+     * WebUntis puts it in one of several places depending on the endpoint that answered and the
+     * account type, so this walks the same candidate list the web frontend's `extractImageUrl`
+     * does (`lib/untis-permissions.ts`) rather than checking only `user.person.imageUrl` —
+     * which is what it used to do, and why guardian accounts and the `v2/app/data` shape never
+     * produced a picture. For a guardian the child's image comes first: that's whose data the
+     * app is showing.
+     */
+    private fun extractImageUrl(appData: JsonDyn, isParent: Boolean): String? {
+        val roots = listOf(appData["data"]["user"], appData["user"], appData["data"], appData)
+        val candidates = buildList {
+            if (isParent) {
+                roots.forEach { root -> add(root["students"].array.firstOrNull()?.get("imageUrl")?.string) }
+            }
+            roots.forEach { root ->
+                add(root["person"]["imageUrl"].string)
+                add(root["imageUrl"].string)
+            }
+        }
+        return candidates.firstNotNullOfOrNull { it?.trim()?.takeIf(String::isNotEmpty) }
+    }
+
+    /**
+     * Fetches app-data purely to resolve the signed-in user's profile picture, for sessions that
+     * never needed app-data during login (a student whose class resolved from `getStudents`
+     * doesn't, which is the common case — so the picture was simply never looked up).
+     *
+     * Deliberately lazy and on-demand rather than folded into login: app-data is several
+     * endpoints, and most of the time nothing needs it. The web frontend takes the same approach
+     * in its `profile-image` route, which falls back to a live app-data lookup when the value
+     * captured at login is missing.
+     */
+    suspend fun fetchProfileImageUrl(session: UserSession): String? {
+        val appData = runCatching { fetchAppData(session) }.getOrNull() ?: return null
+        return extractImageUrl(appData.json, session.isParent)
     }
 
     private fun extractChildName(appData: JsonDyn): String? {

@@ -459,6 +459,39 @@ class AppState @Inject constructor(
         }
     }
 
+    /** Usernames a profile-image lookup has already been attempted for this process, so a screen
+     * that re-composes (or five tab roots showing the same avatar) can't fan out into repeated
+     * app-data fetches. A failed attempt counts — retrying per recomposition would be worse than
+     * showing initials. */
+    private val profileImageAttempted = mutableSetOf<String>()
+
+    /**
+     * Resolves the signed-in user's WebUntis profile picture if login didn't already capture it.
+     *
+     * Login only fetches app-data when it still needs something (an unresolved class, a guardian
+     * with no student list), so a normal student session arrives with `imageUrl == null` even
+     * though the account has a picture. This fills that in on demand — once per account per
+     * process — and updates both the live session and the saved-account entry.
+     *
+     * Safe to call from UI composition: it returns immediately when there's nothing to do.
+     */
+    fun ensureProfileImageUrl() {
+        val current = _session.value ?: return
+        if (current.imageUrl != null) return
+        if (!current.hasUntis || current.sessionId.isBlank()) return
+        if (!profileImageAttempted.add(current.username)) return
+
+        scope.launch {
+            val resolved = runCatching { untisClient.fetchProfileImageUrl(current) }.getOrNull()
+            if (resolved.isNullOrBlank()) return@launch
+            // Account may have been switched away while app-data was in flight.
+            val latest = _session.value ?: return@launch
+            if (latest.username != current.username) return@launch
+            _session.value = latest.copy(imageUrl = resolved)
+            updateAccountImage(latest.username, resolved)
+        }
+    }
+
     // ── Account switching / management ──────────────────────────────────────
 
     /** Clean switch with a loading state; the caller (UI) is expected to have already confirmed

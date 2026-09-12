@@ -1,11 +1,7 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package dev.plattnericus.pokyh.ui.school
-import androidx.compose.foundation.layout.*
-import androidx.compose.runtime.setValue
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,68 +10,77 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.plattnericus.pokyh.ui.components.IconTile
-import dev.plattnericus.pokyh.ui.components.PokyhCard
+import dev.plattnericus.pokyh.ui.components.PokyhFeatureTile
+import dev.plattnericus.pokyh.ui.components.PokyhTopBar
+import dev.plattnericus.pokyh.ui.components.TabRootActions
+import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
-import dev.plattnericus.pokyh.ui.theme.Brand
+import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
+import dev.plattnericus.pokyh.ui.theme.PokyhDecorative
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
+import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
-import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
-import dev.plattnericus.pokyh.ui.theme.pressable
 
-/** One row of the hub — either navigates to [route], or (when [route] is null, i.e. "Noten")
- * switches the selected bottom tab instead (Store.swift `app.selectedTab = .noten`). */
+/**
+ * One tile of the hub — either navigates to [route], or (when [route] is null, i.e. "Noten")
+ * switches the selected bottom tab instead.
+ */
 private data class HubItem(
     val title: String,
     val subtitle: String,
-    val icon: ImageVector,
-    val accent: Color,
+    val glyph: ImageVector,
     val route: String?,
 )
 
-/** SchoolHubView.swift, ported. Wichtiges oben: Noten → Todos → Erinnerungen → Abwesenheiten →
- * Klassenbuch → Klasse. "Nachrichten" ist über den Briefumschlag-Button oben rechts erreichbar
- * (bereits Teil des globalen Toolbars, hier nicht dupliziert). */
+/**
+ * The school hub: a 2-column grid of color-blocked [PokyhFeatureTile]s, one per area.
+ *
+ * Tones come from [PokyhDecorative.cycle] by position rather than being assigned per item, so
+ * the grid repeats a four-tone pattern every two rows instead of introducing a fifth and sixth
+ * pastel. Nachrichten/Profil live in the header actions, like every other tab root.
+ */
 @Composable
 fun SchoolHubScreen(
     onNavigate: (String) -> Unit,
     viewModel: SchoolHubViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val isDark = PokyhTheme.colors.isDark
 
     val items = remember(state.isParent) {
         buildList {
-            add(HubItem("Noten", "Alle Fächer & Bewertungen", PokyhIcons.chart_bar_fill, Brand.accent, route = null))
-            add(HubItem("Todos", "Persönliche Aufgabenliste", PokyhIcons.checklist, Brand.accentSoft, PokyhDestinations.TODOS))
+            add(HubItem("Noten", "Alle Fächer & Bewertungen", PokyhIcons.decorSubjects, route = null))
+            add(HubItem("Todos", "Persönliche Aufgabenliste", PokyhIcons.decorTodos, PokyhDestinations.TODOS))
             // Eltern-/Erziehungsberechtigtenkonten haben eigene Todos und sehen die Klasse, aber
             // KEINE Klassen-Erinnerungen.
             if (!state.isParent) {
-                add(HubItem("Erinnerungen", "Hausaufgaben & Klassen-Erinnerungen", PokyhIcons.bell_fill, Brand.tint, PokyhDestinations.REMINDERS))
+                add(
+                    HubItem(
+                        title = "Erinnerungen",
+                        subtitle = "Hausaufgaben & Klassen-Erinnerungen",
+                        glyph = PokyhIcons.decorReminders,
+                        route = PokyhDestinations.REMINDERS,
+                    ),
+                )
             }
-            add(HubItem("Abwesenheiten", "Fehlstunden & Entschuldigungen", PokyhIcons.person_fill_xmark, Brand.orange, PokyhDestinations.ABSENCES))
-            add(HubItem("Klassenbuch", "Klassenbuch-Einträge", PokyhIcons.book_closed_fill, Brand.orange, PokyhDestinations.CLASSREG_EVENTS))
-            add(HubItem("Klasse", "Klassenmitglieder & Code", PokyhIcons.person_3_fill, Brand.tint, PokyhDestinations.CLASSROOM))
+            add(HubItem("Abwesenheiten", "Fehlstunden & Entschuldigungen", PokyhIcons.decorAbsences, PokyhDestinations.ABSENCES))
+            add(HubItem("Klassenbuch", "Klassenbuch-Einträge", PokyhIcons.decorClassRegister, PokyhDestinations.CLASSREG_EVENTS))
+            add(HubItem("Klasse", "Klassenmitglieder & Code", PokyhIcons.decorClassMembers, PokyhDestinations.CLASSROOM))
         }
     }
 
@@ -83,12 +88,16 @@ fun SchoolHubScreen(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
-            TopAppBar(
-                title = { Text("Schule", style = PokyhType.title1) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PokyhTheme.colors.bg,
-                    titleContentColor = PokyhTheme.colors.textPrimary,
-                ),
+            PokyhTopBar(
+                title = "Schule",
+                nav = TopBarNav.None,
+                actions = {
+                    TabRootActions(
+                        avatarContent = { CurrentUserAvatar() },
+                        onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
+                        onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                    )
+                },
             )
         },
     ) { innerPadding ->
@@ -97,48 +106,31 @@ fun SchoolHubScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = PokyhSpacing.screenH)
+                .padding(bottom = PokyhSpacing.xxxl),
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
         ) {
-            items.forEachIndexed { idx, item ->
-                val interactionSource = remember { MutableInteractionSource() }
-                HubRow(
-                    item = item,
-                    interactionSource = interactionSource,
-                    onClick = { if (item.route != null) onNavigate(item.route) else viewModel.selectGradesTab() },
-                    modifier = Modifier.fadeIn(idx * 40).pressable(interactionSource),
-                )
+            items.chunked(2).forEachIndexed { rowIdx, row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().fadeIn(rowIdx * 50),
+                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+                ) {
+                    row.forEachIndexed { colIdx, item ->
+                        PokyhFeatureTile(
+                            title = item.title,
+                            subtitle = item.subtitle,
+                            tone = PokyhDecorative.cycle(rowIdx * 2 + colIdx, isDark),
+                            glyph = item.glyph,
+                            onClick = {
+                                if (item.route != null) onNavigate(item.route) else viewModel.selectGradesTab()
+                            },
+                            minHeight = 164.dp,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
             }
-        }
-    }
-}
-
-@Composable
-private fun HubRow(
-    item: HubItem,
-    interactionSource: MutableInteractionSource,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    PokyhCard(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
-        padding = 14.dp,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(icon = item.icon, color = item.accent, size = 46.dp, cornerRadius = 12.dp)
-            Spacer(Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(item.title, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
-                Text(item.subtitle, style = PokyhType.caption, color = PokyhTheme.colors.textSecondary)
-            }
-            Icon(
-                PokyhIcons.chevron_right,
-                contentDescription = null,
-                tint = PokyhTheme.colors.textTertiary,
-                modifier = Modifier.size(14.dp),
-            )
         }
     }
 }

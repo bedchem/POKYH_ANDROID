@@ -29,6 +29,7 @@ import dev.plattnericus.pokyh.ui.components.TabRootActions
 import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
+import dev.plattnericus.pokyh.ui.profile.rememberUnreadMessageCount
 import dev.plattnericus.pokyh.ui.theme.PokyhDecorative
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
@@ -62,25 +63,56 @@ fun SchoolHubScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val isDark = PokyhTheme.colors.isDark
 
+    // Ordered by how often it's actually opened, school-wide before personal: grades first,
+    // then the two things you look up about yourself, then the class, then what the class owes,
+    // and your own private list last.
     val items = remember(state.isParent) {
         buildList {
             add(HubItem("Noten", "Alle Fächer & Bewertungen", PokyhIcons.decorSubjects, route = null))
-            add(HubItem("Todos", "Persönliche Aufgabenliste", PokyhIcons.decorTodos, PokyhDestinations.TODOS))
+            add(
+                HubItem(
+                    title = "Abwesenheiten",
+                    subtitle = "Fehlstunden & Entschuldigungen",
+                    glyph = PokyhIcons.decorAbsences,
+                    route = PokyhDestinations.ABSENCES,
+                ),
+            )
+            add(
+                HubItem(
+                    title = "Klasse",
+                    subtitle = "Übersicht, Prüfungen & Mitglieder",
+                    glyph = PokyhIcons.decorClassMembers,
+                    route = PokyhDestinations.CLASSROOM,
+                ),
+            )
+            add(
+                HubItem(
+                    title = "Klassenbuch",
+                    subtitle = "Einträge & Vermerke",
+                    glyph = PokyhIcons.decorClassRegister,
+                    route = PokyhDestinations.CLASSREG_EVENTS,
+                ),
+            )
             // Eltern-/Erziehungsberechtigtenkonten haben eigene Todos und sehen die Klasse, aber
             // KEINE Klassen-Erinnerungen.
             if (!state.isParent) {
                 add(
                     HubItem(
-                        title = "Erinnerungen",
-                        subtitle = "Hausaufgaben & Klassen-Erinnerungen",
+                        title = "Klassen-Erinnerungen",
+                        subtitle = "Hausaufgaben & Termine der Klasse",
                         glyph = PokyhIcons.decorReminders,
                         route = PokyhDestinations.REMINDERS,
                     ),
                 )
             }
-            add(HubItem("Abwesenheiten", "Fehlstunden & Entschuldigungen", PokyhIcons.decorAbsences, PokyhDestinations.ABSENCES))
-            add(HubItem("Klassenbuch", "Klassenbuch-Einträge", PokyhIcons.decorClassRegister, PokyhDestinations.CLASSREG_EVENTS))
-            add(HubItem("Klasse", "Klassenmitglieder & Code", PokyhIcons.decorClassMembers, PokyhDestinations.CLASSROOM))
+            add(
+                HubItem(
+                    title = "Eigene Todos",
+                    subtitle = "Deine persönliche Aufgabenliste",
+                    glyph = PokyhIcons.decorTodos,
+                    route = PokyhDestinations.TODOS,
+                ),
+            )
         }
     }
 
@@ -94,6 +126,7 @@ fun SchoolHubScreen(
                 actions = {
                     TabRootActions(
                         avatarContent = { CurrentUserAvatar() },
+                        unreadMessages = rememberUnreadMessageCount(),
                         onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                         onProfile = { onNavigate(PokyhDestinations.PROFILE) },
                     )

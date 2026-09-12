@@ -159,10 +159,34 @@ data class MessageDetail(
 )
 
 data class MessageAttachment(
-    var id: String,
+    /** WebUntis numeric attachment id. 0 when the message only carries storage attachments. */
+    var id: Int,
+    /** UUID the MessageCenter storage is keyed on — the only id the S3 download flow accepts. */
+    var storageId: String,
     var name: String,
     var size: Int,
 )
+
+/** A person the account may write to (WebUntis "Mitteilung an Lehrkraft" picker). */
+data class MessageRecipient(
+    val id: Int,
+    /** Group type: CLASS_TEACHERS | TEACHERS | OTHERS. */
+    val type: String,
+    val name: String,
+    /** Sub-label from the person tags, e.g. "Administrator*in". */
+    val role: String? = null,
+    val isClassTeacher: Boolean = false,
+)
+
+/** A file picked on the device, ready to be uploaded with a message. */
+data class OutgoingAttachment(
+    val name: String,
+    val mimeType: String,
+    val bytes: ByteArray,
+) {
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
 
 enum class MessageFolder(val rawValue: String) {
     Inbox("inbox"), Sent("sent"), Drafts("drafts");

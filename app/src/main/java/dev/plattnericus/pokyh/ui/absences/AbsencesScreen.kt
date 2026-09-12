@@ -40,9 +40,10 @@ import dev.plattnericus.pokyh.ui.components.ListSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhListCard
+import dev.plattnericus.pokyh.ui.components.PokyhMenuButton
 import dev.plattnericus.pokyh.ui.components.PokyhSection
 import dev.plattnericus.pokyh.ui.components.PokyhStat
-import dev.plattnericus.pokyh.ui.components.PokyhTextButton
+import dev.plattnericus.pokyh.ui.components.PokyhToggleChip
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.StatusLabel
 import dev.plattnericus.pokyh.ui.components.TopBarNav
@@ -107,22 +108,35 @@ fun AbsencesScreen(onNavigateBack: () -> Unit = {}, viewModel: AbsencesViewModel
                 eyebrow = "Schuljahr $year/${(year + 1) % 100}",
                 nav = TopBarNav.Back(onNavigateBack),
                 actions = {
-                    PokyhTextButton(
-                        text = if (exact) "Exakt" else "Gerundet",
+                    // A two-state reading of the same numbers, so a toggle chip rather than a
+                    // menu — and "on" is the non-default (Exakt), which is what the accent tint
+                    // then means.
+                    PokyhToggleChip(
+                        label = if (exact) "Exakt" else "Gerundet",
+                        checked = exact,
+                        onToggle = viewModel::toggleExact,
                         icon = if (exact) PokyhIcons.clockExact else PokyhIcons.clock,
-                        onClick = viewModel::toggleExact,
-                        color = PokyhTheme.colors.textSecondary,
                     )
                     Box(modifier = Modifier.slideInTrailing()) {
-                        PokyhTextButton(
-                            text = "$year/${(year + 1) % 100}",
+                        PokyhMenuButton(
+                            label = "$year/${(year + 1) % 100}",
+                            expanded = yearMenuExpanded,
                             onClick = { yearMenuExpanded = true },
-                            color = PokyhTheme.colors.textPrimary,
                         )
                         DropdownMenu(expanded = yearMenuExpanded, onDismissRequest = { yearMenuExpanded = false }) {
                             viewModel.availableYears.forEach { y ->
                                 DropdownMenuItem(
                                     text = { Text("$y/${(y + 1) % 100}", style = PokyhType.body) },
+                                    trailingIcon = {
+                                        if (y == year) {
+                                            androidx.compose.material3.Icon(
+                                                imageVector = PokyhIcons.check,
+                                                contentDescription = null,
+                                                tint = PokyhTheme.colors.accentText,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    },
                                     onClick = {
                                         yearMenuExpanded = false
                                         viewModel.selectYear(y)

@@ -34,7 +34,7 @@ import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.ListSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhListCard
-import dev.plattnericus.pokyh.ui.components.PokyhTextButton
+import dev.plattnericus.pokyh.ui.components.PokyhMenuButton
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TagChip
 import dev.plattnericus.pokyh.ui.components.TopBarNav
@@ -67,10 +67,10 @@ fun ClassregEventsScreen(onNavigateBack: () -> Unit = {}, viewModel: ClassregVie
                 nav = TopBarNav.Back(onNavigateBack),
                 actions = {
                     Box(modifier = Modifier.slideInTrailing()) {
-                        PokyhTextButton(
-                            text = "$year/${(year + 1) % 100}",
+                        PokyhMenuButton(
+                            label = "$year/${(year + 1) % 100}",
+                            expanded = yearMenuExpanded,
                             onClick = { yearMenuExpanded = true },
-                            color = PokyhTheme.colors.textPrimary,
                         )
                         DropdownMenu(expanded = yearMenuExpanded, onDismissRequest = { yearMenuExpanded = false }) {
                             viewModel.availableYears.forEach { y ->

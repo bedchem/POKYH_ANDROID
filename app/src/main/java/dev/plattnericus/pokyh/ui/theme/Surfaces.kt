@@ -51,6 +51,18 @@ fun Modifier.insetSurface(shape: Shape = PokyhShapes.md, color: Color? = null): 
     this.background(color ?: PokyhTheme.colors.cardAlt, shape)
 
 /**
+ * A panel nested inside a card: an expanded row's detail area, an inline "nothing here" line.
+ *
+ * Use this rather than [insetSurface] whenever the fill covers a large *area* instead of tracing
+ * a control. [PokyhColors.cardAlt] carries the theme's cast, which is correct behind an input or
+ * a segmented track but reads as a blue (dark) or tan (light) patch once it fills half a card —
+ * [PokyhColors.nested] is hue-free for exactly that reason.
+ */
+@Composable
+fun Modifier.nestedSurface(shape: Shape = PokyhShapes.md): Modifier =
+    this.background(PokyhTheme.colors.nested, shape)
+
+/**
  * A soft [Brand.accent]-tinted fill — the accent's quiet form, for a selected chip, an icon
  * tile, or a badge. Distinct from a solid [Brand.accent] fill, which is reserved for the one
  * primary action or the active selection.

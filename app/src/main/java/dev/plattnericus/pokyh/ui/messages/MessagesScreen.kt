@@ -37,8 +37,10 @@ import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.InitialAvatar
 import dev.plattnericus.pokyh.ui.components.ListSkeleton
+import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhListCard
 import dev.plattnericus.pokyh.ui.components.PokyhSegmentedControl
+import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.theme.Brand
@@ -69,12 +71,37 @@ fun MessagesScreen(
     onNavigateBack: () -> Unit = {},
 ) {
     val ui by viewModel.list.collectAsStateWithLifecycle()
+    val composeState by viewModel.compose.collectAsStateWithLifecycle()
     val isLoading = ui.loadingFolders.contains(ui.folder)
 
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
-        topBar = { PokyhTopBar(title = "Nachrichten", nav = TopBarNav.Back(onNavigateBack)) },
+        topBar = {
+            PokyhTopBar(
+                title = "Nachrichten",
+                nav = TopBarNav.Back(onNavigateBack),
+                actions = {
+                    // Only the inbox has a read state, so the action only exists there — and it
+                    // greys out once nothing is left to mark, rather than disappearing.
+                    if (ui.folder == MessageFolder.Inbox) {
+                        PokyhTextButton(
+                            text = "Alle als gelesen",
+                            icon = PokyhIcons.markAllRead,
+                            onClick = viewModel::markAllRead,
+                            enabled = ui.unreadIds.isNotEmpty() && !ui.markingAll,
+                        )
+                    }
+                    PokyhIconButton(
+                        icon = PokyhIcons.compose,
+                        contentDescription = "Mitteilung verfassen",
+                        onClick = viewModel::openCompose,
+                        tint = Brand.onAccent,
+                        containerColor = Brand.accent,
+                    )
+                },
+            )
+        },
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding)) {
             PokyhSegmentedControl(
@@ -129,6 +156,14 @@ fun MessagesScreen(
                 }
             }
         }
+    }
+
+    if (composeState.open) {
+        ComposeMessageSheet(
+            state = composeState,
+            viewModel = viewModel,
+            onDismiss = viewModel::closeCompose,
+        )
     }
 }
 

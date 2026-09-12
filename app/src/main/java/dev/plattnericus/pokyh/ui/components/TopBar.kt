@@ -6,6 +6,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -21,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
@@ -118,32 +120,80 @@ fun PokyhTopBar(
 
 /**
  * The Messages/Profile shortcut pair every tab-root screen puts in its header's actions slot.
- * Each sits in its own soft tinted circle rather than as a bare glyph, matching the rounded,
- * color-blocked language used everywhere else instead of reading as toolbar chrome.
+ *
+ * Messages is a glyph, so it gets the soft tinted circle that makes it read as a control. The
+ * profile slot does NOT: [avatarContent] fills the whole 40dp target edge to edge. It used to
+ * render a 28dp avatar centered on the same tinted disc, which put a visible ring of chrome
+ * around the user's photo — the photo is already a circle, and framing it in a second one just
+ * made it look inset and small.
  */
 @Composable
 fun RowScope.TabRootActions(
     avatarContent: @Composable () -> Unit,
     onMessages: () -> Unit,
     onProfile: () -> Unit,
+    unreadMessages: Int = 0,
 ) {
-    PokyhIconButton(
-        icon = PokyhIcons.messages,
-        contentDescription = "Nachrichten",
-        onClick = onMessages,
-        tinted = true,
-        iconSize = 19.dp,
-    )
+    Box {
+        PokyhIconButton(
+            icon = PokyhIcons.messages,
+            contentDescription = if (unreadMessages > 0) {
+                "Nachrichten, $unreadMessages ungelesen"
+            } else {
+                "Nachrichten"
+            },
+            onClick = onMessages,
+            tinted = true,
+            iconSize = 19.dp,
+        )
+        if (unreadMessages > 0) {
+            UnreadBadge(
+                count = unreadMessages,
+                modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp),
+            )
+        }
+    }
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(TabRootAvatarSize)
             .clip(PokyhShapes.pill)
-            .background(PokyhTheme.colors.cardAlt)
             .pressHighlight(interactionSource, PokyhShapes.pill)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onProfile),
         contentAlignment = Alignment.Center,
     ) {
         avatarContent()
+    }
+}
+
+/** The tap target the profile avatar fills in a tab-root header — matches
+ * [PokyhIconButton]'s default so the two actions sit on the same baseline. */
+val TabRootAvatarSize = 40.dp
+
+/**
+ * The unread count on the Messages action: an accent pill with a ring of the page background,
+ * so it stays legible where it overlaps the icon's own tinted circle.
+ *
+ * Counts above 9 collapse to "9+" — the exact number stops being actionable past that, and a
+ * three-digit badge would be wider than the button it sits on.
+ */
+@Composable
+fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
+    if (count <= 0) return
+    val colors = PokyhTheme.colors
+    Box(
+        modifier = modifier
+            .background(colors.bg, PokyhShapes.pill)
+            .padding(2.dp)
+            .background(Brand.accent, PokyhShapes.pill)
+            .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+            .padding(horizontal = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (count > 9) "9+" else count.toString(),
+            style = PokyhType.badgeChip,
+            color = Brand.onAccent,
+        )
     }
 }

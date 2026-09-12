@@ -9,7 +9,7 @@ object PokyhDestinations {
     const val TIMETABLE = "timetable"
     const val SCHOOL_HUB = "school_hub"
     const val GRADES = "grades"
-    const val GRADE_SUBJECT = "grades/{subjectId}"
+    const val GRADE_SUBJECT = "grades/{subjectId}?year={year}"
     const val MENSA = "mensa"
     const val MENSA_DISH = "mensa/{dishId}"
     const val TODOS = "todos"
@@ -25,7 +25,10 @@ object PokyhDestinations {
     const val LOGIN = "login"
     const val LOCK = "lock"
 
-    fun gradeSubject(subjectId: Int): String = "grades/$subjectId"
+    /** The selected school YEAR travels with the route: the detail screen loads its own grades
+     * and would otherwise always fetch the current year, so opening a subject from 2024/25 found
+     * nothing and showed "Fach nicht gefunden". */
+    fun gradeSubject(subjectId: Int, year: Int): String = "grades/$subjectId?year=$year"
     fun dishDetail(dishId: String): String = "mensa/$dishId"
     fun reminderDetail(reminderId: String): String = "reminders/$reminderId"
     fun messageDetail(id: Int): String = "messages/$id"

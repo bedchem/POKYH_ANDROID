@@ -1,5 +1,6 @@
 package dev.plattnericus.pokyh.ui.grades
 
+import dev.plattnericus.pokyh.core.util.SchoolDates
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -36,6 +37,11 @@ class GradeSubjectViewModel @Inject constructor(
 
     val subjectId: Int = savedStateHandle.get<Int>("subjectId") ?: 0
 
+    /** The school year the Noten screen was showing when this subject was opened. Without it
+     * this screen always loaded the CURRENT year, so any subject reached from a past year came
+     * back empty and the screen said "Fach nicht gefunden". */
+    private val year: Int = savedStateHandle.get<Int>("year") ?: SchoolDates.currentSchoolYear
+
     private val _subject = MutableStateFlow<SubjectGrades?>(null)
     val subject: StateFlow<SubjectGrades?> = _subject.asStateFlow()
 
@@ -62,7 +68,7 @@ class GradeSubjectViewModel @Inject constructor(
             _loading.value = true
             _error.value = null
             try {
-                val all = untisClient.grades(session, session.studentId)
+                val all = untisClient.grades(session, session.studentId, year)
                 _subject.value = all.firstOrNull { it.lessonId == subjectId }
             } catch (e: AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()

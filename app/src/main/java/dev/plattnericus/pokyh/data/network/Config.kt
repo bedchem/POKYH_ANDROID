@@ -32,6 +32,13 @@ object Config {
         const val messagesDrafts = "/api/rest/view/v1/messages/drafts"
         const val classregEvents = "/api/classreg/classregevents"
 
+        // MessageCenter writes go to the v2 collection (multipart), with v1 kept as a fallback
+        // for older WebUntis instances — mirrors the web frontend's candidate order.
+        const val messagesV2 = "/api/rest/view/v2/messages"
+        const val messagesV2Drafts = "/api/rest/view/v2/messages/drafts"
+        const val messageRecipients = "/api/rest/view/v1/messages/recipients/static/persons"
+        const val messagePermissions = "/api/rest/view/v1/messages/permissions"
+
         val appDataCandidates: List<String> = listOf(
             "/api/rest/view/v1/app/data",
             "/api/app/data",
@@ -41,6 +48,23 @@ object Config {
 
         fun messageDetail(id: Int): String = "$messages/$id"
         fun messageMarkRead(id: Int): String = "$messages/$id/markasread"
+        fun messageAttachments(id: Int): String = "$messages/$id/attachments"
+
+        /** Keyed on the attachment's storage UUID, not on the message id. */
+        fun attachmentStorageUrl(storageId: String): String = "$messages/$storageId/attachmentstorageurl"
+
+        /** Direct-download candidates, in the order the web frontend tries them. */
+        fun attachmentCandidates(messageId: Int, storageId: String, attachmentId: Int): List<String> = buildList {
+            if (storageId.isNotEmpty()) {
+                add("$messages/$messageId/attachments/$storageId")
+                add("$messages/$messageId/attachments/$storageId/content")
+                add("$messages/$messageId/storage/$storageId")
+            }
+            if (attachmentId > 0) {
+                add("$messages/$messageId/attachments/$attachmentId")
+                add("$messages/$messageId/attachments/$attachmentId/content")
+            }
+        }
         fun messageFolder(folder: String): String = when (folder) {
             "sent" -> messagesSent
             "drafts" -> messagesDrafts

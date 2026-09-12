@@ -81,6 +81,21 @@ class AppState @Inject constructor(
     private val _accounts = MutableStateFlow<List<SavedAccount>>(emptyList())
     val accounts: StateFlow<List<SavedAccount>> = _accounts.asStateFlow()
 
+    /**
+     * Unread inbox count, for the badge on the Messages action in every tab-root header.
+     *
+     * Populated by [syncNotifications] (which already fetches the inbox to decide what to notify
+     * about, so this costs nothing extra) and decremented locally by [messageWasRead] when the
+     * user opens one — otherwise the badge would sit there stale until the next sync.
+     */
+    private val _unreadMessages = MutableStateFlow(0)
+    val unreadMessages: StateFlow<Int> = _unreadMessages.asStateFlow()
+
+    /** Called when messages are opened or marked read, so the badge drops immediately. */
+    fun messageWasRead(count: Int = 1) {
+        _unreadMessages.value = (_unreadMessages.value - count).coerceAtLeast(0)
+    }
+
     /** Usernames with a stored password — sync snapshot for UI badges ("Passwort nötig"),
      * refreshed whenever [accounts] changes or a credential is saved/deleted. */
     private val _accountsWithPassword = MutableStateFlow<Set<String>>(emptySet())
@@ -354,7 +369,7 @@ class AppState @Inject constructor(
 
         if (s.hasUntis) {
             runCatching { untisClient.messages(s, MessageFolder.Inbox) }.getOrNull()
-                ?.let { notifications.checkNewMessages(it) }
+                ?.let { _unreadMessages.value = notifications.checkNewMessages(it) }
         }
         val token = s.apiToken
         val classId = s.classId

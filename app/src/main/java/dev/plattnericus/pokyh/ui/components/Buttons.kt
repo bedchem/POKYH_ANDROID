@@ -193,7 +193,12 @@ fun PokyhTextButton(
         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
     ) {
         if (icon != null) {
-            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (enabled) color else PokyhTheme.colors.textTertiary,
+                modifier = Modifier.size(16.dp),
+            )
         }
         Text(text, style = PokyhType.headline, color = if (enabled) color else PokyhTheme.colors.textTertiary)
     }
@@ -201,7 +206,9 @@ fun PokyhTextButton(
 
 /**
  * A glyph with a 40dp tap target. [tinted] adds the soft circular backdrop the tab-root top bars
- * use, so a toolbar action reads as a designed control rather than a floating icon.
+ * use, so a toolbar action reads as a designed control rather than a floating icon;
+ * [containerColor] overrides that fill for the rare action that is the screen's primary one
+ * (the accent circle that opens the message composer).
  */
 @Composable
 fun PokyhIconButton(
@@ -211,6 +218,7 @@ fun PokyhIconButton(
     modifier: Modifier = Modifier,
     tint: Color = PokyhTheme.colors.textPrimary,
     tinted: Boolean = false,
+    containerColor: Color? = null,
     enabled: Boolean = true,
     size: Dp = 40.dp,
     iconSize: Dp = 20.dp,
@@ -221,7 +229,13 @@ fun PokyhIconButton(
         modifier = modifier
             .size(size)
             .clip(PokyhShapes.pill)
-            .then(if (tinted) Modifier.background(colors.cardAlt) else Modifier)
+            .then(
+                when {
+                    containerColor != null -> Modifier.background(containerColor)
+                    tinted -> Modifier.background(colors.cardAlt)
+                    else -> Modifier
+                },
+            )
             .pressHighlight(interactionSource, PokyhShapes.pill)
             .clickable(
                 interactionSource = interactionSource,

@@ -46,6 +46,9 @@ object PokyhIcons {
     val forward = Ph.ArrowRight
     val chevronRight = Ph.CaretRight
     val chevronLeft = Ph.CaretLeft
+
+    /** The caret on a menu trigger — rotates 180° when the menu is open. */
+    val expandMenu = Ph.CaretDown
     val close = Ph.X
     val add = Ph.Plus
     val more = Ph.DotsThreeVertical
@@ -120,6 +123,12 @@ object PokyhIcons {
     val attachment = Ph.Paperclip
     val file = Ph.File
     val emptyFolder = Ph.Tray
+    val compose = Ph.PencilSimple
+    val sendMessage = Ph.PaperPlaneTilt
+    val markAllRead = Ph.Checks
+    val download = Ph.DownloadSimple
+    val filePdf = Ph.FilePdf
+    val fileImage = Ph.FileImage
 
     // ── Time ─────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 package dev.plattnericus.pokyh.ui.navigation
 
+import dev.plattnericus.pokyh.core.util.SchoolDates
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -98,13 +99,19 @@ fun PokyhNavHost(
         }
         composable(PokyhDestinations.GRADES) {
             dev.plattnericus.pokyh.ui.grades.GradesScreen(
-                onSubjectClick = { lessonId -> navController.navigate(PokyhDestinations.gradeSubject(lessonId)) },
+                onSubjectClick = { lessonId, year -> navController.navigate(PokyhDestinations.gradeSubject(lessonId, year)) },
                 onNavigate = { route -> navController.navigate(route) },
             )
         }
         composable(
             route = PokyhDestinations.GRADE_SUBJECT,
-            arguments = listOf(navArgument("subjectId") { type = NavType.IntType }),
+            arguments = listOf(
+                navArgument("subjectId") { type = NavType.IntType },
+                navArgument("year") {
+                    type = NavType.IntType
+                    defaultValue = SchoolDates.currentSchoolYear
+                },
+            ),
         ) {
             dev.plattnericus.pokyh.ui.grades.GradeSubjectScreen(
                 onNavigateBack = { navController.popBackStack() },
@@ -125,11 +132,14 @@ fun PokyhNavHost(
             )
         }
         composable(PokyhDestinations.TODOS) {
-            dev.plattnericus.pokyh.ui.todos.TodosScreen()
+            dev.plattnericus.pokyh.ui.todos.TodosScreen(
+                onNavigateBack = { navController.popBackStack() },
+            )
         }
         composable(PokyhDestinations.REMINDERS) {
             dev.plattnericus.pokyh.ui.reminders.RemindersScreen(
                 onReminderClick = { id -> navController.navigate(PokyhDestinations.reminderDetail(id)) },
+                onNavigateBack = { navController.popBackStack() },
             )
         }
         composable(
@@ -169,6 +179,7 @@ fun PokyhNavHost(
         composable(PokyhDestinations.CLASSROOM) {
             dev.plattnericus.pokyh.ui.classroom.ClassScreen(
                 onNavigateBack = { navController.popBackStack() },
+                onNavigate = { route -> navController.navigate(route) },
             )
         }
         composable(PokyhDestinations.PROFILE) {

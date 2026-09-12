@@ -1,5 +1,6 @@
 package dev.plattnericus.pokyh.data.untis
 
+import android.util.Base64
 import dev.plattnericus.pokyh.data.json.JsonDyn
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.AppError
@@ -9,6 +10,8 @@ import dev.plattnericus.pokyh.data.model.MessageAttachment
 import dev.plattnericus.pokyh.data.model.MessageDetail
 import dev.plattnericus.pokyh.data.model.MessageFolder
 import dev.plattnericus.pokyh.data.model.MessagePreview
+import dev.plattnericus.pokyh.data.model.MessageRecipient
+import dev.plattnericus.pokyh.data.model.OutgoingAttachment
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
@@ -25,7 +28,10 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.plus
 import kotlinx.datetime.todayIn
 import okhttp3.CookieJar
+import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -33,7 +39,6 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -704,7 +709,13 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             }.awaitAll()
         }.filterNotNull()
 
-        return subjects.filter { it.subjectName.isNotEmpty() && it.grades.isNotEmpty() }
+        // Subjects with NO grades yet are kept on purpose. `grade/grading/list` returns every
+        // lesson the student is enrolled in for the year, so they're all known from the start of
+        // the school year — dropping the gradeless ones (which the web frontend's `parseGrades`
+        // does) means the Noten screen looks empty in September even though the subject list is
+        // right there. A deliberate divergence from the web: the screen shows every subject and
+        // marks the ones without grades as "–".
+        return subjects.filter { it.subjectName.isNotEmpty() }
             .sortedBy { it.subjectName.lowercase() }
     }
 
@@ -875,13 +886,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val m = JsonDyn.parse(body)
         val sender = m["sender"]
         val senderName = sender["displayName"].string ?: sender["name"].string ?: m["senderName"].string ?: "Unbekannt"
-        val attachments = m["attachments"].array.map { a ->
-            MessageAttachment(
-                id = a["id"].string ?: a["storageId"].string ?: UUID.randomUUID().toString(),
-                name = a["name"].string ?: a["fileName"].string ?: "Anhang",
-                size = a["size"].int ?: 0,
-            )
-        }
+        val attachments = parseAttachments(m)
         return MessageDetail(
             id = m["id"].int ?: id,
             subject = m["subject"].string ?: "(Kein Betreff)",
@@ -900,6 +905,305 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                 noCookieClient.newCall(request).execute().close()
             }
         }
+    }
+
+    // ── Message attachments ──────────────────────────────────────────────────
+
+    /** A downloaded attachment: the raw bytes plus the type the server labelled them with. */
+    class DownloadedAttachment(val name: String, val mimeType: String, val bytes: ByteArray)
+
+    /**
+     * Attachments in any of the shapes the MessageCenter reports them: an `attachments` array
+     * (or one of its aliases), an object wrapping one, or `storageAttachments` — whose `id` is
+     * the storage UUID and which carries no numeric id at all. Same candidate order as the web
+     * frontend, because which shape arrives depends on the WebUntis version.
+     */
+    private fun parseAttachments(node: JsonDyn): List<MessageAttachment> {
+        val direct = listOf("attachments", "messageFile", "files", "fileAttachments", "attachment", "items", "content", "data")
+            .map { node[it] }.firstOrNull { it.isArray }
+            ?: if (node.isArray) node else JsonDyn.empty
+        val list = direct.array.map { a ->
+            val rawId = a["id"]
+            MessageAttachment(
+                id = rawId.int ?: a["fileId"].int ?: 0,
+                // A non-numeric `id` IS the storage UUID on instances that omit `storageId`.
+                storageId = a["storageId"].string
+                    ?: rawId.string?.takeIf { it.toIntOrNull() == null }
+                    ?: "",
+                name = a["name"].string ?: a["fileName"].string ?: a["originalName"].string
+                    ?: a["src"].string ?: "Anhang",
+                size = a["size"].int ?: a["fileSize"].int ?: 0,
+            )
+        }
+        if (list.isNotEmpty()) return list
+        return node["storageAttachments"].array.map { a ->
+            MessageAttachment(id = 0, storageId = a["id"].string ?: "", name = a["name"].string ?: "Anhang", size = 0)
+        }
+    }
+
+    /**
+     * Re-asks for a message's attachments when the detail body came back without them (some
+     * instances only fill the list on the dedicated endpoint). Best-effort: an empty list means
+     * "none found", never an error.
+     */
+    suspend fun messageAttachments(session: UserSession, id: Int): List<MessageAttachment> {
+        for (path in listOf(Config.Routes.messageAttachments(id), Config.Routes.messageDetail(id))) {
+            val (body, resp) = runCatching { get("${Config.untisBase}$path", session) }.getOrNull() ?: continue
+            if (resp.code != 200 || body.firstOrNull() == '<') continue
+            val found = parseAttachments(JsonDyn.parse(body))
+            if (found.isNotEmpty()) return found
+        }
+        return emptyList()
+    }
+
+    /**
+     * Downloads one attachment, mirroring the web frontend's two strategies in order:
+     *  1. ask the MessageCenter for a pre-signed storage URL (`attachmentstorageurl`, keyed on
+     *     the storage UUID) and fetch that with the extra headers it hands back, then
+     *  2. fall back to the direct `/messages/{id}/attachments/...` candidates.
+     *
+     * Returns null when every candidate fails or only ever answers with HTML/JSON — that is an
+     * error page, not a file.
+     */
+    suspend fun downloadAttachment(
+        session: UserSession,
+        messageId: Int,
+        attachment: MessageAttachment,
+    ): DownloadedAttachment? {
+        storageDownload(session, attachment)?.let { return it }
+        for (path in Config.Routes.attachmentCandidates(messageId, attachment.storageId, attachment.id)) {
+            fetchFile("${Config.untisBase}$path", attachment.name, session = session)?.let { return it }
+        }
+        return null
+    }
+
+    private suspend fun storageDownload(session: UserSession, attachment: MessageAttachment): DownloadedAttachment? {
+        if (attachment.storageId.isEmpty()) return null
+        val (body, resp) = runCatching {
+            get("${Config.untisBase}${Config.Routes.attachmentStorageUrl(attachment.storageId)}", session)
+        }.getOrNull() ?: return null
+        if (resp.code != 200 || body.firstOrNull() == '<') return null
+        val info = JsonDyn.parse(body)
+        val downloadUrl = info["downloadUrl"].string ?: return null
+        // The storage's own headers come back as {key|value} pairs — some deployments say
+        // {name|value}. `host` is skipped: OkHttp sets it from the URL.
+        val extra = info["additionalHeaders"].array.mapNotNull { h ->
+            val key = h["key"].string ?: h["name"].string ?: return@mapNotNull null
+            val value = h["value"].string ?: return@mapNotNull null
+            if (key.equals("host", ignoreCase = true)) null else key to value
+        }
+        return fetchFile(downloadUrl, attachment.name, headers = extra)
+    }
+
+    /** GETs a URL expecting a *file* back: an HTML or JSON answer is an error page, not content. */
+    private suspend fun fetchFile(
+        url: String,
+        name: String,
+        session: UserSession? = null,
+        headers: List<Pair<String, String>> = emptyList(),
+    ): DownloadedAttachment? = withContext(Dispatchers.IO) {
+        runCatching {
+            val builder = Request.Builder().url(url)
+            session?.let { builder.withAuth(it) }
+            headers.forEach { (key, value) -> builder.header(key, value) }
+            val client = noCookieClient.newBuilder().callTimeout(60, TimeUnit.SECONDS).build()
+            client.newCall(builder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val type = response.header("Content-Type").orEmpty()
+                if (type.contains("text/html") || type.contains("application/json")) return@use null
+                val bytes = response.body?.bytes() ?: return@use null
+                if (bytes.isEmpty()) return@use null
+                DownloadedAttachment(
+                    name = name,
+                    mimeType = type.substringBefore(';').trim().ifEmpty { "application/octet-stream" },
+                    bytes = bytes,
+                )
+            }
+        }.getOrNull()
+    }
+
+    /** Marks every id read in parallel, each failing on its own (the web's `Promise.allSettled`). */
+    suspend fun markAllMessagesRead(session: UserSession, ids: List<Int>) {
+        if (ids.isEmpty()) return
+        coroutineScope { ids.map { id -> async { markMessageRead(session, id) } }.awaitAll() }
+    }
+
+    // ── Message writing (MessageCenter) ──────────────────────────────────────
+
+    /** The people this account may write to, grouped by the API into class teachers / others. */
+    suspend fun messageRecipients(session: UserSession): List<MessageRecipient> {
+        val (body, resp) = get("${Config.untisBase}${Config.Routes.messageRecipients}", session)
+        if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
+        if (resp.code != 200) return emptyList()
+        val seen = mutableSetOf<String>()
+        return JsonDyn.parse(body).array.flatMap { group ->
+            val type = (group["type"].string ?: "TEACHERS").uppercase()
+            group["persons"].array.mapNotNull { person ->
+                val id = person["userId"].int ?: person["id"].int ?: return@mapNotNull null
+                val name = (person["displayName"].string ?: person["name"].string ?: "").trim()
+                if (name.isEmpty() || !seen.add("$type:$id")) return@mapNotNull null
+                val tags = person["tags"].array.mapNotNull { it.string }.filter { it.isNotEmpty() }
+                MessageRecipient(
+                    id = id,
+                    type = type,
+                    name = name,
+                    role = tags.joinToString(", ").ifEmpty { null },
+                    isClassTeacher = type == "CLASS_TEACHERS",
+                )
+            }
+        }
+    }
+
+    /**
+     * Sends a message, or saves it as a draft.
+     *
+     * Unlike every read endpoint, MessageCenter writes are `multipart/form-data`: a JSON
+     * `request` part plus one `attachments` part per file. They also run as a separate service,
+     * so they need the `Tenant-Id` (a claim inside the bearer token) and the school-year header
+     * the browser sends — without them the service rejects the request. Nothing here is
+     * instance-specific; both are derived from the session. Ported from the web frontend's
+     * `/api/webuntis/messages/send` route.
+     */
+    suspend fun sendMessage(
+        session: UserSession,
+        subject: String,
+        content: String,
+        recipients: List<MessageRecipient>,
+        attachments: List<OutgoingAttachment> = emptyList(),
+        asDraft: Boolean = false,
+    ) {
+        val token = freshMessageToken(session)
+        val schoolYearId = runCatching { rpc("getCurrentSchoolyear", session, "sy")["id"].int }.getOrNull()
+        val permissions = messagePermissions(session, token, schoolYearId)
+
+        if (attachments.size > permissions.maxFileCount) {
+            throw AppError("Maximal ${permissions.maxFileCount} Anhänge erlaubt.")
+        }
+        attachments.firstOrNull { it.bytes.size > permissions.maxFileSize }?.let {
+            throw AppError("„${it.name}“ ist zu groß (max. ${permissions.maxFileSize / (1024 * 1024)} MB pro Datei).")
+        }
+
+        val meta = JSONObject().apply {
+            put("subject", subject)
+            put("content", content)
+            put("recipientOption", permissions.recipientOption)
+            put("recipientPersons", JSONArray().apply { recipients.forEach { put(JSONObject().put("id", it.id)) } })
+            put("recipientGroups", JSONArray())
+        }
+        val paths = if (asDraft) listOf(Config.Routes.messagesV2Drafts, Config.Routes.messagesDrafts)
+        else listOf(Config.Routes.messagesV2, Config.Routes.messages)
+        val failure = if (asDraft) {
+            "Der Entwurf konnte nicht gespeichert werden. Bitte versuche es später erneut."
+        } else {
+            "Die Nachricht konnte nicht gesendet werden. Bitte versuche es später erneut."
+        }
+
+        for (path in paths) {
+            val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+                .addFormDataPart("request", null, meta.toString().toRequestBody(jsonMediaType))
+                .apply {
+                    attachments.forEach { file ->
+                        addFormDataPart(
+                            "attachments",
+                            file.name,
+                            file.bytes.toRequestBody(file.mimeType.toMediaTypeOrNull()),
+                        )
+                    }
+                }
+                .build()
+            val (text, code) = withContext(Dispatchers.IO) {
+                val request = Request.Builder()
+                    .url("${Config.untisBase}$path")
+                    .headers(messageWriteHeaders(session, token, schoolYearId))
+                    .post(form)
+                    .build()
+                val client = noCookieClient.newBuilder().callTimeout(60, TimeUnit.SECONDS).build()
+                client.newCall(request).execute().use { it.body?.string().orEmpty() to it.code }
+            }
+            // 404 only means this path doesn't exist on the instance — try the older one.
+            if (code == 404) continue
+            if (code == 401 || text.firstOrNull() == '<') throw AppError.sessionExpired
+            if (code in 200..299) return
+            throw AppError(serverMessage(text) ?: failure)
+        }
+        throw AppError(failure)
+    }
+
+    private class MessagePermissions(val recipientOption: String, val maxFileSize: Long, val maxFileCount: Int)
+
+    /** The MessageCenter config for this account: allowed recipient option + attachment limits. */
+    private suspend fun messagePermissions(session: UserSession, token: String, schoolYearId: Int?): MessagePermissions {
+        val fallback = MessagePermissions(recipientOption = "TEACHER", maxFileSize = 7_000_000L, maxFileCount = 5)
+        val (body, code) = runCatching {
+            withContext(Dispatchers.IO) {
+                val request = Request.Builder()
+                    .url("${Config.untisBase}${Config.Routes.messagePermissions}")
+                    .headers(messageWriteHeaders(session, token, schoolYearId))
+                    .build()
+                noCookieClient.newCall(request).execute().use { it.body?.string().orEmpty() to it.code }
+            }
+        }.getOrNull() ?: return fallback
+        if (code != 200 || body.firstOrNull() == '<') return fallback
+        val json = JsonDyn.parse(body)
+        return MessagePermissions(
+            recipientOption = json["recipientOptions"].array.firstOrNull()?.string ?: fallback.recipientOption,
+            maxFileSize = json["maxFileSize"].double?.toLong() ?: fallback.maxFileSize,
+            maxFileCount = json["maxFileCount"].int ?: fallback.maxFileCount,
+        )
+    }
+
+    /** Headers for a MessageCenter write — deliberately without `Content-Type`, so OkHttp can
+     * set the multipart boundary itself. */
+    private fun messageWriteHeaders(session: UserSession, token: String, schoolYearId: Int?): Headers =
+        Headers.Builder().apply {
+            add("Cookie", cookieHeader(session.sessionId))
+            add("Accept", "application/json")
+            if (token.isNotEmpty()) add("Authorization", "Bearer $token")
+            tenantIdOf(token, session.bearerToken)?.let { add("Tenant-Id", it) }
+            schoolYearId?.let { add("X-Webuntis-Api-School-Year-Id", it.toString()) }
+        }.build()
+
+    /** WebUntis issues short-lived JWTs and the web client refreshes before every write; falls
+     * back to the token stored at login when the refresh is unavailable. */
+    private suspend fun freshMessageToken(session: UserSession): String {
+        val (body, resp) = runCatching { get("${Config.untisBase}${Config.Routes.token}", session) }.getOrNull()
+            ?: return session.bearerToken
+        if (resp.code != 200 || body.firstOrNull() == '<') return session.bearerToken
+        val trimmed = body.trim()
+        if (trimmed.startsWith("{")) {
+            val json = JsonDyn.parse(trimmed)
+            return json["accessToken"].string ?: json["token"].string ?: json["access_token"].string
+                ?: json["jwt"].string ?: session.bearerToken
+        }
+        return trimmed.trim('"').ifEmpty { session.bearerToken }
+    }
+
+    /** The `Tenant-Id` a write needs, read from the bearer token's own `tenant_id` claim (no
+     * verification — this only reads a claim the session already carries). */
+    private fun tenantIdOf(vararg tokens: String): String? {
+        for (token in tokens) {
+            val payload = token.split('.').getOrNull(1) ?: continue
+            val decoded = runCatching {
+                val flags = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+                String(Base64.decode(payload, flags), Charsets.UTF_8)
+            }.getOrNull() ?: continue
+            val claim = JsonDyn.parse(decoded)["tenant_id"]
+            val value = claim.string ?: claim.int?.toString()
+            if (!value.isNullOrBlank()) return value
+        }
+        return null
+    }
+
+    /** WebUntis' own German error text, so a business rule ("nur an eine einzige Lehrkraft
+     * senden") reaches the user instead of a generic failure. */
+    private fun serverMessage(body: String): String? {
+        val json = JsonDyn.parse(body)
+        json["errorMessage"].string?.takeIf { it.isNotBlank() }?.let { return it.trim() }
+        return json["validationErrors"].array
+            .mapNotNull { it["errorMessage"].string }
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .takeIf { it.isNotBlank() }
     }
 
     // ── Klassenbuch / Classreg events ────────────────────────────────────────

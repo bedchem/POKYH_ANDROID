@@ -4,12 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.plattnericus.pokyh.core.util.SchoolDates
-import dev.plattnericus.pokyh.core.util.isoWeekNumber
 import dev.plattnericus.pokyh.core.util.mondayOfWeek
 import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.Dish
+import dev.plattnericus.pokyh.data.model.DishRatingsData
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.data.untis.MergedSlot
@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
 
@@ -53,8 +54,9 @@ class HomeViewModel @Inject constructor(
         val loadingGrades: Boolean = true,
         val recentGrades: List<RecentGrade> = emptyList(),
         val loadingMensa: Boolean = true,
-        val todayDishes: List<Dish> = emptyList(),
-        val dishDayLabel: String = "",
+        val mensaWeek: List<MensaWeekDay> = emptyList(),
+        val mensaWeekLabel: String = "",
+        val dishRatings: Map<String, DishRatingsData> = emptyMap(),
         val examsLoaded: Boolean = false,
         val nextExam: TimetableEntry? = null,
         val error: String? = null,
@@ -176,43 +178,74 @@ class HomeViewModel @Inject constructor(
         _state.update { it.copy(loadingMensa = true) }
         try {
             val dishes = backendClient.dishes()
-            val day = mensaDays(dishes).firstOrNull()
+            val week = mensaWeek(dishes)
             _state.update {
                 it.copy(
-                    todayDishes = day?.dishes.orEmpty(),
-                    dishDayLabel = day?.date?.let(::labelFor).orEmpty(),
+                    mensaWeek = week,
+                    mensaWeekLabel = if (week.any { day -> day.isToday }) "Diese Woche" else "Nächste Woche",
                     loadingMensa = false,
                 )
             }
+            loadDishRatings(week.flatMap { day -> day.dishes }.map { dish -> dish.id })
         } catch (e: Exception) {
             _state.update { it.copy(loadingMensa = false) }
         }
     }
 
-    // ── Mensa-Datumslogik — Port von `MensaSchedule.days`/`HomeView.labelFor` (MensaView.swift,
-    // HomeView.swift): strikt ab heute, aufsteigend; kein Rückfall auf vergangene Tage. ─────────
+    /** The star averages for the week's dishes in one batch call, so the home strip can show a
+     * rating per dish without a request per card. Needs a POKYH backend token; without one the
+     * cards simply show no stars. */
+    private suspend fun loadDishRatings(ids: List<String>) {
+        val token = appState.session.value?.apiToken ?: return
+        val unique = ids.distinct()
+        if (unique.isEmpty()) return
+        runCatching { backendClient.dishRatingsBatch(unique, token) }
+            .onSuccess { batch -> _state.update { it.copy(dishRatings = batch) } }
+    }
 
-    private data class DayGroup(val date: LocalDate, val dishes: List<Dish>)
+    // ── Mensa-Wochenlogik ────────────────────────────────────────────────────
 
-    private fun mensaDays(dishes: List<Dish>): List<DayGroup> {
+    /** One weekday column of the home screen's menu strip. */
+    data class MensaWeekDay(
+        val date: LocalDate,
+        val weekday: String,
+        /** `dd.MM.` — the date is spelled out on every card, so no column is ambiguous. */
+        val dateLabel: String,
+        val isToday: Boolean,
+        val isPast: Boolean,
+        val dishes: List<Dish>,
+    )
+
+    /**
+     * Monday–Friday of the current week — and from Saturday on, of the *next* one, because a
+     * menu for a week that is already over is never the answer to "what's for lunch".
+     *
+     * Days without a menu are kept rather than dropped: the strip is a week, and a gap in it is
+     * information ("no menu on Wednesday"), not something to hide by shifting the other days.
+     */
+    private fun mensaWeek(dishes: List<Dish>): List<MensaWeekDay> {
         val today = todayLocalDate()
+        val weekend = today.dayOfWeek == DayOfWeek.SATURDAY || today.dayOfWeek == DayOfWeek.SUNDAY
+        val monday = mondayOfWeek(today).let { if (weekend) it.plus(7, DateTimeUnit.DAY) else it }
+
         val byDay = linkedMapOf<LocalDate, MutableList<Dish>>()
-        for (d in dishes) {
-            val date = runCatching { LocalDate.parse(d.date.take(10)) }.getOrNull() ?: continue
-            byDay.getOrPut(date) { mutableListOf() }.add(d)
+        for (dish in dishes) {
+            val date = runCatching { LocalDate.parse(dish.date.take(10)) }.getOrNull() ?: continue
+            byDay.getOrPut(date) { mutableListOf() }.add(dish)
         }
-        return byDay.keys.filter { it >= today }.sorted().map { DayGroup(it, byDay.getValue(it)) }
+
+        return (0..4).map { offset ->
+            val date = monday.plus(offset, DateTimeUnit.DAY)
+            MensaWeekDay(
+                date = date,
+                weekday = weekdayNamesDe[date.dayOfWeek.ordinal],
+                dateLabel = "%02d.%02d.".format(date.dayOfMonth, date.monthNumber),
+                isToday = date == today,
+                isPast = date < today,
+                dishes = byDay[date].orEmpty(),
+            )
+        }
     }
 
     private val weekdayNamesDe = listOf("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
-    private val monthAbbrevDe = listOf("Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez")
-
-    private fun labelFor(date: LocalDate): String {
-        val today = todayLocalDate()
-        if (date == today) return "Heute"
-        if (date == today.plus(1, DateTimeUnit.DAY)) return "Morgen"
-        val sameWeek = isoWeekNumber(date) == isoWeekNumber(today) && date.year == today.year
-        val weekday = weekdayNamesDe[date.dayOfWeek.ordinal]
-        return if (sameWeek) weekday else "$weekday, ${date.dayOfMonth}. ${monthAbbrevDe[date.monthNumber - 1]}"
-    }
 }

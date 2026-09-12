@@ -47,6 +47,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhRow
+import dev.plattnericus.pokyh.ui.components.PokyhRowMenuCaret
 import dev.plattnericus.pokyh.ui.components.PokyhRowSeparator
 import dev.plattnericus.pokyh.ui.components.PokyhSection
 import dev.plattnericus.pokyh.ui.components.PokyhSectionHeader
@@ -465,13 +466,20 @@ private fun DarstellungSection(
                     title = "Erscheinungsbild",
                     leading = { RowGlyph(PokyhIcons.appearance) },
                     onClick = { expanded = true },
+                    // A menu, not a push — so a caret rather than PokyhRow's navigation chevron.
                     showChevron = false,
                     trailing = {
-                        StatusLabel(
-                            text = themeMode.label(),
-                            color = PokyhTheme.colors.textSecondary,
-                            icon = themeMode.icon(),
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+                        ) {
+                            StatusLabel(
+                                text = themeMode.label(),
+                                color = PokyhTheme.colors.textSecondary,
+                                icon = themeMode.icon(),
+                            )
+                            PokyhRowMenuCaret(expanded = expanded)
+                        }
                     },
                 )
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {

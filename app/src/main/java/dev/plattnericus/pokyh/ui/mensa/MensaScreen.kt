@@ -46,6 +46,7 @@ import dev.plattnericus.pokyh.ui.components.TagChip
 import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
+import dev.plattnericus.pokyh.ui.profile.rememberUnreadMessageCount
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
@@ -77,6 +78,7 @@ fun MensaScreen(
                 actions = {
                     TabRootActions(
                         avatarContent = { CurrentUserAvatar() },
+                        unreadMessages = rememberUnreadMessageCount(),
                         onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                         onProfile = { onNavigate(PokyhDestinations.PROFILE) },
                     )

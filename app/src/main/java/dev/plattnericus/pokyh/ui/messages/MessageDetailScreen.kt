@@ -3,6 +3,7 @@
 package dev.plattnericus.pokyh.ui.messages
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -19,8 +21,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -34,10 +40,14 @@ import dev.plattnericus.pokyh.ui.components.PokyhRow
 import dev.plattnericus.pokyh.ui.components.PokyhSection
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TopBarNav
+import dev.plattnericus.pokyh.ui.components.openOrShareFile
+import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
+import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
+import dev.plattnericus.pokyh.ui.theme.accentSurface
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 
@@ -55,6 +65,8 @@ fun MessageDetailScreen(
     val ui by viewModel.detail.collectAsStateWithLifecycle()
     LaunchedEffect(id) { viewModel.loadDetail(id) }
     val detail = ui.detail
+    val context = LocalContext.current
+    var noViewerFor by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         modifier = Modifier.appBackground(),
@@ -114,12 +126,48 @@ fun MessageDetailScreen(
                     }
                 }
 
-                if (detail.attachments.isNotEmpty()) {
+                if (detail.attachments.isNotEmpty() || ui.attachmentsLoading) {
                     PokyhSection(
                         title = "Anhänge",
                         modifier = Modifier.fadeIn(delayMillis = 80),
                     ) {
-                        PokyhListCard(items = detail.attachments) { att -> AttachmentRow(att) }
+                        if (detail.attachments.isEmpty()) {
+                            Text(
+                                text = "Anhänge werden geladen …",
+                                style = PokyhType.footnote,
+                                color = PokyhTheme.colors.textTertiary,
+                            )
+                        } else {
+                            PokyhListCard(items = detail.attachments) { attachment ->
+                                AttachmentRow(
+                                    attachment = attachment,
+                                    downloading = ui.downloadingKey == viewModel.attachmentKey(attachment),
+                                    enabled = ui.downloadingKey == null,
+                                    onClick = {
+                                        noViewerFor = null
+                                        viewModel.downloadAttachment(attachment) { file ->
+                                            val opened = openOrShareFile(
+                                                context = context,
+                                                fileName = file.name,
+                                                mimeType = file.mimeType,
+                                                bytes = file.bytes,
+                                            )
+                                            if (!opened) noViewerFor = file.name
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        val problem = ui.downloadError
+                            ?: noViewerFor?.let { "Keine App gefunden, die „$it“ öffnen kann." }
+                        if (problem != null) {
+                            Text(
+                                text = problem,
+                                style = PokyhType.footnote,
+                                color = Brand.danger,
+                                modifier = Modifier.padding(top = PokyhSpacing.sm),
+                            )
+                        }
                     }
                 }
             }
@@ -127,19 +175,46 @@ fun MessageDetailScreen(
     }
 }
 
+/**
+ * An attachment as a downloadable row: file-kind glyph, name, size, and a download affordance —
+ * the old row was a plain, un-tappable line, so a PDF in a message had no way out of the app.
+ * Tapping fetches the bytes and hands them to whatever app opens that type.
+ */
 @Composable
-private fun AttachmentRow(attachment: MessageAttachment) {
+private fun AttachmentRow(
+    attachment: MessageAttachment,
+    downloading: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = PokyhTheme.colors
     PokyhRow(
         title = attachment.name,
+        subtitle = formatFileSize(attachment.size).ifEmpty { null },
         showChevron = false,
-        leading = {
-            Icon(
-                imageVector = PokyhIcons.file,
-                contentDescription = null,
-                tint = PokyhTheme.colors.textTertiary,
-                modifier = Modifier.size(20.dp),
-            )
+        enabled = enabled || downloading,
+        onClick = onClick,
+        leading = { FileGlyph(attachment.name) },
+        trailing = {
+            if (downloading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    color = Brand.accent,
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Box(
+                    modifier = Modifier.size(32.dp).accentSurface(PokyhShapes.md),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = PokyhIcons.download,
+                        contentDescription = "Herunterladen",
+                        tint = colors.accentText,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
         },
-        // TODO(attachments): implement download via the WebUntis attachment endpoint.
     )
 }

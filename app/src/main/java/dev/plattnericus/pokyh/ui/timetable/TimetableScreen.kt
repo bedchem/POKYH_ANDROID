@@ -73,6 +73,7 @@ import dev.plattnericus.pokyh.ui.components.TagChip
 import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
+import dev.plattnericus.pokyh.ui.profile.rememberUnreadMessageCount
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
@@ -151,6 +152,7 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
                     }
                     TabRootActions(
                         avatarContent = { CurrentUserAvatar() },
+                        unreadMessages = rememberUnreadMessageCount(),
                         onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                         onProfile = { onNavigate(PokyhDestinations.PROFILE) },
                     )

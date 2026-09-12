@@ -80,6 +80,16 @@ data class PokyhColors(
     val surface: Color,
     val card: Color,
     val cardAlt: Color,
+    /**
+     * A panel **nested inside a card** — an expanded row's detail area, an inline "nothing here"
+     * line.
+     *
+     * Deliberately hue-free in both themes, and deliberately NOT [cardAlt]. [cardAlt] carries the
+     * theme's cast (a touch of blue in dark, a touch of warm in light) which is right for a
+     * control's track but reads as a blue (or tan) patch when it fills a large area inside a
+     * white/near-black card. This is the same value at every size: plain gray.
+     */
+    val nested: Color,
     /** Hairline at the edge of a surface. Used sparingly — tone does the separating. */
     val border: Color,
     /** Hairline *between rows inside* a card. Lighter than [border]. */
@@ -101,6 +111,7 @@ val LightPokyhColors = PokyhColors(
     surface = Color(0xFFFFFFFF),
     card = Color(0xFFFFFFFF),
     cardAlt = Color(0xFFEEEAE3),
+    nested = Color(0xFFECECEB),
     border = Color(0xFFE7E2D9),
     separator = Color(0xFFF0ECE5),
     textPrimary = Color(0xFF1C1A17),
@@ -137,6 +148,7 @@ val DarkPokyhColors = PokyhColors(
     surface = Color(0xFF1B1B1F),
     card = Color(0xFF1B1B1F),
     cardAlt = Color(0xFF26262B),
+    nested = Color(0xFF232323),
     border = Color(0xFF303036),
     separator = Color(0xFF232327),
     textPrimary = Color(0xFFF2F2F4),
@@ -295,6 +307,47 @@ fun gradeColor(value: Double): Color {
 
 /** Simplified binary grade color used by widgets (Phase 3) — `Brand.grade` on iOS. */
 fun gradeColorSimple(value: Double): Color = if (value >= 6.0) Brand.success else Brand.danger
+
+/**
+ * The Noten dashboard's four-tier band color (see `gradeBand`), matching the web frontend's
+ * `gradeClass` -> CSS-variable mapping: excellent is a lightened success, positive is success,
+ * negative is the warning-orange step, critical is danger.
+ *
+ * Takes the band rather than the raw value so the *thresholds* live in one place (the dashboard
+ * model, ported from the web) and only the *colors* live here.
+ */
+fun bandColor(band: dev.plattnericus.pokyh.ui.grades.GradeBand): Color = when (band) {
+    dev.plattnericus.pokyh.ui.grades.GradeBand.Excellent ->
+        androidx.compose.ui.graphics.lerp(Brand.success, Color.White, 0.18f)
+    dev.plattnericus.pokyh.ui.grades.GradeBand.Positive -> Brand.success
+    dev.plattnericus.pokyh.ui.grades.GradeBand.Negative -> Brand.orange
+    dev.plattnericus.pokyh.ui.grades.GradeBand.Critical -> Brand.danger
+}
+
+/**
+ * Per-grade color for the Notenverteilung donut.
+ *
+ * **Only 4-10 are real marks here.** That's the LBS Brixen scheme, and it's exactly the range
+ * the web frontend's `DONUT_GRADE_COLORS` defines — anything outside it is a data oddity, not a
+ * grade, so it gets the same neutral gray the web falls back to rather than a color that would
+ * make it look like a legitimate band.
+ *
+ * Same hue *order* as the web's donut so the ring reads identically — green → teal → blue →
+ * indigo → yellow → orange → red — but softened off the raw iOS system colors the web uses
+ * (#30D158, #00C7BE, #0A84FF, …), which are too saturated next to this app's pastel surfaces.
+ * Grade 7 is deliberately [Brand.accent]: it's the most common mark, so the ring's biggest arc
+ * is the brand color.
+ */
+fun distributionColor(grade: Int): Color = when (grade) {
+    10 -> Color(0xFF34C759)
+    9 -> Color(0xFF30C0A8)
+    8 -> Color(0xFF4B9BF5)
+    7 -> Brand.accent
+    6 -> Color(0xFFF2C744)
+    5 -> Color(0xFFF59E4B)
+    4 -> Color(0xFFEF6B5E)
+    else -> Color(0xFF8A8A8F)
+}
 
 /**
  * Rendering-layer treatment, NOT a data-color change (unlike everything above this line, this

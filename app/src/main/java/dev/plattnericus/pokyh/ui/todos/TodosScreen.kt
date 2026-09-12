@@ -55,6 +55,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhTileRow
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.StatusLabel
 import dev.plattnericus.pokyh.ui.components.SwipeToDeleteBackground
+import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
@@ -76,7 +77,7 @@ import kotlinx.coroutines.launch
  * [PokyhFab]. Rows stand on their own surface rather than in a grouped card, because each one is
  * independently swipeable and a swipe out of a grouped card would tear the card. */
 @Composable
-fun TodosScreen(viewModel: TodosViewModel = hiltViewModel()) {
+fun TodosScreen(onNavigateBack: () -> Unit = {}, viewModel: TodosViewModel = hiltViewModel()) {
     val session by viewModel.session.collectAsStateWithLifecycle()
     val backendStatus by viewModel.backendStatus.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -91,6 +92,7 @@ fun TodosScreen(viewModel: TodosViewModel = hiltViewModel()) {
             PokyhTopBar(
                 title = "Todos",
                 eyebrow = if (ui.todos.isEmpty()) null else "$openCount offen · ${ui.todos.size} gesamt",
+                nav = TopBarNav.Back(onNavigateBack),
             )
         },
         floatingActionButton = {

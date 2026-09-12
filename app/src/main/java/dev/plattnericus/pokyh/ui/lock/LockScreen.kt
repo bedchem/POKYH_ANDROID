@@ -234,7 +234,6 @@ private fun AccountChooser(
                 title = acc.username,
                 subtitle = acc.displayName,
                 onClick = { onSelect(acc.username) },
-                showChevron = false,
                 // No session exists yet on the Lock screen, so there are no headers to authorize a
                 // WebUntis image with — a saved account always shows its initial here.
                 leading = { InitialAvatar(name = acc.username, size = 36.dp) },

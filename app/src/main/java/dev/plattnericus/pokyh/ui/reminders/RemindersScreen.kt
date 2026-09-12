@@ -55,6 +55,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhTileRow
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.StatusLabel
 import dev.plattnericus.pokyh.ui.components.SwipeToDeleteBackground
+import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
@@ -80,6 +81,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun RemindersScreen(
     onReminderClick: (String) -> Unit,
+    onNavigateBack: () -> Unit = {},
     viewModel: RemindersViewModel = hiltViewModel(),
 ) {
     val session by viewModel.session.collectAsStateWithLifecycle()
@@ -95,8 +97,9 @@ fun RemindersScreen(
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
-                title = "Erinnerungen",
+                title = "Klassen-Erinnerungen",
                 eyebrow = if (visible.isEmpty()) null else "${visible.size} anstehend",
+                nav = TopBarNav.Back(onNavigateBack),
             )
         },
         floatingActionButton = {

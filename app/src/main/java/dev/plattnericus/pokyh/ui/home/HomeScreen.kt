@@ -1,6 +1,7 @@
 package dev.plattnericus.pokyh.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,12 +34,14 @@ import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.core.util.toLocalDate
 import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.model.Dish
+import dev.plattnericus.pokyh.data.model.DishRatingsData
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.SlotKind
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.IconTile
+import dev.plattnericus.pokyh.ui.components.MiniStars
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhFeatureTile
 import dev.plattnericus.pokyh.ui.components.PokyhInlineNotice
@@ -51,6 +54,7 @@ import dev.plattnericus.pokyh.ui.components.TabRootActions
 import dev.plattnericus.pokyh.ui.components.TileRowSkeleton
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
+import dev.plattnericus.pokyh.ui.profile.rememberUnreadMessageCount
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.DecorativeTone
 import dev.plattnericus.pokyh.ui.theme.PokyhDecorative
@@ -60,10 +64,12 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.PokyhType.monospacedDigits
+import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import dev.plattnericus.pokyh.ui.theme.gradeColor
 import dev.plattnericus.pokyh.ui.theme.insetSurface
+import dev.plattnericus.pokyh.ui.theme.nestedSurface
 import dev.plattnericus.pokyh.ui.theme.softenedFill
 import dev.plattnericus.pokyh.ui.theme.subjectColor
 import kotlin.math.round
@@ -131,10 +137,11 @@ fun HomeScreen(
                 modifier = Modifier.fadeIn(80),
             )
 
-            MensaSection(
+            MensaWeekSection(
                 loading = state.loadingMensa,
-                dishes = state.todayDishes,
-                dayLabel = state.dishDayLabel,
+                week = state.mensaWeek,
+                weekLabel = state.mensaWeekLabel,
+                ratings = state.dishRatings,
                 onClick = viewModel::selectMensaTab,
                 modifier = Modifier.fadeIn(120),
             )
@@ -182,6 +189,7 @@ private fun GreetingHeader(
             }
             TabRootActions(
                 avatarContent = { CurrentUserAvatar() },
+                        unreadMessages = rememberUnreadMessageCount(),
                 onMessages = onMessages,
                 onProfile = onProfile,
             )
@@ -374,68 +382,163 @@ private fun HomeSlotRow(slot: MergedSlot, modifier: Modifier = Modifier) {
     }
 }
 
-// ── Mensa heute ─────────────────────────────────────────────────────────────
+// ── Mensa-Woche ─────────────────────────────────────────────────────────────
 
-/** Today's dishes as one grouped card — three dishes are one answer to "what's for lunch", not
- * three separate objects, and one card keeps the screen's surface count down. */
+/** A day column is wide enough for a dish photo next to a two-line dish name, and narrow enough
+ * that the next day always peeks in — which is what says "this scrolls". */
+private val MensaDayWidth = 212.dp
+
+/**
+ * The week's menu as a horizontal strip of day cards: Monday to Friday, each with its dishes'
+ * photo, name and rating.
+ *
+ * Sideways rather than stacked, because five days of three dishes is far more than the home
+ * screen can spend vertically — and a week reads across anyway. Every card spells out its
+ * weekday *and* date, so no column is ambiguous once the strip has been scrolled.
+ */
 @Composable
-private fun MensaSection(
+private fun MensaWeekSection(
     loading: Boolean,
-    dishes: List<Dish>,
-    dayLabel: String,
+    week: List<HomeViewModel.MensaWeekDay>,
+    weekLabel: String,
+    ratings: Map<String, DishRatingsData>,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     PokyhSection(
         modifier = modifier,
         title = "Mensa",
-        trailing = if (dayLabel.isEmpty()) null else {
-            { PokyhLabel(dayLabel) }
+        trailing = if (weekLabel.isEmpty()) null else {
+            { PokyhLabel(weekLabel) }
         },
     ) {
         when {
-            loading && dishes.isEmpty() -> TileRowSkeleton(rows = 2)
-            dishes.isEmpty() -> PokyhInlineNotice(icon = PokyhIcons.mensa, text = "Kein Speiseplan verfügbar")
-            else -> PokyhListCard(items = dishes.take(3)) { dish ->
-                MensaDishRow(dish = dish, onClick = onClick)
+            loading && week.isEmpty() -> TileRowSkeleton(rows = 2)
+            week.none { it.dishes.isNotEmpty() } ->
+                PokyhInlineNotice(icon = PokyhIcons.mensa, text = "Kein Speiseplan verfügbar")
+            else -> Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
+            ) {
+                week.forEach { day ->
+                    MensaDayCard(day = day, ratings = ratings, onClick = onClick)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MensaDishRow(dish: Dish, onClick: () -> Unit) {
+private fun MensaDayCard(
+    day: HomeViewModel.MensaWeekDay,
+    ratings: Map<String, DishRatingsData>,
+    onClick: () -> Unit,
+) {
     val colors = PokyhTheme.colors
-    PokyhRow(
-        title = dish.name,
-        subtitle = dish.category.ifEmpty { null }?.uppercase(),
+    // A day already past stays in the strip (the week is the point) but steps back in tone.
+    val dayColor = when {
+        day.isToday -> colors.accentText
+        day.isPast -> colors.textTertiary
+        else -> colors.textPrimary
+    }
+    PokyhCard(
+        modifier = Modifier.width(MensaDayWidth),
+        padding = PokyhSpacing.md,
         onClick = onClick,
-        showChevron = false,
-        leading = {
-            Box(
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+        ) {
+            Text(
+                text = if (day.isToday) "Heute" else day.weekday,
+                style = PokyhType.subheadline.semibold(),
+                color = dayColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = day.dateLabel,
+                style = PokyhType.caption2.monospacedDigits(),
+                color = if (day.isToday) colors.accentText else colors.textTertiary,
+            )
+        }
+        if (day.isToday) {
+            Text(
+                text = day.weekday,
+                style = PokyhType.caption2,
+                color = colors.textTertiary,
+                modifier = Modifier.padding(top = PokyhSpacing.xxs),
+            )
+        }
+
+        Spacer(Modifier.size(PokyhSpacing.md))
+
+        if (day.dishes.isEmpty()) {
+            Text(
+                text = "Kein Menü",
+                style = PokyhType.footnote,
+                color = colors.textTertiary,
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(PokyhShapes.sm)
-                    .insetSurface(PokyhShapes.sm),
-            ) {
-                if (!dish.imageUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = dish.imageUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Icon(
-                        PokyhIcons.dish,
-                        contentDescription = null,
-                        tint = colors.textTertiary,
-                        modifier = Modifier.align(Alignment.Center).size(22.dp),
-                    )
-                }
+                    .fillMaxWidth()
+                    .nestedSurface(PokyhShapes.md)
+                    .padding(horizontal = PokyhSpacing.md, vertical = PokyhSpacing.lg),
+            )
+        } else {
+            day.dishes.take(3).forEachIndexed { index, dish ->
+                if (index > 0) Spacer(Modifier.size(PokyhSpacing.md))
+                MensaDayDish(dish = dish, rating = ratings[dish.id])
             }
-        },
-    )
+        }
+    }
+}
+
+@Composable
+private fun MensaDayDish(dish: Dish, rating: DishRatingsData?) {
+    val colors = PokyhTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(PokyhShapes.sm)
+                .insetSurface(PokyhShapes.sm),
+        ) {
+            if (!dish.imageUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = dish.imageUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    PokyhIcons.dish,
+                    contentDescription = null,
+                    tint = colors.textTertiary,
+                    modifier = Modifier.align(Alignment.Center).size(20.dp),
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = dish.name,
+                style = PokyhType.footnote,
+                color = colors.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (rating != null && rating.count > 0) {
+                Spacer(Modifier.size(PokyhSpacing.xxs))
+                MiniStars(average = rating.average, count = rating.count)
+            }
+        }
+    }
 }
 
 // ── Zuletzt eingetragene Noten ──────────────────────────────────────────────

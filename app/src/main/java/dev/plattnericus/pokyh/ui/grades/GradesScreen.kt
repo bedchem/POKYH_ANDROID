@@ -2,7 +2,16 @@
 
 package dev.plattnericus.pokyh.ui.grades
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn as animateFadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,8 +19,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
@@ -27,49 +38,59 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.core.util.GradeMath
+import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.model.GradeEntry
 import dev.plattnericus.pokyh.data.model.SubjectGrades
-import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.ListSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhCard
-import dev.plattnericus.pokyh.ui.components.PokyhLabel
-import dev.plattnericus.pokyh.ui.components.PokyhListCard
-import dev.plattnericus.pokyh.ui.components.PokyhRow
-import dev.plattnericus.pokyh.ui.components.PokyhSection
-import dev.plattnericus.pokyh.ui.components.PokyhStat
+import dev.plattnericus.pokyh.ui.components.PokyhMenuButton
+import dev.plattnericus.pokyh.ui.components.PokyhRowSeparator
+import dev.plattnericus.pokyh.ui.components.PokyhSectionHeader
+import dev.plattnericus.pokyh.ui.components.PokyhSecondaryButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TabRootActions
 import dev.plattnericus.pokyh.ui.components.TopBarNav
-import dev.plattnericus.pokyh.ui.home.GradeBubble
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
+import dev.plattnericus.pokyh.ui.profile.rememberUnreadMessageCount
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
+import dev.plattnericus.pokyh.ui.theme.PokyhMotion
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.PokyhType.monospacedDigits
 import dev.plattnericus.pokyh.ui.theme.appBackground
+import dev.plattnericus.pokyh.ui.theme.bandColor
 import dev.plattnericus.pokyh.ui.theme.fadeIn
-import dev.plattnericus.pokyh.ui.theme.gradeColor
-import dev.plattnericus.pokyh.ui.theme.slideInTrailing
+import dev.plattnericus.pokyh.ui.theme.nestedSurface
+import dev.plattnericus.pokyh.ui.theme.pressHighlight
 import dev.plattnericus.pokyh.ui.theme.subjectColor
 
 /**
- * Grades. The overall average is the screen's one hero number, then the newest entries, then
- * every subject as a row of one grouped list — so the page reads average, recent, all, which is
- * the order the question actually gets asked in.
+ * Noten — the web app's dashboard, rebuilt for the phone.
+ *
+ * Structure follows `app/grades/page.tsx` (github.com/bedchem/pokyh-frontend) exactly: the
+ * school-year header with its "Stand … · N Fächer · N Noten" line and year picker, the four stat
+ * cards, then the Fächer list with a sort menu, an expand-all toggle, and rows that open in place
+ * to reveal their individual grades. Numbers and diagram geometry are the same
+ * ([buildGradesDashboard]); the surfaces, type and palette are this app's.
+ *
+ * The dashboard renders even with zero grades — the cards show placeholders rather than being
+ * swapped for an empty state, so the screen looks like itself at the start of a school year.
  */
 @Composable
 fun GradesScreen(
-    onSubjectClick: (Int) -> Unit,
+    onSubjectClick: (lessonId: Int, year: Int) -> Unit,
     onNavigate: (String) -> Unit,
     viewModel: GradesViewModel = hiltViewModel(),
 ) {
@@ -78,23 +99,46 @@ fun GradesScreen(
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    var yearMenuOpen by remember { mutableStateOf(false) }
+
+    val dashboard = remember(subjects) { buildGradesDashboard(subjects, todayLocalDate()) }
 
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
-                title = "Noten",
-                eyebrow = "Schuljahr $year/${(year + 1) % 100}",
+                title = "Schuljahr $year / ${year + 1}",
                 nav = TopBarNav.None,
                 actions = {
-                    YearMenu(
-                        year = year,
-                        availableYears = viewModel.availableYears,
-                        onSelect = viewModel::selectYear,
-                    )
+                    Box {
+                        PokyhMenuButton(
+                            label = "$year/${(year + 1) % 100}",
+                            expanded = yearMenuOpen,
+                            onClick = { yearMenuOpen = true },
+                        )
+                        DropdownMenu(expanded = yearMenuOpen, onDismissRequest = { yearMenuOpen = false }) {
+                            viewModel.availableYears.forEach { y ->
+                                DropdownMenuItem(
+                                    text = { Text("$y / ${y + 1}", style = PokyhType.body) },
+                                    trailingIcon = {
+                                        if (y == year) {
+                                            Icon(
+                                                imageVector = PokyhIcons.check,
+                                                contentDescription = null,
+                                                tint = PokyhTheme.colors.accentText,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    },
+                                    onClick = { viewModel.selectYear(y); yearMenuOpen = false },
+                                )
+                            }
+                        }
+                    }
                     TabRootActions(
                         avatarContent = { CurrentUserAvatar() },
+                        unreadMessages = rememberUnreadMessageCount(),
                         onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                         onProfile = { onNavigate(PokyhDestinations.PROFILE) },
                     )
@@ -106,14 +150,11 @@ fun GradesScreen(
             when {
                 loading -> ListSkeleton()
                 error != null -> ErrorStateView(message = error!!, onRetry = viewModel::retry)
-                subjects.isEmpty() -> EmptyStateView(
-                    icon = PokyhIcons.grades,
-                    title = "Keine Noten",
-                    subtitle = "Für dieses Schuljahr liegen noch keine Noten vor.",
-                )
                 else -> GradesContent(
+                    dashboard = dashboard,
                     subjects = subjects,
                     sort = sort,
+                    year = year,
                     onSortChange = viewModel::selectSort,
                     onSubjectClick = onSubjectClick,
                 )
@@ -124,38 +165,39 @@ fun GradesScreen(
 
 @Composable
 private fun GradesContent(
+    dashboard: GradesDashboard,
     subjects: List<SubjectGrades>,
     sort: GradesViewModel.SortMode,
+    year: Int,
     onSortChange: (GradesViewModel.SortMode) -> Unit,
-    onSubjectClick: (Int) -> Unit,
+    onSubjectClick: (lessonId: Int, year: Int) -> Unit,
 ) {
-    // Gesamtschnitt = flacher Mittelwert über ALLE Einzelnoten (jede Note gleich gewichtet) —
-    // NICHT der Mittelwert der Fach-Schnitte.
-    val overallAverage = remember(subjects) {
-        GradeMath.averageOf(subjects.flatMap { s -> s.grades.map { it.markDisplayValue } }.filter { it > 0 })
-    }
-    // „Zuletzt hinzugefügt" = nach Noten-ID absteigend (zuletzt eingetragen), NICHT nach Datum.
-    val recent = remember(subjects) {
-        subjects
-            .flatMap { s ->
-                s.grades
-                    .filter { it.markDisplayValue > 0 }
-                    .map { RecentItem(it.id, s.subjectName, it.markDisplayValue, it.date) }
-            }
-            .sortedByDescending { it.id }
-            .take(3)
-    }
+    // Same ordering the web applies, including "Letzte Note" (by each subject's newest date).
+    //
+    // One addition the web doesn't need: subjects with no grades yet are always sorted LAST,
+    // whatever the direction. Their average is 0, so "Schlechtester ⌀" would otherwise put every
+    // ungraded subject above a genuine 4 — ranking by a number that doesn't exist.
     val sortedSubjects = remember(subjects, sort) {
-        when (sort) {
-            GradesViewModel.SortMode.NAME -> subjects.sortedBy { it.subjectName.lowercase() }
-            GradesViewModel.SortMode.AVG_DESC -> subjects.sortedByDescending { it.average }
-            GradesViewModel.SortMode.AVG_ASC -> subjects.sortedBy { it.average }
-            GradesViewModel.SortMode.RECENT -> subjects.sortedByDescending { s -> s.grades.maxOfOrNull { it.date } ?: 0 }
+        val withMeta = subjects.map { s ->
+            val vals = s.grades.map { it.markDisplayValue }.filter { it > 0 }
+            Triple(s, GradeMath.averageOf(vals), s.grades.maxOfOrNull { it.date } ?: 0)
         }
+        val ungradedLast = compareBy<Triple<SubjectGrades, Double, Int>> { it.second <= 0 }
+        when (sort) {
+            GradesViewModel.SortMode.NAME ->
+                withMeta.sortedBy { it.first.subjectName.lowercase() }
+            GradesViewModel.SortMode.AVG_DESC ->
+                withMeta.sortedWith(ungradedLast.thenByDescending { it.second })
+            GradesViewModel.SortMode.AVG_ASC ->
+                withMeta.sortedWith(ungradedLast.thenBy { it.second })
+            GradesViewModel.SortMode.RECENT ->
+                withMeta.sortedWith(ungradedLast.thenByDescending { it.third })
+        }.map { it.first to it.second }
     }
-    val totalGrades = remember(subjects) { subjects.sumOf { it.grades.size } }
 
-    // Column (not Lazy) — every subject renders immediately, none deferred to scroll.
+    var expanded by remember { mutableStateOf(setOf<Int>()) }
+    val allExpanded = sortedSubjects.isNotEmpty() && expanded.size == sortedSubjects.size
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -164,72 +206,66 @@ private fun GradesContent(
             .padding(bottom = PokyhSpacing.xxxl),
         verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
     ) {
-        AverageCard(
-            overallAverage = overallAverage,
-            subjectCount = subjects.size,
-            gradeCount = totalGrades,
-            modifier = Modifier.fadeIn(),
-        )
+        DashboardEyebrow(dashboard)
 
-        if (recent.isNotEmpty()) {
-            PokyhSection(title = "Zuletzt hinzugefügt", modifier = Modifier.fadeIn(delayMillis = 50)) {
-                PokyhListCard(items = recent) { item ->
-                    PokyhRow(
-                        title = item.subject,
-                        subtitle = Fmt.dateFull(item.date),
-                        showChevron = false,
-                        leading = { GradeBubble(item.value) },
+        AverageStatCard(dashboard, modifier = Modifier.fadeIn())
+        RatioStatCard(dashboard, modifier = Modifier.fadeIn(40))
+        DistributionStatCard(dashboard, modifier = Modifier.fadeIn(80))
+        RecentStatCard(dashboard, modifier = Modifier.fadeIn(120))
+
+        Column(modifier = Modifier.fadeIn(160)) {
+            PokyhSectionHeader(
+                title = "Fächer",
+                trailing = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+                    ) {
+                        SortMenu(sort = sort, onSortChange = onSortChange)
+                        PokyhTextButton(
+                            text = if (allExpanded) "Einklappen" else "Alle",
+                            onClick = {
+                                expanded = if (allExpanded) {
+                                    emptySet()
+                                } else {
+                                    sortedSubjects.map { it.first.lessonId }.toSet()
+                                }
+                            },
+                        )
+                    }
+                },
+            )
+            Spacer(Modifier.size(PokyhSpacing.headerContent))
+
+            if (sortedSubjects.isEmpty()) {
+                // Only reachable when WebUntis returns no lessons at all for the year — a
+                // subject with zero grades is still listed (see UntisClient.grades).
+                PokyhCard {
+                    Text(
+                        text = "WebUntis hat für dieses Schuljahr keine Fächer gemeldet.",
+                        style = PokyhType.footnote,
+                        color = PokyhTheme.colors.textTertiary,
                     )
                 }
-            }
-        }
-
-        PokyhSection(
-            title = "Fächer",
-            trailing = { SortMenu(sort = sort, onSortChange = onSortChange) },
-            modifier = Modifier.fadeIn(delayMillis = 80),
-        ) {
-            PokyhListCard(items = sortedSubjects) { subject ->
-                SubjectRow(
-                    subject = subject,
-                    onClick = { onSubjectClick(subject.lessonId) },
-                )
-            }
-        }
-    }
-}
-
-private data class RecentItem(val id: Int, val subject: String, val value: Double, val date: Int)
-
-/**
- * The screen's hero: the overall average at [PokyhType.statLarge] in its own grade color, with
- * the two counts as quiet [PokyhStat]s beside it. One big number, nothing else competing.
- */
-@Composable
-private fun AverageCard(
-    overallAverage: Double,
-    subjectCount: Int,
-    gradeCount: Int,
-    modifier: Modifier = Modifier,
-) {
-    val colors = PokyhTheme.colors
-    PokyhCard(modifier = modifier) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Column(modifier = Modifier.weight(1f)) {
-                PokyhLabel("Durchschnitt · alle Fächer")
-                Spacer(Modifier.size(PokyhSpacing.sm))
-                Text(
-                    text = if (overallAverage > 0) Fmt.num(overallAverage) else "–",
-                    style = PokyhType.statLarge,
-                    color = if (overallAverage > 0) gradeColor(overallAverage) else colors.textSecondary,
-                )
-            }
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
-            ) {
-                PokyhStat("$subjectCount", "Fächer", alignment = Alignment.End)
-                PokyhStat("$gradeCount", "Noten", alignment = Alignment.End)
+            } else {
+                PokyhCard(padding = 0.dp) {
+                    sortedSubjects.forEachIndexed { index, (subject, avg) ->
+                        if (index > 0) PokyhRowSeparator(startInset = 0.dp)
+                        SubjectExpandableRow(
+                            subject = subject,
+                            average = avg,
+                            isExpanded = subject.lessonId in expanded,
+                            onToggle = {
+                                expanded = if (subject.lessonId in expanded) {
+                                    expanded - subject.lessonId
+                                } else {
+                                    expanded + subject.lessonId
+                                }
+                            },
+                            onOpenDetails = { onSubjectClick(subject.lessonId, year) },
+                        )
+                    }
+                }
             }
         }
     }
@@ -237,14 +273,15 @@ private fun AverageCard(
 
 @Composable
 private fun SortMenu(sort: GradesViewModel.SortMode, onSortChange: (GradesViewModel.SortMode) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+    var open by remember { mutableStateOf(false) }
     Box {
-        PokyhTextButton(
-            text = sort.label,
-            icon = PokyhIcons.sort,
-            onClick = { expanded = true },
+        PokyhMenuButton(
+            label = sort.label,
+            leadingIcon = PokyhIcons.sort,
+            expanded = open,
+            onClick = { open = true },
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             GradesViewModel.SortMode.entries.forEach { mode ->
                 DropdownMenuItem(
                     text = { Text(mode.label, style = PokyhType.body) },
@@ -258,7 +295,7 @@ private fun SortMenu(sort: GradesViewModel.SortMode, onSortChange: (GradesViewMo
                             )
                         }
                     },
-                    onClick = { onSortChange(mode); expanded = false },
+                    onClick = { onSortChange(mode); open = false },
                 )
             }
         }
@@ -266,58 +303,153 @@ private fun SortMenu(sort: GradesViewModel.SortMode, onSortChange: (GradesViewMo
 }
 
 /**
- * A subject row. Leading dot in the subject's own color (the cross-platform hashed
- * [subjectColor]), the average trailing in its grade color — the two colors that mean something
- * here, and nothing else tinted.
+ * A subject row that expands in place to list its grades — the web's `timeline-item`.
+ *
+ * The leading dot is the subject's own cross-platform hashed [subjectColor], so a subject is
+ * recognisable by color here and on the timetable; the average is colored by its [bandColor]
+ * band, like every grade value on the screen.
  */
 @Composable
-fun SubjectRow(subject: SubjectGrades, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun SubjectExpandableRow(
+    subject: SubjectGrades,
+    average: Double,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    onOpenDetails: () -> Unit,
+) {
     val colors = PokyhTheme.colors
-    val teacherSuffix = if (subject.teacherName.isEmpty()) "" else " · ${subject.teacherName}"
-    PokyhRow(
-        title = subject.subjectName,
-        subtitle = "${subject.grades.size} Noten$teacherSuffix",
-        modifier = modifier,
-        onClick = onClick,
-        leading = {
-            Box(
-                Modifier
-                    .size(10.dp)
-                    .background(subjectColor(subject.subjectName), PokyhShapes.pill),
-            )
-        },
-        trailing = {
-            Text(
-                text = if (subject.average > 0) Fmt.num(subject.average) else "–",
-                style = PokyhType.statSmall.monospacedDigits(),
-                color = if (subject.average > 0) gradeColor(subject.average) else colors.textSecondary,
-            )
-        },
+    val interactionSource = remember { MutableInteractionSource() }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (isExpanded) 180f else 0f,
+        animationSpec = tween(PokyhMotion.durationFast),
+        label = "subjectChevron",
     )
-}
 
-@Composable
-private fun YearMenu(year: Int, availableYears: List<Int>, onSelect: (Int) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Box(modifier = Modifier.slideInTrailing()) {
-        PokyhTextButton(
-            text = "$year/${(year + 1) % 100}",
-            onClick = { expanded = true },
-            color = PokyhTheme.colors.textPrimary,
-        )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            availableYears.forEach { y ->
-                DropdownMenuItem(
-                    text = { Text("$y/${(y + 1) % 100}", style = PokyhType.body) },
-                    onClick = { onSelect(y); expanded = false },
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pressHighlight(interactionSource, shape = null)
+                .clickable(interactionSource = interactionSource, indication = null, onClick = onToggle)
+                .heightIn(min = 60.dp)
+                .padding(horizontal = PokyhSpacing.card, vertical = PokyhSpacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+        ) {
+            Box(Modifier.size(10.dp).background(subjectColor(subject.subjectName), PokyhShapes.pill))
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+            ) {
+                Text(
+                    text = subject.subjectName,
+                    style = PokyhType.headline,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                Text(
+                    text = "${subject.grades.size} ${if (subject.grades.size == 1) "Note" else "Noten"}",
+                    style = PokyhType.caption,
+                    color = colors.textTertiary,
+                )
+            }
+            Text(
+                text = if (average > 0) Fmt.num(average) else "–",
+                style = PokyhType.title3.monospacedDigits(),
+                color = if (average > 0) bandColor(gradeBand(average)) else colors.textSecondary,
+            )
+            Icon(
+                imageVector = PokyhIcons.expandMenu,
+                contentDescription = if (isExpanded) "Einklappen" else "Aufklappen",
+                tint = colors.textTertiary,
+                modifier = Modifier.size(18.dp).rotate(chevronRotation),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = isExpanded,
+            enter = animateFadeIn(tween(PokyhMotion.durationFast)) +
+                expandVertically(tween(PokyhMotion.durationStandard)),
+            exit = fadeOut(tween(PokyhMotion.durationFast)) +
+                shrinkVertically(tween(PokyhMotion.durationStandard)),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .nestedSurface(shape = androidx.compose.ui.graphics.RectangleShape)
+                    .padding(horizontal = PokyhSpacing.card)
+                    .padding(top = PokyhSpacing.sm, bottom = PokyhSpacing.md),
+            ) {
+                if (subject.grades.isEmpty()) {
+                    Text(
+                        text = "Keine Einzelnoten vorhanden.",
+                        style = PokyhType.footnote,
+                        color = colors.textTertiary,
+                        modifier = Modifier.padding(vertical = PokyhSpacing.sm),
+                    )
+                } else {
+                    subject.grades.sortedByDescending { it.date }.forEach { grade ->
+                        GradeDetailRow(grade)
+                    }
+                }
+                Spacer(Modifier.size(PokyhSpacing.md))
+                // Right-aligned with a real fill: it's the one action in this panel, and left-
+                // aligned label-only text read as another grade row.
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    PokyhSecondaryButton(
+                        text = "Details öffnen",
+                        icon = PokyhIcons.chevronRight,
+                        onClick = onOpenDetails,
+                        compact = true,
+                    )
+                }
             }
         }
     }
 }
 
-/** `gradeDisplay(_:)` — falls back through text -> markName -> examType -> "Prüfung". */
+/** One grade inside an expanded subject: date, what it was, value. */
+@Composable
+private fun GradeDetailRow(grade: GradeEntry) {
+    val colors = PokyhTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = PokyhSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+    ) {
+        Text(
+            text = Fmt.dateShort(grade.date),
+            style = PokyhType.caption.monospacedDigits(),
+            color = colors.textTertiary,
+            modifier = Modifier.width(58.dp),
+        )
+        Text(
+            text = gradeDisplay(grade),
+            style = PokyhType.footnote,
+            color = colors.textSecondary,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = Fmt.num(grade.markDisplayValue),
+            style = PokyhType.headline.monospacedDigits(),
+            color = bandColor(gradeBand(grade.markDisplayValue)),
+        )
+    }
+}
+
+/**
+ * `gradeDisplay(_:)` — falls back through text -> markName -> examType -> "Prüfung", and treats a
+ * label that's really just the mark again ("7", "6.5", "7/10") as no label at all, matching the
+ * web's `isGradeLike` guard.
+ */
 fun gradeDisplay(g: GradeEntry): String {
-    val raw = g.text.ifEmpty { g.markName.ifEmpty { g.examType } }
-    return raw.trim().ifEmpty { "Prüfung" }
+    val raw = g.text.ifEmpty { g.markName.ifEmpty { g.examType } }.trim()
+    if (raw.isEmpty()) return "Prüfung"
+    val normalized = raw.replace(',', '.').replace(Regex("[−–—]"), "-").trim()
+    val gradeLike = Regex("""^(?:\d{1,2}(?:\.\d{1,2})?[+\-]?|\d{1,2}/\d{1,2})$""")
+    return if (gradeLike.matches(normalized)) "Prüfung" else raw
 }

@@ -47,19 +47,47 @@ class PokyhNotifications @Inject constructor(
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    // ── Neue Nachrichten erkennen → Hinweis ─────────────────────────────────
-    suspend fun checkNewMessages(messages: List<MessagePreview>) {
+    /**
+     * Posts a notification for each newly-arrived unread message and returns the **total** unread
+     * count in the folder.
+     *
+     * Each notification carries that total as its badge number, so the launcher dot shows "how
+     * many are waiting" rather than "how many arrived since the last sync" — and they're grouped
+     * under one summary, so five new messages are one expandable stack instead of five separate
+     * rows in the shade.
+     *
+     * The returned count is what drives the in-app badge (see
+     * [dev.plattnericus.pokyh.state.AppState.unreadMessages]).
+     */
+    suspend fun checkNewMessages(messages: List<MessagePreview>): Int {
         val unread = messages.filter { !it.isRead }
         val seen = prefsStore.seenMessageIds.first()
         if (seen.isNotEmpty()) {
-            for (m in unread) {
-                if (m.id !in seen) {
-                    val body = if (m.subject.isEmpty()) m.senderName else "${m.senderName}: ${m.subject}"
-                    notify(idFor("msg", m.id), "Neue Nachricht", body)
-                }
+            val fresh = unread.filter { it.id !in seen }
+            for (m in fresh) {
+                val body = if (m.subject.isEmpty()) m.senderName else "${m.senderName}: ${m.subject}"
+                notify(
+                    id = idFor("msg", m.id),
+                    title = "Neue Nachricht",
+                    body = body,
+                    group = MESSAGE_GROUP,
+                    number = unread.size,
+                )
+            }
+            // A summary only earns its place once there are several — one message plus a summary
+            // is just the same message twice.
+            if (fresh.size > 1) {
+                notifySummary(
+                    id = idFor("msg-summary", 0),
+                    title = "${fresh.size} neue Nachrichten",
+                    body = fresh.take(3).joinToString(" · ") { it.senderName },
+                    group = MESSAGE_GROUP,
+                    number = unread.size,
+                )
             }
         }
         prefsStore.setSeenMessageIds(seen + messages.map { it.id })
+        return unread.size
     }
 
     // ── Neue Noten erkennen → Hinweis ───────────────────────────────────────
@@ -140,19 +168,61 @@ class PokyhNotifications @Inject constructor(
 
     private fun idFor(prefix: String, key: Int): Int = "$prefix-$key".hashCode()
 
-    private fun notify(id: Int, title: String, body: String) {
+    private fun notify(
+        id: Int,
+        title: String,
+        body: String,
+        group: String? = null,
+        number: Int = 0,
+    ) {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(BRAND_ACCENT)
             .setContentTitle(title)
             .setContentText(body)
+            // Long bodies get truncated to one line in the collapsed shade; BigTextStyle lets
+            // the whole message show once expanded.
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .apply {
+                if (group != null) setGroup(group)
+                if (number > 0) {
+                    setNumber(number)
+                    setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
+                }
+            }
+            .build()
+        NotificationManagerCompat.from(context).notify(id, notification)
+    }
+
+    /** The stack header for a group — shown instead of N individual rows when the shade collapses. */
+    private fun notifySummary(id: Int, title: String, body: String, group: String, number: Int) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(BRAND_ACCENT)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setGroup(group)
+            .setGroupSummary(true)
+            .setAutoCancel(true)
+            .setNumber(number)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .build()
         NotificationManagerCompat.from(context).notify(id, notification)
     }
 
     companion object {
         const val CHANNEL_ID = "pokyh_general"
+
+        /** Groups all message notifications into one collapsible stack. */
+        private const val MESSAGE_GROUP = "pokyh_messages"
+
+        /** [Brand.accent] as an ARGB int — the accent tint the system applies to the small icon
+         * and the notification's accent line. Duplicated as a literal because this class is
+         * framework-side and doesn't depend on the Compose theme. */
+        private const val BRAND_ACCENT = 0xFF6366F1.toInt()
     }
 }

@@ -7,6 +7,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -32,6 +34,25 @@ val PokyhFontFamily = FontFamily(
     pokyhFont(FontWeight.ExtraBold),
 )
 
+/**
+ * Line-breaking, applied to every token below and to [PokyhType.numeral].
+ *
+ * Two settings, both there to stop a German compound word being chopped mid-word
+ * ("Bewertu" / "ng"), which is what narrow containers used to do:
+ *
+ *  - [Hyphens.None] — Android's breaker is otherwise allowed to hyphenate a word that doesn't
+ *    fit. Off, so a word is never split with a hyphen.
+ *  - [LineBreak.Paragraph] — BREAK_STRATEGY_HIGH_QUALITY: optimises the paragraph as a whole
+ *    instead of greedily filling each line, so a long word moves to the next line rather than
+ *    being broken apart to fill the current one.
+ *
+ * Neither can rescue a word genuinely wider than its box — nothing in Compose can, the
+ * per-character fallback is the last resort — so layout still has to leave long labels room.
+ * [dev.plattnericus.pokyh.ui.components.PokyhFeatureTile] is the app's tightest text box and
+ * sizes its type for exactly that reason.
+ */
+private val PokyhLineBreak = LineBreak.Paragraph
+
 private fun style(
     size: Int,
     lineHeight: Int,
@@ -43,6 +64,8 @@ private fun style(
     fontSize = size.sp,
     lineHeight = lineHeight.sp,
     letterSpacing = tracking.em,
+    lineBreak = PokyhLineBreak,
+    hyphens = Hyphens.None,
 )
 
 /**
@@ -129,6 +152,8 @@ object PokyhType {
         fontSize = size,
         letterSpacing = (-0.03f).em,
         fontFeatureSettings = "tnum",
+        lineBreak = PokyhLineBreak,
+        hyphens = Hyphens.None,
     )
 
     /** Hero statistic — the single number a screen is about. */
@@ -148,10 +173,22 @@ object PokyhType {
     // driven by the cell geometry, not by the scale, and deliberately stay put.
 
     val gridCellSubject = style(10, 12, FontWeight.Bold)
-    val gridCellTime = TextStyle(fontFamily = PokyhFontFamily, fontWeight = FontWeight.Medium, fontSize = 7.5.sp)
-    val gridCellRoom = TextStyle(fontFamily = PokyhFontFamily, fontWeight = FontWeight.Normal, fontSize = 8.sp)
-    val timeAxisPeriod = style(9, 11, FontWeight.Normal)
-    val timeAxisBoundary = style(9, 11, FontWeight.SemiBold)
+    val gridCellTime = TextStyle(
+        fontFamily = PokyhFontFamily,
+        fontWeight = FontWeight.Medium,
+        fontSize = 7.5.sp,
+        lineBreak = PokyhLineBreak,
+        hyphens = Hyphens.None,
+    )
+    val gridCellRoom = TextStyle(
+        fontFamily = PokyhFontFamily,
+        fontWeight = FontWeight.Normal,
+        fontSize = 8.sp,
+        lineBreak = PokyhLineBreak,
+        hyphens = Hyphens.None,
+    )
+    val timeAxisPeriod = style(13, 15, FontWeight.SemiBold)
+    val timeAxisBoundary = style(9, 11, FontWeight.Medium)
     val badgeChip = style(9, 11, FontWeight.Bold, tracking = 0.04f)
 
     // ── Widgets / Live Activity ──────────────────────────────────────────────

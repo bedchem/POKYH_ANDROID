@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,12 +51,14 @@ import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.model.GradeEntry
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
-import dev.plattnericus.pokyh.ui.components.ListSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhCard
+import dev.plattnericus.pokyh.ui.components.PokyhFittedText
 import dev.plattnericus.pokyh.ui.components.PokyhMenuButton
 import dev.plattnericus.pokyh.ui.components.PokyhRowSeparator
 import dev.plattnericus.pokyh.ui.components.PokyhSectionHeader
 import dev.plattnericus.pokyh.ui.components.PokyhSecondaryButton
+import dev.plattnericus.pokyh.ui.components.SkeletonBlock
+import dev.plattnericus.pokyh.ui.components.StatCardSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TabRootActions
@@ -69,12 +73,12 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.PokyhType.monospacedDigits
+import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.bandColor
 import dev.plattnericus.pokyh.ui.theme.fadeIn
-import dev.plattnericus.pokyh.ui.theme.nestedSurface
 import dev.plattnericus.pokyh.ui.theme.pressHighlight
-import dev.plattnericus.pokyh.ui.theme.subjectColor
+import dev.plattnericus.pokyh.ui.theme.subjectTone
 
 /**
  * Noten — the web app's dashboard, rebuilt for the phone.
@@ -148,7 +152,7 @@ fun GradesScreen(
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                loading -> ListSkeleton()
+                loading -> GradesSkeleton()
                 error != null -> ErrorStateView(message = error!!, onRetry = viewModel::retry)
                 else -> GradesContent(
                     dashboard = dashboard,
@@ -208,10 +212,7 @@ private fun GradesContent(
     ) {
         DashboardEyebrow(dashboard)
 
-        AverageStatCard(dashboard, modifier = Modifier.fadeIn())
-        RatioStatCard(dashboard, modifier = Modifier.fadeIn(40))
-        DistributionStatCard(dashboard, modifier = Modifier.fadeIn(80))
-        RecentStatCard(dashboard, modifier = Modifier.fadeIn(120))
+        StatCardGrid(dashboard)
 
         Column(modifier = Modifier.fadeIn(160)) {
             PokyhSectionHeader(
@@ -271,6 +272,112 @@ private fun GradesContent(
     }
 }
 
+/**
+ * The four dashboard cards as a 2x2 grid: Durchschnitt and Notenverhältnis on the first row,
+ * Verteilung and Kürzlich on the second.
+ *
+ * Two things make it hold together on every screen size:
+ *
+ *  - **Square tiles.** Every card is `weight(1f).aspectRatio(1f)`, so all four are the same
+ *    size on any screen and the grid reads as a grid. Measuring them at `IntrinsicSize.Min`
+ *    instead — letting each row size to its tallest card — was the first attempt, and it gave
+ *    four tall rectangles of three different heights whose content sat at the top with the
+ *    bottom third empty. A fixed square is both more regular and easier to fill, and the cards
+ *    fill it: their middle section takes the slack (see `CardBody`).
+ *  - **Weights, not fixed widths.** The columns are `weight(1f)` either side of one
+ *    [PokyhSpacing.md] gutter, so the grid is the content width minus one gap, whatever that
+ *    width is — phone, large phone, or the capped measure [readableContent] applies on a tablet.
+ *
+ * The cards themselves re-pitch for the narrower column rather than dropping content; see
+ * `StatSize` in GradesStatCards.kt.
+ */
+@Composable
+private fun StatCardGrid(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+        ) {
+            AverageStatCard(
+                dashboard = dashboard,
+                compact = true,
+                modifier = Modifier.weight(1f).aspectRatio(1f).fadeIn(),
+            )
+            RatioStatCard(
+                dashboard = dashboard,
+                compact = true,
+                modifier = Modifier.weight(1f).aspectRatio(1f).fadeIn(40),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+        ) {
+            DistributionStatCard(
+                dashboard = dashboard,
+                compact = true,
+                modifier = Modifier.weight(1f).aspectRatio(1f).fadeIn(80),
+            )
+            RecentStatCard(
+                dashboard = dashboard,
+                compact = true,
+                modifier = Modifier.weight(1f).aspectRatio(1f).fadeIn(120),
+            )
+        }
+    }
+}
+
+/** The dashboard's loading state: the 2x2 grid and the Fächer list, in outline. */
+@Composable
+private fun GradesSkeleton() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = PokyhSpacing.screenH)
+            .padding(top = PokyhSpacing.md, bottom = PokyhSpacing.xxxl),
+        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
+    ) {
+        SkeletonBlock(height = 11.dp, width = 210.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
+            repeat(2) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+                ) {
+                    StatCardSkeleton(modifier = Modifier.weight(1f).aspectRatio(1f), tall = true)
+                    StatCardSkeleton(modifier = Modifier.weight(1f).aspectRatio(1f), tall = true)
+                }
+            }
+        }
+        Column {
+            SkeletonBlock(height = 18.dp, width = 90.dp)
+            Spacer(Modifier.size(PokyhSpacing.headerContent))
+            PokyhCard(padding = 0.dp) {
+                repeat(5) { index ->
+                    if (index > 0) PokyhRowSeparator(startInset = 0.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .padding(horizontal = PokyhSpacing.card),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+                    ) {
+                        SkeletonBlock(height = 24.dp, width = 84.dp, shape = PokyhShapes.xs)
+                        SkeletonBlock(height = 10.dp, width = 52.dp)
+                        Spacer(Modifier.weight(1f))
+                        SkeletonBlock(height = 16.dp, width = 30.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SortMenu(sort: GradesViewModel.SortMode, onSortChange: (GradesViewModel.SortMode) -> Unit) {
     var open by remember { mutableStateOf(false) }
@@ -305,9 +412,18 @@ private fun SortMenu(sort: GradesViewModel.SortMode, onSortChange: (GradesViewMo
 /**
  * A subject row that expands in place to list its grades — the web's `timeline-item`.
  *
- * The leading dot is the subject's own cross-platform hashed [subjectColor], so a subject is
- * recognisable by color here and on the timetable; the average is colored by its [bandColor]
- * band, like every grade value on the screen.
+ * **The subject's name is the coloured block, and the row is one line.** The name sits on its
+ * own [subjectTone] fill — the same tint the Stundenplan gives that subject's cells, so a
+ * subject is recognisable by the same colour in both places — with its grade count beside it.
+ *
+ * Two earlier attempts are worth not repeating. A leading badge held an abbreviation of the name
+ * while the full name sat right next to it: the same word twice, once truncated. Stacking the
+ * tinted name over its count then left every row with a chip floating above a caption, each chip
+ * a different width, and the value and chevron stranded across a wide gap — a list that looked
+ * like scattered labels rather than rows. On one line the chips share a baseline, the counts
+ * line up behind them, and the row has a single centre.
+ *
+ * The average is coloured by its [bandColor] band, like every grade value on the screen.
  */
 @Composable
 private fun SubjectExpandableRow(
@@ -318,6 +434,7 @@ private fun SubjectExpandableRow(
     onOpenDetails: () -> Unit,
 ) {
     val colors = PokyhTheme.colors
+    val tone = subjectTone(subject.subjectName, colors.isDark)
     val interactionSource = remember { MutableInteractionSource() }
     val chevronRotation by animateFloatAsState(
         targetValue = if (isExpanded) 180f else 0f,
@@ -331,28 +448,32 @@ private fun SubjectExpandableRow(
                 .fillMaxWidth()
                 .pressHighlight(interactionSource, shape = null)
                 .clickable(interactionSource = interactionSource, indication = null, onClick = onToggle)
-                .heightIn(min = 60.dp)
+                .heightIn(min = 56.dp)
                 .padding(horizontal = PokyhSpacing.card, vertical = PokyhSpacing.md),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
         ) {
-            Box(Modifier.size(10.dp).background(subjectColor(subject.subjectName), PokyhShapes.pill))
             Row(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
             ) {
-                Text(
+                PokyhFittedText(
                     text = subject.subjectName,
-                    style = PokyhType.headline,
-                    color = colors.textPrimary,
+                    style = PokyhType.callout.semibold(),
+                    color = tone.ink,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    // fill = false so a short name keeps a short chip; the count takes the rest.
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .background(tone.fill, PokyhShapes.xs)
+                        .padding(horizontal = PokyhSpacing.sm, vertical = 4.dp),
                 )
                 Text(
                     text = "${subject.grades.size} ${if (subject.grades.size == 1) "Note" else "Noten"}",
                     style = PokyhType.caption,
                     color = colors.textTertiary,
+                    maxLines = 1,
                 )
             }
             Text(
@@ -378,7 +499,9 @@ private fun SubjectExpandableRow(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .nestedSurface(shape = androidx.compose.ui.graphics.RectangleShape)
+                    // The subject's own pastel, at a fraction, so an expanded row reads as
+                    // belonging to the badge above it rather than as a grey drawer.
+                    .background(tone.fill.copy(alpha = if (colors.isDark) 0.55f else 0.85f))
                     .padding(horizontal = PokyhSpacing.card)
                     .padding(top = PokyhSpacing.sm, bottom = PokyhSpacing.md),
             ) {

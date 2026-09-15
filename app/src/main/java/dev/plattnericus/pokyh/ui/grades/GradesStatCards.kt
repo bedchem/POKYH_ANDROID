@@ -5,7 +5,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,11 +28,15 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.ui.components.PokyhCard
+import dev.plattnericus.pokyh.ui.components.PokyhFittedText
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhFontFamily
@@ -38,6 +45,7 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.PokyhType.monospacedDigits
+import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.bandColor
 import dev.plattnericus.pokyh.ui.theme.distributionColor
 import kotlin.math.roundToInt
@@ -55,6 +63,42 @@ import kotlin.math.roundToInt
  * by an empty state: the screen should look like itself from the first launch of a school year.
  */
 
+/**
+ * How a stat card is pitched.
+ *
+ * [Full] is the one-per-row card. [Compact] is the same card at half the width, for the 2x2
+ * grid at the top of the screen, and it is a *re-pitch, not a subset*: every card keeps its
+ * headline number, its diagram and both its footer facts. What changes is the type step, the
+ * diagram's size and the footer's direction — two label/value pairs that sit side by side at
+ * full width stack at half width, because at ~150dp they would each have about forty points to
+ * live in.
+ *
+ * Keeping the content identical is the point. A compact card that quietly dropped the median or
+ * the sparkline would make the 2x2 grid a worse view of the same data rather than a denser one,
+ * and the reader would have no way to know something was missing.
+ */
+private enum class StatSize {
+    Full,
+    Compact,
+    ;
+
+    val compact: Boolean get() = this == Compact
+
+    /** Padding inside the card. A square tile is about 150dp across on a phone, so 20dp of
+     * padding on each side would be a quarter of it; 12dp leaves the content somewhere to go. */
+    val padding: Dp get() = if (compact) PokyhSpacing.md else PokyhSpacing.card
+
+    /** The card's headline number. */
+    val valueStyle: TextStyle
+        get() = if (compact) PokyhType.statMedium else PokyhType.statLarge
+
+    /** The gap between a card's blocks. */
+    val blockGap: Dp get() = if (compact) PokyhSpacing.md else PokyhSpacing.lg
+}
+
+/** How many recent entries the square tile can show in full. */
+private const val CompactRecentCount = 2
+
 /** The small rounded pill in a card's top-right corner. */
 @Composable
 private fun StatPill(
@@ -67,51 +111,98 @@ private fun StatPill(
         text = text,
         style = PokyhType.caption2,
         color = color,
+        maxLines = 1,
         modifier = modifier
             .background(fill, PokyhShapes.pill)
             .padding(horizontal = PokyhSpacing.sm, vertical = 3.dp),
     )
 }
 
-/** Title + subtitle on the left, pill on the right — the header every card shares. */
+/**
+ * Title + subtitle on the left, pill on the right — the header every card shares.
+ *
+ * Compact drops the *subtitle* only, and only because it is the one line that restates what the
+ * title already says ("Durchschnittsnote" / "Alle Fächer · gewichtet"). The pill stays: it
+ * carries a number nothing else on the card does.
+ */
 @Composable
 private fun CardHeader(
     title: String,
     subtitle: String,
+    size: StatSize,
     pill: (@Composable () -> Unit)? = null,
 ) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = if (size.compact) Alignment.CenterVertically else Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+    ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
-            Text(subtitle, style = PokyhType.caption, color = PokyhTheme.colors.textTertiary)
+            // **One line when compact**, and that is what makes the auto-sizing work.
+            // [PokyhFittedText] shrinks until the text fits the lines it is allowed; at two
+            // lines "Durchschnittsnote" already "fits" — split across them, mid-word — so it
+            // never shrank. Given a single line it has to, and it does.
+            PokyhFittedText(
+                text = title,
+                style = if (size.compact) PokyhType.footnote.semibold() else PokyhType.headline,
+                color = PokyhTheme.colors.textPrimary,
+                maxLines = if (size.compact) 1 else 2,
+                minScale = if (size.compact) 0.68f else 0.78f,
+            )
+            if (!size.compact) {
+                Text(subtitle, style = PokyhType.caption, color = PokyhTheme.colors.textTertiary)
+            }
         }
         if (pill != null) pill()
     }
 }
 
-/** Two facts on one line, label then value — the footer under a card's headline number. */
+/** Two facts, side by side at full width and stacked when compact — see [StatSize]. */
 @Composable
 private fun CardFooter(
     leftLabel: String,
     leftValue: String,
     rightLabel: String,
     rightValue: String,
+    size: StatSize,
     leftValueColor: Color = PokyhTheme.colors.textPrimary,
     rightValueColor: Color = PokyhTheme.colors.textPrimary,
 ) {
-    val colors = PokyhTheme.colors
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        FooterFact(leftLabel, leftValue, leftValueColor)
-        Spacer(Modifier.weight(1f))
-        FooterFact(rightLabel, rightValue, rightValueColor)
+    if (size.compact) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs),
+        ) {
+            FooterFact(leftLabel, leftValue, leftValueColor, fill = true)
+            FooterFact(rightLabel, rightValue, rightValueColor, fill = true)
+        }
+    } else {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            FooterFact(leftLabel, leftValue, leftValueColor)
+            Spacer(Modifier.weight(1f))
+            FooterFact(rightLabel, rightValue, rightValueColor)
+        }
     }
 }
 
 @Composable
-private fun FooterFact(label: String, value: String, valueColor: Color) {
-    Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
-        Text(label, style = PokyhType.caption, color = PokyhTheme.colors.textTertiary)
-        Text(value, style = PokyhType.caption.monospacedDigits(), color = valueColor)
+private fun FooterFact(label: String, value: String, valueColor: Color, fill: Boolean = false) {
+    Row(
+        modifier = if (fill) Modifier.fillMaxWidth() else Modifier,
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = PokyhType.caption,
+            color = PokyhTheme.colors.textTertiary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        // Stacked (compact) facts push their value to the right edge so the two lines form a
+        // column of values; side-by-side facts stay tight to their label.
+        if (fill) Spacer(Modifier.weight(1f))
+        Text(value, style = PokyhType.caption.monospacedDigits(), color = valueColor, maxLines = 1)
     }
 }
 
@@ -122,15 +213,21 @@ private fun FooterFact(label: String, value: String, valueColor: Color) {
  * footer, and the cumulative-average sparkline.
  */
 @Composable
-internal fun AverageStatCard(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
+internal fun AverageStatCard(
+    dashboard: GradesDashboard,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val size = if (compact) StatSize.Compact else StatSize.Full
     val colors = PokyhTheme.colors
     val improving = dashboard.delta >= 0
     val trendColor = if (improving) Brand.success else Brand.danger
 
-    PokyhCard(modifier = modifier) {
+    PokyhCard(modifier = modifier, padding = size.padding) {
         CardHeader(
             title = "Durchschnittsnote",
             subtitle = "Alle Fächer · gewichtet",
+            size = size,
             pill = {
                 StatPill(
                     text = "${if (improving) "↗" else "↘"} ${Fmt.num(absDelta(dashboard.delta))}",
@@ -139,26 +236,46 @@ internal fun AverageStatCard(dashboard: GradesDashboard, modifier: Modifier = Mo
                 )
             },
         )
-        Spacer(Modifier.size(PokyhSpacing.lg))
-        Text(
-            text = if (dashboard.hasGrades) Fmt.num(dashboard.overallAvg) else "–",
-            style = PokyhType.statLarge,
-            color = if (dashboard.hasGrades) bandColor(gradeBand(dashboard.overallAvg)) else colors.textTertiary,
-        )
-        Spacer(Modifier.size(PokyhSpacing.md))
+        CardBody(size) {
+            Text(
+                text = if (dashboard.hasGrades) Fmt.num(dashboard.overallAvg) else "–",
+                style = size.valueStyle,
+                color = if (dashboard.hasGrades) bandColor(gradeBand(dashboard.overallAvg)) else colors.textTertiary,
+            )
+            Spacer(Modifier.size(PokyhSpacing.sm))
+            Sparkline(
+                dashboard = dashboard,
+                lineColor = if (dashboard.hasGrades) bandColor(gradeBand(dashboard.overallAvg)) else colors.textTertiary,
+                modifier = Modifier.fillMaxWidth().height(if (compact) 34.dp else 64.dp),
+            )
+        }
         CardFooter(
             leftLabel = "Vormonat",
             leftValue = if (dashboard.hasGrades) Fmt.num(dashboard.previousMonthAvg) else "–",
             rightLabel = "Beste Note",
             rightValue = if (dashboard.bestGrade > 0) Fmt.num(dashboard.bestGrade) else "—",
-        )
-        Spacer(Modifier.size(PokyhSpacing.lg))
-        Sparkline(
-            dashboard = dashboard,
-            lineColor = if (dashboard.hasGrades) bandColor(gradeBand(dashboard.overallAvg)) else colors.textTertiary,
-            modifier = Modifier.fillMaxWidth().height(64.dp),
+            size = size,
         )
     }
+}
+
+/**
+ * The middle of a card: whatever the card is actually about, centred in the space left between
+ * its header and its footer.
+ *
+ * Compact cards are square (see `StatCardGrid`), and a square is more room than a headline
+ * number needs. Letting the middle take the slack — rather than stacking everything under the
+ * header and leaving the bottom half blank — is what stops a card with no data yet from looking
+ * like it failed to load. At full width the card is sized by its content, so the weight is a
+ * no-op there and the layout is unchanged.
+ */
+@Composable
+private fun ColumnScope.CardBody(size: StatSize, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = if (size.compact) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.Center,
+        content = content,
+    )
 }
 
 /**
@@ -228,32 +345,42 @@ private fun Sparkline(
 
 /** Positive over negative, with the pass-rate bar and the "über/unter 6.0" footer. */
 @Composable
-internal fun RatioStatCard(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
+internal fun RatioStatCard(
+    dashboard: GradesDashboard,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val size = if (compact) StatSize.Compact else StatSize.Full
     val colors = PokyhTheme.colors
-    PokyhCard(modifier = modifier) {
+    PokyhCard(modifier = modifier, padding = size.padding) {
         CardHeader(
             title = "Notenverhältnis",
             subtitle = "Genügend · Ungenügend",
+            size = size,
             pill = { StatPill("${dashboard.passRate.roundToInt()} %") },
         )
-        Spacer(Modifier.size(PokyhSpacing.lg))
-        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
-            Text("${dashboard.pos}", style = PokyhType.statLarge, color = Brand.success)
-            Text(
-                text = "/",
-                style = PokyhType.title1.copy(fontWeight = FontWeight.Light),
-                color = colors.textTertiary,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-            Text(
-                text = "${dashboard.neg}",
-                style = PokyhType.statMedium,
-                color = Brand.danger,
-                modifier = Modifier.padding(bottom = 2.dp),
-            )
+        CardBody(size) {
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(if (compact) PokyhSpacing.sm else PokyhSpacing.md),
+            ) {
+                Text("${dashboard.pos}", style = size.valueStyle, color = Brand.success)
+                Text(
+                    text = "/",
+                    style = (if (compact) PokyhType.title3 else PokyhType.title1).copy(fontWeight = FontWeight.Light),
+                    color = colors.textTertiary,
+                    modifier = Modifier.padding(bottom = if (compact) 3.dp else 6.dp),
+                )
+                Text(
+                    text = "${dashboard.neg}",
+                    style = if (compact) PokyhType.statSmall else PokyhType.statMedium,
+                    color = Brand.danger,
+                    modifier = Modifier.padding(bottom = 2.dp),
+                )
+            }
+            Spacer(Modifier.size(size.blockGap))
+            RatioBar(passRate = dashboard.passRate, hasGrades = dashboard.hasGrades)
         }
-        Spacer(Modifier.size(PokyhSpacing.lg))
-        RatioBar(passRate = dashboard.passRate, hasGrades = dashboard.hasGrades)
         Spacer(Modifier.size(PokyhSpacing.md))
         CardFooter(
             leftLabel = "über 6.0",
@@ -262,6 +389,7 @@ internal fun RatioStatCard(dashboard: GradesDashboard, modifier: Modifier = Modi
             rightLabel = "unter 6.0",
             rightValue = "${dashboard.neg}",
             rightValueColor = Brand.danger,
+            size = size,
         )
     }
 }
@@ -301,32 +429,73 @@ private fun RatioBar(passRate: Double, hasGrades: Boolean, modifier: Modifier = 
 
 /** The donut: one arc per grade that occurs, with leader lines and labels, plus Modus/Median. */
 @Composable
-internal fun DistributionStatCard(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
-    PokyhCard(modifier = modifier) {
+internal fun DistributionStatCard(
+    dashboard: GradesDashboard,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val size = if (compact) StatSize.Compact else StatSize.Full
+    val colors = PokyhTheme.colors
+    PokyhCard(modifier = modifier, padding = size.padding) {
         CardHeader(
             title = "Notenverteilung",
             subtitle = "Häufigkeit pro Note",
+            size = size,
             pill = { StatPill("σ ${Fmt.num(dashboard.sigma)}") },
         )
-        Spacer(Modifier.size(PokyhSpacing.lg))
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            DistributionDonut(
-                dashboard = dashboard,
-                modifier = Modifier.size(168.dp),
-            )
+        CardBody(size) {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                DistributionDonut(
+                    dashboard = dashboard,
+                    // In the square tile the ring gets whatever is left between header and
+                    // footer — around 60dp — and its leader-line labels are dropped there. They
+                    // are drawn in the ring's own viewBox units, so at that size they would be
+                    // about 3sp: a ring of smudges.
+                    showLabels = !compact,
+                    modifier = if (compact) {
+                        Modifier.fillMaxHeight().aspectRatio(1f)
+                    } else {
+                        Modifier.size(168.dp)
+                    },
+                )
+                // The count, in the hole of the ring.
+                //
+                // This card was the only one of the four without a number of its own: three
+                // cards led with a figure and this one led with a shape, so at a glance it read
+                // as decoration. The donut's own hole is the obvious place for it — it is the
+                // total the arcs are shares of — and it costs no height, which a square tile has
+                // none of to spare.
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${dashboard.allCount}",
+                        style = if (compact) PokyhType.statSmall else PokyhType.statMedium,
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = if (dashboard.allCount == 1) "Note" else "Noten",
+                        style = PokyhType.caption2,
+                        color = colors.textTertiary,
+                    )
+                }
+            }
         }
-        Spacer(Modifier.size(PokyhSpacing.lg))
+        Spacer(Modifier.size(PokyhSpacing.md))
         CardFooter(
             leftLabel = "Modus",
             leftValue = if (dashboard.hasGrades) "${dashboard.mode}" else "—",
             rightLabel = "Median",
             rightValue = if (dashboard.hasGrades) Fmt.num(dashboard.median) else "—",
+            size = size,
         )
     }
 }
 
 @Composable
-private fun DistributionDonut(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
+private fun DistributionDonut(
+    dashboard: GradesDashboard,
+    modifier: Modifier = Modifier,
+    showLabels: Boolean = true,
+) {
     val colors = PokyhTheme.colors
     val measurer = rememberTextMeasurer()
     val segments = dashboard.donutSegments
@@ -364,6 +533,7 @@ private fun DistributionDonut(dashboard: GradesDashboard, modifier: Modifier = M
         }
 
         // Leader line + grade number, only where the segment is wide enough to label.
+        if (!showLabels) return@Canvas
         segments.filter { it.sweep >= DonutGeometry.LABEL_MIN_SWEEP }.forEach { seg ->
             val color = distributionColor(seg.grade)
             drawLine(
@@ -398,33 +568,63 @@ private fun DistributionDonut(dashboard: GradesDashboard, modifier: Modifier = M
 
 /** The three newest entries, by grade id (entry order) rather than by date — same as the web. */
 @Composable
-internal fun RecentStatCard(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
+internal fun RecentStatCard(
+    dashboard: GradesDashboard,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val size = if (compact) StatSize.Compact else StatSize.Full
     val colors = PokyhTheme.colors
-    PokyhCard(modifier = modifier) {
-        CardHeader(title = "Kürzlich hinzugefügt", subtitle = "Letzte 3 Einträge")
-        Spacer(Modifier.size(PokyhSpacing.lg))
+    PokyhCard(modifier = modifier, padding = size.padding) {
+        CardHeader(
+            title = "Kürzlich hinzugefügt",
+            subtitle = "Letzte ${dashboard.recent.size} Einträge",
+            size = size,
+        )
         if (dashboard.recent.isEmpty()) {
-            Text(
-                text = "Noch keine Noten erfasst.",
-                style = PokyhType.footnote,
-                color = colors.textTertiary,
-            )
+            CardBody(size) {
+                Text(
+                    text = "Noch keine Noten erfasst.",
+                    style = PokyhType.footnote,
+                    color = colors.textTertiary,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = if (compact) TextAlign.Center else TextAlign.Start,
+                )
+            }
             return@PokyhCard
         }
-        dashboard.recent.forEachIndexed { index, item ->
+        Spacer(Modifier.size(size.blockGap))
+        // A square tile fits two entries, not three: at ~150dp, minus padding, header and the
+        // gaps, the third row ran past the bottom edge and was clipped mid-line. Showing two
+        // whole entries beats showing two and a half.
+        val shown = if (compact) dashboard.recent.take(CompactRecentCount) else dashboard.recent
+        shown.forEachIndexed { index, item ->
             if (index > 0) {
-                Spacer(Modifier.size(PokyhSpacing.md))
+                Spacer(Modifier.size(if (compact) PokyhSpacing.sm else PokyhSpacing.md))
                 Box(Modifier.fillMaxWidth().height(1.dp).background(colors.separator))
-                Spacer(Modifier.size(PokyhSpacing.md))
+                Spacer(Modifier.size(if (compact) PokyhSpacing.sm else PokyhSpacing.md))
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+            ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(item.subject, style = PokyhType.headline, color = colors.textPrimary)
-                    Text(Fmt.dateShort(item.date), style = PokyhType.caption, color = colors.textTertiary)
+                    Text(
+                        text = item.subject,
+                        style = if (compact) PokyhType.footnote.semibold() else PokyhType.headline,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = Fmt.dateShort(item.date),
+                        style = PokyhType.caption2.monospacedDigits(),
+                        color = colors.textTertiary,
+                    )
                 }
                 Text(
                     text = Fmt.num(item.numeric),
-                    style = PokyhType.title3.monospacedDigits(),
+                    style = (if (compact) PokyhType.headline else PokyhType.title3).monospacedDigits(),
                     color = bandColor(gradeBand(item.numeric)),
                 )
             }

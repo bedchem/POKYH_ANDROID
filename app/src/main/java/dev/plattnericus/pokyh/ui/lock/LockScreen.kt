@@ -1,6 +1,20 @@
 package dev.plattnericus.pokyh.ui.lock
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn as animateFadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +28,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -29,6 +42,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -50,6 +66,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.login.AddAccountDialog
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
+import dev.plattnericus.pokyh.ui.theme.PokyhMotion
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
@@ -134,7 +151,7 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
         ) {
             Spacer(Modifier.weight(1f))
 
-            PokyhMark(size = 84.dp, modifier = Modifier.fadeIn())
+            UnlockMark(busy = busy, modifier = Modifier.fadeIn())
             Spacer(Modifier.height(PokyhSpacing.xl))
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -154,53 +171,153 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
 
             Spacer(Modifier.height(PokyhSpacing.xxxl))
 
-            if (busy) {
-                CircularProgressIndicator(color = Brand.accent, strokeWidth = 3.dp, modifier = Modifier.size(30.dp))
-                Spacer(Modifier.height(PokyhSpacing.xl))
-            }
+            // While an unlock is in flight the screen is the mark, the wordmark and the status
+            // line — nothing else. Leaving the account list, the "oder" rule and "Manuell
+            // anmelden" on screen offered three things to tap that would all be ignored, and
+            // made a two-second wait look like a menu. They fade back in if it fails.
+            AnimatedVisibility(
+                visible = !busy,
+                enter = animateFadeIn(tween(PokyhMotion.durationStandard)) +
+                    expandVertically(tween(PokyhMotion.durationStandard)),
+                exit = fadeOut(tween(PokyhMotion.durationFast)) +
+                    shrinkVertically(tween(PokyhMotion.durationStandard)),
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (accounts.isNotEmpty()) {
+                        AccountChooser(
+                            accounts = accounts,
+                            defaultUsername = defaultUsername,
+                            onSelect = { attemptUnlock(it) },
+                            modifier = Modifier.fadeIn(delayMillis = 150),
+                        )
+                        Spacer(Modifier.height(PokyhSpacing.xl))
+                        OrDivider(
+                            modifier = Modifier
+                                .widthIn(max = 320.dp)
+                                .fillMaxWidth()
+                                .fadeIn(delayMillis = 150),
+                        )
+                        Spacer(Modifier.height(PokyhSpacing.xl))
+                    }
 
-            if (accounts.isNotEmpty()) {
-                AccountChooser(
-                    accounts = accounts,
-                    defaultUsername = defaultUsername,
-                    onSelect = { attemptUnlock(it) },
-                    modifier = Modifier.fadeIn(delayMillis = 150),
-                )
-                Spacer(Modifier.height(PokyhSpacing.xl))
-                OrDivider(
-                    modifier = Modifier
-                        .widthIn(max = 320.dp)
-                        .fillMaxWidth()
-                        .fadeIn(delayMillis = 150),
-                )
-                Spacer(Modifier.height(PokyhSpacing.xl))
+                    PokyhSecondaryButton(
+                        text = "Manuell anmelden",
+                        onClick = { viewModel.addAccount(); showAddAccountSheet = true },
+                        icon = PokyhIcons.password,
+                        modifier = Modifier
+                            .widthIn(max = 300.dp)
+                            .fillMaxWidth()
+                            .fadeIn(delayMillis = 150),
+                    )
+                }
             }
-
-            PokyhSecondaryButton(
-                text = "Manuell anmelden",
-                onClick = { viewModel.addAccount(); showAddAccountSheet = true },
-                icon = PokyhIcons.password,
-                modifier = Modifier
-                    .widthIn(max = 300.dp)
-                    .fillMaxWidth()
-                    .fadeIn(delayMillis = 150),
-            )
 
             Spacer(Modifier.weight(1f))
 
-            PokyhTextButton(
-                text = "Anderes Konto hinzufügen",
-                icon = PokyhIcons.addAccount,
-                onClick = { viewModel.addAccount(); showAddAccountSheet = true },
-                modifier = Modifier
-                    .padding(bottom = PokyhSpacing.xxl)
-                    .fadeIn(delayMillis = 200),
-            )
+            AnimatedVisibility(
+                visible = !busy,
+                enter = animateFadeIn(tween(PokyhMotion.durationStandard)),
+                exit = fadeOut(tween(PokyhMotion.durationFast)),
+            ) {
+                PokyhTextButton(
+                    text = "Anderes Konto hinzufügen",
+                    icon = PokyhIcons.addAccount,
+                    onClick = { viewModel.addAccount(); showAddAccountSheet = true },
+                    modifier = Modifier
+                        .padding(bottom = PokyhSpacing.xxl)
+                        .fadeIn(delayMillis = 200),
+                )
+            }
         }
     }
 
     if (showAddAccountSheet) {
         AddAccountDialog(onDismiss = { showAddAccountSheet = false })
+    }
+}
+
+/**
+ * The mark, with the unlock in progress drawn *around* it.
+ *
+ * The old loading state was a stock spinner parked in the gap below the wordmark: it appeared
+ * from nothing, pushed the whole column down as it did, and sat unrelated to anything. This
+ * puts the waiting where the eye already is — two counter-rotating arcs sweeping the mark, plus
+ * a slow breath on the mark itself — so the screen doesn't reflow at all when an unlock starts,
+ * and the motion reads as "this is working on it" rather than "something new appeared".
+ *
+ * Every value is an [animateFloatAsState] toward a target rather than a start/stop animation, so
+ * an unlock that resolves in 200ms eases out instead of cutting.
+ */
+@Composable
+private fun UnlockMark(busy: Boolean, modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "unlock")
+    val sweep by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1500, easing = LinearEasing), RepeatMode.Restart),
+        label = "unlockSweep",
+    )
+    // Ring opacity and the mark's breath both follow the flag, so they ease in and out with it.
+    val progress by animateFloatAsState(
+        targetValue = if (busy) 1f else 0f,
+        animationSpec = tween(PokyhMotion.durationStandard, easing = FastOutSlowInEasing),
+        label = "unlockProgress",
+    )
+    val breath by animateFloatAsState(
+        targetValue = if (busy) 1.04f else 1f,
+        animationSpec = PokyhMotion.springSmooth(),
+        label = "unlockBreath",
+    )
+
+    val markSize = 84.dp
+    val ringInset = PokyhSpacing.md
+    val accent = Brand.accent
+
+    Box(
+        modifier = modifier.size(markSize + ringInset * 2),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (progress > 0.01f) {
+            Canvas(Modifier.fillMaxSize()) {
+                val stroke = 3.dp.toPx()
+                val inset = stroke / 2f
+                val arcSize = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
+                val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+                // Track, then two arcs turning opposite ways — a single arc at this diameter
+                // reads as a slowly tipping line rather than as motion.
+                drawArc(
+                    color = accent.copy(alpha = 0.14f * progress),
+                    startAngle = 0f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round),
+                )
+                drawArc(
+                    color = accent.copy(alpha = progress),
+                    startAngle = sweep,
+                    sweepAngle = 96f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round),
+                )
+                drawArc(
+                    color = accent.copy(alpha = 0.45f * progress),
+                    startAngle = -sweep * 0.65f + 180f,
+                    sweepAngle = 52f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round),
+                )
+            }
+        }
+        PokyhMark(
+            size = markSize,
+            modifier = Modifier.graphicsLayer { scaleX = breath; scaleY = breath },
+        )
     }
 }
 

@@ -26,8 +26,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.data.model.Dish
 import dev.plattnericus.pokyh.ui.components.CommentSection
+import dev.plattnericus.pokyh.ui.components.MiniBadge
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
-import dev.plattnericus.pokyh.ui.components.LoadingStateView
+import dev.plattnericus.pokyh.ui.components.MediaDetailSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhSection
@@ -36,10 +37,13 @@ import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.StarRating
 import dev.plattnericus.pokyh.ui.components.TagChip
 import dev.plattnericus.pokyh.ui.components.TopBarNav
+import dev.plattnericus.pokyh.ui.theme.Brand
+import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
+import dev.plattnericus.pokyh.ui.theme.PokyhType.medium
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import dev.plattnericus.pokyh.ui.theme.subjectColor
@@ -67,7 +71,7 @@ fun DishDetailScreen(
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                dish == null && ui.loading -> LoadingStateView()
+                dish == null && ui.loading -> MediaDetailSkeleton()
                 dish == null -> ErrorStateView(message = ui.error ?: "Gericht nicht gefunden.")
                 else -> Column(
                     modifier = Modifier
@@ -148,20 +152,48 @@ fun DishDetailScreen(
     }
 }
 
-/** kcal/Protein/KH/Fett as equal-width [PokyhStat]s in one card — only shown when at least one
- * nutrient value is present. */
+/**
+ * kcal/Protein/KH/Fett as equal-width [PokyhStat]s in one card — only shown when at least one
+ * nutrient value is present.
+ *
+ * **Two qualifiers are part of the content, not decoration**, and both are stated where the
+ * numbers are rather than buried in a footer:
+ *
+ *  - *Geschätzt.* These values are not measured per portion by the kitchen; they are estimates
+ *    attached to the dish. Anyone counting macros has to know that before they use them.
+ *  - *Pro 100 g.* Without a reference quantity a nutrient number means nothing at all — "480
+ *    kcal" of what? A plate, a ladle, a gram? The unit is what makes the figure a figure.
+ *
+ * The reference is the section's subtitle (it qualifies every number equally) and the estimate
+ * is a chip in the header, where it reads as a property of the whole block.
+ */
 @Composable
 private fun NutrientsSection(dish: Dish, modifier: Modifier = Modifier) {
+    val colors = PokyhTheme.colors
     val items = buildList {
         dish.calories?.let { add(it.toInt().toString() to "kcal") }
-        dish.protein?.let { add("${it.toInt()}g" to "Protein") }
-        dish.carbs?.let { add("${it.toInt()}g" to "KH") }
-        dish.fat?.let { add("${it.toInt()}g" to "Fett") }
+        dish.protein?.let { add("${it.toInt()} g" to "Protein") }
+        dish.carbs?.let { add("${it.toInt()} g" to "KH") }
+        dish.fat?.let { add("${it.toInt()} g" to "Fett") }
     }
     if (items.isEmpty()) return
 
     PokyhSection(title = "Nährwerte", modifier = modifier) {
         PokyhCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+            ) {
+                Text(
+                    text = "Pro 100 g",
+                    style = PokyhType.caption.medium(),
+                    color = colors.textSecondary,
+                    modifier = Modifier.weight(1f),
+                )
+                MiniBadge("Geschätzt", Brand.warning, icon = PokyhIcons.info)
+            }
+            Spacer(Modifier.size(PokyhSpacing.lg))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -175,6 +207,14 @@ private fun NutrientsSection(dish: Dish, modifier: Modifier = Modifier) {
                     )
                 }
             }
+            Spacer(Modifier.size(PokyhSpacing.md))
+            Text(
+                text = "Geschätzte Angaben pro 100 g — keine Laborwerte. Die tatsächliche Portion " +
+                    "kann abweichen.",
+                style = PokyhType.caption2,
+                color = colors.textTertiary,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

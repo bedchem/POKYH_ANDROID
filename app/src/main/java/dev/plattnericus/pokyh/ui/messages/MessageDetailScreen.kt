@@ -33,7 +33,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.data.model.MessageAttachment
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.InitialAvatar
-import dev.plattnericus.pokyh.ui.components.LoadingStateView
+import dev.plattnericus.pokyh.ui.components.ArticleSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhListCard
 import dev.plattnericus.pokyh.ui.components.PokyhRow
@@ -80,7 +80,7 @@ fun MessageDetailScreen(
         },
     ) { innerPadding ->
         when {
-            ui.loading -> LoadingStateView(Modifier.fillMaxSize().padding(innerPadding))
+            ui.loading -> ArticleSkeleton(Modifier.fillMaxSize().padding(innerPadding))
             ui.error != null -> ErrorStateView(
                 message = ui.error!!,
                 modifier = Modifier.fillMaxSize().padding(innerPadding),

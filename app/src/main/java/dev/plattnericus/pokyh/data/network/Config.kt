@@ -76,6 +76,15 @@ object Config {
         const val authRegister = "/auth/register"
         const val authMe = "/auth/me"
         const val dishes = "/dishes"
+
+        /**
+         * Per-subject header images, served by the POKYH backend and keyed by a subject's
+         * lower-cased long name (see [dev.plattnericus.pokyh.data.backend.BackendClient]).
+         * `GET /subject-images` lists the keys that have an image; `GET /subject-images/{key}`
+         * is the image itself; `POST /subject-images/report` tells the backend which subjects
+         * this school actually has, so it can fill in the ones that are missing.
+         */
+        const val subjectImages = "/subject-images"
         const val dishRatings = "/dish-ratings" // + /{id} | /batch
         const val dishComments = "/dish-comments" // + /{id}
         const val classesMine = "/classes/mine"

@@ -33,6 +33,11 @@ data class SpecialDaySpec(val icon: ImageVector, val color: Color, val title: St
  * flat tinted panel rather than a card: it isn't content, it's the absence of content, and
  * giving it a real card's elevation would make an empty day look like the most important object
  * on the screen. It used to be a dashed outline, which was the only dashed border in the app.
+ *
+ * **No coloured plate, at either size.** A tinted panel behind it — even at 7% — turns "no
+ * lessons here" into a warning: a stripe down one column of the week, or a wash across the whole
+ * page when a full week is out. The colour survives where it identifies rather than fills: the
+ * glyph disc. That is enough next to a label that already reads "Ferien".
  */
 @Composable
 fun SpecialDayCard(spec: SpecialDaySpec, modifier: Modifier = Modifier, compact: Boolean = false) {
@@ -40,8 +45,7 @@ fun SpecialDayCard(spec: SpecialDaySpec, modifier: Modifier = Modifier, compact:
         modifier = modifier
             .fillMaxWidth()
             .let { if (!compact) it.height(340.dp) else it }
-            .background(spec.color.copy(alpha = 0.07f), PokyhShapes.xl)
-            .padding(PokyhSpacing.card),
+            .padding(if (compact) PokyhSpacing.xs else PokyhSpacing.card),
         contentAlignment = Alignment.Center,
     ) {
         Column(

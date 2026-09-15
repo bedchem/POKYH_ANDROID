@@ -13,6 +13,7 @@ import dev.plattnericus.pokyh.data.model.DishRatingsData
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.components.CommentUiItem
 import javax.inject.Inject
+import kotlin.time.Clock
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -103,12 +104,57 @@ class MensaViewModel @Inject constructor(
         val error: String? = null,
         val groups: List<MensaSchedule.DayGroup> = emptyList(),
         val ratings: Map<String, DishRatingsData> = emptyMap(),
+        /**
+         * True until the first ratings answer for the dishes on screen has landed.
+         *
+         * Drives the star placeholder: without it the cards render with no stars and the stars
+         * then pop in a beat later, which reads as a glitch rather than as loading. Separate
+         * from [loading], because dishes and ratings are two round trips and the dishes always
+         * win — the cards are on screen while the stars are still coming.
+         */
+        val ratingsLoading: Boolean = true,
     )
 
     private val _ui = MutableStateFlow(UiState())
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
-    init { load() }
+    init {
+        // Whatever is on disk from last time, on screen before the first request finishes.
+        viewModelScope.launch {
+            backendClient.cachedDishesOrNull()?.let { cached ->
+                _ui.update { state ->
+                    if (state.groups.isNotEmpty()) {
+                        state
+                    } else {
+                        state.copy(groups = MensaSchedule.days(cached), loading = false, ratings = state.ratings)
+                    }
+                }
+                seedRatingsFromCache(cached.map { it.id })
+            }
+        }
+        load()
+        // Reload on every background -> foreground return, the same way HomeViewModel does.
+        // A menu that was loaded yesterday is no longer today's.
+        viewModelScope.launch {
+            var seen = appState.resumeSignal.value
+            appState.resumeSignal.collect { signal ->
+                if (signal != seen) {
+                    seen = signal
+                    load()
+                }
+            }
+        }
+        // Ratings need a backend token. On a cold start the session often resolves *after* the
+        // dishes do, so fetching once on load would leave the stars permanently empty.
+        viewModelScope.launch {
+            appState.session.collectLatest { session ->
+                if (session?.apiToken == null) return@collectLatest
+                val ids = _ui.value.groups.flatMap { it.dishes }.map { it.id }
+                if (ids.isEmpty()) return@collectLatest
+                loadRatings(ids)
+            }
+        }
+    }
 
     fun load() {
         viewModelScope.launch {
@@ -118,15 +164,53 @@ class MensaViewModel @Inject constructor(
                     _ui.update { it.copy(loading = false, error = null, groups = MensaSchedule.days(dishes)) }
                     loadRatings(dishes.map { it.id })
                 }
-                .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.") } }
+                .onFailure { e ->
+                    _ui.update {
+                        // Only surface the failure when there is nothing to show. With cached
+                        // days on screen a dropped request is not the user's problem.
+                        if (it.groups.isNotEmpty()) {
+                            it.copy(loading = false)
+                        } else {
+                            it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.")
+                        }
+                    }
+                }
         }
     }
 
+    /**
+     * Called when the Mensa tab comes back into view.
+     *
+     * Belt and braces for the case this screen used to fail at: coming back from another tab
+     * with an empty list and no request in flight, and simply sitting there. If there is
+     * nothing on screen, load; if there is, the TTL cache makes this close to free.
+     */
+    fun onAppear() {
+        if (_ui.value.groups.isEmpty()) load()
+    }
+
+    private fun seedRatingsFromCache(ids: List<String>) {
+        val cached = backendClient.cachedRatings(ids)
+        if (cached.isEmpty()) return
+        _ui.update { it.copy(ratings = it.ratings + cached, ratingsLoading = false) }
+    }
+
     private suspend fun loadRatings(ids: List<String>) {
-        val token = appState.session.value?.apiToken ?: return
-        if (ids.isEmpty()) return
+        if (ids.isEmpty()) {
+            _ui.update { it.copy(ratingsLoading = false) }
+            return
+        }
+        seedRatingsFromCache(ids)
+        val token = appState.session.value?.apiToken
+        if (token == null) {
+            // No backend token: there will never be stars. Stop the placeholder rather than
+            // shimmering forever.
+            _ui.update { it.copy(ratingsLoading = false) }
+            return
+        }
         runCatching { backendClient.dishRatingsBatch(ids, token) }
-            .onSuccess { batch -> _ui.update { it.copy(ratings = batch) } }
+            .onSuccess { batch -> _ui.update { it.copy(ratings = it.ratings + batch, ratingsLoading = false) } }
+            .onFailure { _ui.update { it.copy(ratingsLoading = false) } }
     }
 
     /** Retry button / pull-to-refresh. */
@@ -208,38 +292,103 @@ class DishDetailViewModel @Inject constructor(
             .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
     }
 
-    /** Optimistic local update on tap, then refetch — port of DishDetailView's `onRate` closure
-     * (`d.myRating = stars; ...; ratings[dish.id] = fresh`). No-ops without a backend token. */
+    /**
+     * Rate the dish. The stars, the average and the count all move **on tap**; the request
+     * follows.
+     *
+     * Before, only `myRating` was applied locally, so the filled stars changed instantly while
+     * the average next to them kept the old value until a round trip finished — the one number
+     * the tap was supposed to change was the last to move. Writing the vote into the local
+     * ratings map fixes the average and the count too, and mirrors it into the shared cache so
+     * the Mensa list and Home show the same thing without refetching.
+     *
+     * The server stays the source of truth: the refetch below overwrites all of it, including
+     * the key this guesses for the current user.
+     */
     fun rate(stars: Int) {
         val token = appState.session.value?.apiToken ?: return
-        _ui.update { it.copy(ratings = it.ratings.copy(myRating = stars)) }
+        val userKey = currentUserId.ifEmpty { LOCAL_VOTE_KEY }
+        _ui.update { state ->
+            state.copy(
+                ratings = state.ratings.copy(
+                    ratings = state.ratings.ratings + (userKey to stars.toDouble()),
+                    myRating = stars,
+                ),
+            )
+        }
+        backendClient.applyLocalRating(dishId, stars, userKey)
         viewModelScope.launch {
             runCatching { backendClient.rateDish(dishId, stars, token) }
-            runCatching { backendClient.dishRatings(dishId, token) }
+            runCatching { backendClient.dishRatings(dishId, token, force = true) }
                 .onSuccess { fresh -> _ui.update { it.copy(ratings = fresh) } }
         }
     }
 
+    /**
+     * Post a comment. It appears in the thread immediately, under the current user's name, and
+     * is replaced by the server's copy when the request returns.
+     *
+     * The pending row carries a [PENDING_COMMENT_PREFIX] id so a failed post can be rolled back
+     * without touching anything real, and so the refetch (which brings the server's own id)
+     * doesn't leave a duplicate behind.
+     */
     fun addComment(body: String) {
         val token = appState.session.value?.apiToken ?: return
-        if (body.isBlank()) return
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) return
+
+        val pendingId = PENDING_COMMENT_PREFIX + Clock.System.now().toEpochMilliseconds()
+        val pending = CommentUiItem(
+            id = pendingId,
+            authorId = currentUserId,
+            authorName = appState.session.value?.username.orEmpty(),
+            body = trimmed,
+            createdAtEpochMs = Clock.System.now().toEpochMilliseconds(),
+        )
+        _ui.update { it.copy(comments = it.comments + pending) }
+
         viewModelScope.launch {
-            runCatching { backendClient.createDishComment(dishId, body, token) }
+            val posted = runCatching { backendClient.createDishComment(dishId, trimmed, token) }
+            if (posted.isFailure) {
+                _ui.update { it.copy(comments = it.comments.filterNot { c -> c.id == pendingId }) }
+                return@launch
+            }
             runCatching { backendClient.dishComments(dishId, token) }
                 .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
+                // Refetch failed but the post did not: swap the placeholder for the real
+                // comment rather than dropping a comment that exists.
+                .onFailure {
+                    val real = posted.getOrNull()?.toUi() ?: return@onFailure
+                    _ui.update { state ->
+                        state.copy(comments = state.comments.map { c -> if (c.id == pendingId) real else c })
+                    }
+                }
         }
     }
 
     fun deleteComment(item: CommentUiItem) {
         val token = appState.session.value?.apiToken ?: return
+        val before = _ui.value.comments
         _ui.update { it.copy(comments = it.comments.filterNot { c -> c.id == item.id }) }
         viewModelScope.launch {
-            runCatching { backendClient.deleteDishComment(dishId, item.id, token) }
+            val deleted = runCatching { backendClient.deleteDishComment(dishId, item.id, token) }
+            if (deleted.isFailure) {
+                // Put it back — a comment that silently vanished and then reappeared on the next
+                // visit is worse than one that never left.
+                _ui.update { it.copy(comments = before) }
+                return@launch
+            }
             runCatching { backendClient.dishComments(dishId, token) }
                 .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
         }
     }
 }
+
+/** Id prefix for a comment that exists only locally until the server confirms it. */
+private const val PENDING_COMMENT_PREFIX = "pending-"
+
+/** Map key for an optimistic vote when the session has no stable user id to key it by. */
+private const val LOCAL_VOTE_KEY = "__local__"
 
 private fun ApiComment.toUi(): CommentUiItem = CommentUiItem(
     id = id,

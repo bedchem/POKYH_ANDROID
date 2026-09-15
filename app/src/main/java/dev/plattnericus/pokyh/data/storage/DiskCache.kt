@@ -48,6 +48,20 @@ class DiskCache @Inject constructor(
         }
     }
 
+    /**
+     * Wann der Eintrag geschrieben wurde (Epoch-Millis), oder null, wenn es ihn nicht gibt.
+     *
+     * Kommt aus `File.lastModified()` statt aus einem Zeitstempel IM JSON — damit ändert sich
+     * das Dateiformat nicht, und bestehende Einträge (Session, Widget-Snapshots) bleiben lesbar.
+     * Der Wert wird nur für die "Stand …"-Anzeige gebraucht, und dafür ist die Dateizeit genau
+     * richtig: sie ist der Moment, in dem diese Kopie entstanden ist.
+     */
+    suspend fun savedAt(key: String): Long? = withContext(Dispatchers.IO) {
+        val file = fileFor(key)
+        if (!file.exists()) return@withContext null
+        file.lastModified().takeIf { it > 0L }
+    }
+
     suspend fun <T> read(key: String, serializer: KSerializer<T>): T? = withContext(Dispatchers.IO) {
         val file = fileFor(key)
         if (!file.exists()) return@withContext null

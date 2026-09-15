@@ -16,11 +16,16 @@ import dev.plattnericus.pokyh.data.model.DishRatingsResponse
 import dev.plattnericus.pokyh.data.model.MenuResponse
 import dev.plattnericus.pokyh.data.model.toDomain
 import dev.plattnericus.pokyh.data.network.Config
+import dev.plattnericus.pokyh.data.storage.DiskCache
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -42,6 +47,7 @@ import kotlin.coroutines.resumeWithException
 @Singleton
 class BackendClient @Inject constructor(
     private val okHttpClient: OkHttpClient,
+    private val diskCache: DiskCache,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -230,15 +236,62 @@ class BackendClient @Inject constructor(
 
     // ── Mensa ────────────────────────────────────────────────────────────────
 
-    // Zentrales Caching (Performance): /dishes max. alle 5 Min neu laden.
+    // ── Mensa-Cache ─────────────────────────────────────────────────────────
+    //
+    // Drei Ebenen, jede für einen anderen Fall:
+    //
+    //  1. [dishCache] — RAM, 5 Minuten. Deckt Tabwechsel ab: Home und Mensa zeigen denselben
+    //     Speiseplan, und ohne das lädt jeder Wechsel neu.
+    //  2. [dishMutex] — Request-Bündelung. Home und Mensa starten beim App-Start praktisch
+    //     gleichzeitig; ohne Sperre gingen zwei identische Requests raus und der zweite
+    //     überschrieb den ersten. Wer die Sperre bekommt, lädt; alle anderen finden danach den
+    //     gefüllten RAM-Cache vor (deshalb die zweite Prüfung IM Lock).
+    //  3. [DiskCache] — überlebt den App-Neustart. Beim Kaltstart steht der Speiseplan damit
+    //     sofort da, statt erst nach der Netzantwort; das Netz aktualisiert ihn danach.
+    //
+    // Auf der Platte liegt der ROHE Antwort-Body, nicht die gemappten [Dish]-Objekte: so bleibt
+    // [Dish] ein reines Domänenmodell ohne Serialisierungs-Annotationen, und Gelesenes läuft
+    // durch exakt denselben Parser wie eine frische Antwort.
     private val dishCache = TtlCache<String, List<Dish>>(ttlMillis = 300_000L)
     private val dishKey = "dishes"
+    private val dishMutex = Mutex()
+    private val dishDiskKey = "mensa-dishes-v1"
 
     /** Leert alle In-Memory-Caches dieses Clients (z. B. „Cache leeren"). */
-    fun clearCaches() = dishCache.removeAll()
+    fun clearCaches() {
+        dishCache.removeAll()
+        ratingsCache.removeAll()
+        subjectImageCache.removeAll()
+    }
 
+    /**
+     * Der Speiseplan. [force] überspringt nur den RAM-Cache — die Request-Bündelung gilt immer,
+     * sonst würden zwei parallele Pull-to-Refresh-Gesten wieder zwei Requests auslösen.
+     */
     suspend fun dishes(force: Boolean = false): List<Dish> {
         if (!force) dishCache.get(dishKey)?.let { return it }
+        return dishMutex.withLock {
+            // Zweite Prüfung: während des Wartens auf die Sperre hat ein anderer Aufrufer den
+            // Cache womöglich schon gefüllt. Das ist der eigentliche Bündelungs-Effekt.
+            if (!force) dishCache.get(dishKey)?.let { return@withLock it }
+            fetchDishes()
+        }
+    }
+
+    /**
+     * Der zuletzt gespeicherte Speiseplan von der Platte, ohne Netz.
+     *
+     * Dafür gedacht, dass ein Screen beim Kaltstart sofort etwas anzeigen kann, während
+     * [dishes] im Hintergrund läuft. Füllt den RAM-Cache NICHT — sonst würde der
+     * TTL-Cache-Treffer den anschließenden Netz-Abruf überflüssig erscheinen lassen und der
+     * Plan bliebe bis zum Ablauf der TTL alt.
+     */
+    suspend fun cachedDishesOrNull(): List<Dish>? {
+        dishCache.stale(dishKey)?.let { return it }
+        return readDishesFromDisk()
+    }
+
+    private suspend fun fetchDishes(): List<Dish> {
         val request = Request.Builder()
             .url(Config.backendURL + Config.Routes.dishes)
             .header("Accept", "application/json")
@@ -248,33 +301,160 @@ class BackendClient @Inject constructor(
         val response = try {
             execute(request)
         } catch (e: IOException) {
-            dishCache.stale(dishKey)?.let { return it }
+            dishesFallback()?.let { return it }
             throw AppError("Mensa nicht ladbar (keine Verbindung).")
         }
         return response.use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                dishCache.stale(dishKey)?.let { return@use it }
+                dishesFallback()?.let { return@use it }
                 val message = runCatching { json.decodeFromString<ApiErrorBody>(text).error }.getOrNull()
                 throw AppError(message ?: "Mensa nicht ladbar (HTTP ${resp.code}).")
             }
-            val menu = runCatching { json.decodeFromString<MenuResponse>(text) }.getOrNull()
+            val dishes = parseDishes(text)
                 ?: run {
-                    dishCache.stale(dishKey)?.let { return@use it }
+                    dishesFallback()?.let { return@use it }
                     throw AppError("Mensa nicht ladbar (ungültige Antwort).")
                 }
-            val dishes = menu.menu.dishes.map { it.toDomain(Config.backendURL) }
             dishCache.set(dishKey, dishes)
+            diskCache.write(dishDiskKey, text, String.serializer())
             dishes
         }
     }
 
+    private fun parseDishes(rawJson: String): List<Dish>? =
+        runCatching { json.decodeFromString<MenuResponse>(rawJson) }
+            .getOrNull()
+            ?.menu
+            ?.dishes
+            ?.map { it.toDomain(Config.backendURL) }
+
+    /** Abgelaufener RAM-Stand zuerst, sonst die Platte — beides besser als ein Fehler-Screen. */
+    private suspend fun dishesFallback(): List<Dish>? =
+        dishCache.stale(dishKey) ?: readDishesFromDisk()
+
+    private suspend fun readDishesFromDisk(): List<Dish>? =
+        diskCache.read(dishDiskKey, String.serializer())?.let { parseDishes(it) }
+
+    // ── Fach-Bilder ─────────────────────────────────────────────────────────
+    //
+    // Das Backend hat für viele Fächer ein Titelbild. Es liefert aber KEINEN Platzhalter für
+    // Fächer ohne Bild — ein Abruf auf einen unbekannten Key endet im Fehler. Deshalb wird
+    // zuerst die Liste der vorhandenen Keys geholt und erst dann eine Bild-URL gebaut; genau so
+    // macht es auch das Web-Frontend (`api.subjectImages`).
+
+    @Serializable
+    private data class SubjectImageRow(val subject: String)
+
+    /** Lange TTL: die Liste ändert sich, wenn das Backend neue Bilder generiert — also selten. */
+    private val subjectImageCache = TtlCache<String, Set<String>>(ttlMillis = 6 * 60 * 60 * 1000L)
+    private val subjectImageKey = "subject-images"
+    private val subjectImageMutex = Mutex()
+
+    /**
+     * Die Fach-Keys, für die ein Bild existiert. Leer bei jedem Fehler — ein fehlendes Bild ist
+     * kein Fehlerzustand, den ein Screen anzeigen müsste.
+     */
+    suspend fun subjectImageKeys(): Set<String> {
+        subjectImageCache.get(subjectImageKey)?.let { return it }
+        return subjectImageMutex.withLock {
+            subjectImageCache.get(subjectImageKey)?.let { return@withLock it }
+            val keys = runCatching {
+                decode<List<SubjectImageRow>>(request(Config.Routes.subjectImages))
+                    .map { it.subject.lowercase().trim() }
+                    .toSet()
+            }.getOrDefault(emptySet())
+            subjectImageCache.set(subjectImageKey, keys)
+            keys
+        }
+    }
+
+    /**
+     * Der Cache-Key eines Fachs: bevorzugt der Langname, sonst das Kürzel — kleingeschrieben und
+     * getrimmt. Muss exakt der Bildung im Web-Frontend entsprechen, sonst zeigen die beiden Apps
+     * unterschiedliche (oder gar keine) Bilder für dasselbe Fach.
+     */
+    fun subjectImageKeyOf(subjectLong: String, subjectName: String): String =
+        (subjectLong.ifBlank { subjectName }).lowercase().trim()
+
+    /**
+     * Die Bild-URL zu einem Key.
+     *
+     * OHNE `?apiKey=`-Query-Parameter: diese Route akzeptiert den Schlüssel ausschließlich als
+     * Header und antwortet sonst mit
+     * `400 {"error":"Use X-API-Key header for this route"}`. (Das Web-Frontend hängt den Key an
+     * die Query, weil ein `<img src>` keine Header setzen kann — auf Android kann der
+     * Image-Loader das, also wird hier der Weg genommen, den der Server tatsächlich unterstützt.)
+     *
+     * Aufrufer laden die URL mit [apiKeyHeaderName]/[apiKeyHeaderValue] als Header, siehe
+     * `LessonDetailSheet`.
+     */
+    fun subjectImageUrl(key: String): String =
+        Config.backendURL + Config.Routes.subjectImages + "/" + key.urlEncoded()
+
+    /** Header-Name des Backend-API-Schlüssels — für Anfragen, die nicht über [request] laufen
+     * (Bild-Loads). */
+    val apiKeyHeaderName: String get() = "X-API-Key"
+
+    /** Header-Wert dazu. Liegt hier statt in der UI, damit `BuildConfig` nicht quer durch die
+     * Schichten gelesen wird. */
+    val apiKeyHeaderValue: String get() = BuildConfig.BACKEND_API_KEY
+
+    /**
+     * Meldet dem Backend, welche Fächer es an dieser Schule gibt, damit es fehlende Bilder
+     * nachgenerieren kann. Best effort und höchstens einmal pro Prozess: das ist ein Hinweis an
+     * den Server, kein Feature dieser App.
+     */
+    suspend fun reportSubjects(entries: List<Pair<String, String>>) {
+        if (subjectsReported || entries.isEmpty()) return
+        subjectsReported = true
+        val unique = LinkedHashMap<String, JsonObject>()
+        for ((shortName, longName) in entries) {
+            if (shortName.isBlank() && longName.isBlank()) continue
+            val key = subjectImageKeyOf(longName, shortName)
+            if (key.isEmpty() || unique.containsKey(key)) continue
+            unique[key] = buildJsonObject {
+                put("key", key)
+                put("longName", longName.ifBlank { shortName })
+                put("shortName", shortName)
+            }
+        }
+        if (unique.isEmpty()) return
+        val payload = buildJsonObject {
+            putJsonArray("subjects") { unique.values.forEach { add(it) } }
+        }
+        runCatching {
+            request(Config.Routes.subjectImages + "/report", method = "POST", jsonBody = payload.toString())
+        }
+        // A fresh report may have produced new images, so the key list is no longer current.
+        subjectImageCache.remove(subjectImageKey)
+    }
+
+    private var subjectsReported = false
+
     // ── Bewertungen ─────────────────────────────────────────────────────────
 
-    suspend fun dishRatings(dishId: String, token: String): DishRatingsData {
+    /**
+     * Sternebewertungen, pro Gericht gecacht (1 Minute).
+     *
+     * Kürzere TTL als der Speiseplan: ein Menü ändert sich einmal am Tag, eine Bewertung kann
+     * sich jederzeit ändern. Lang genug, damit ein Tabwechsel oder ein Zurück aus der Detailseite
+     * nicht neu lädt, kurz genug, dass fremde Bewertungen zeitnah ankommen.
+     */
+    private val ratingsCache = TtlCache<String, DishRatingsData>(ttlMillis = 60_000L)
+
+    suspend fun dishRatings(dishId: String, token: String, force: Boolean = false): DishRatingsData {
+        if (!force) ratingsCache.get(dishId)?.let { return it }
         val dto = decode<DishRatingsResponse>(request(Config.Routes.dishRatings + "/" + dishId.urlEncoded(), token = token))
-        return DishRatingsData(ratings = dto.ratings, myRating = dto.myRating)
+        return DishRatingsData(ratings = dto.ratings, myRating = dto.myRating).also { ratingsCache.set(dishId, it) }
     }
+
+    /**
+     * Der zuletzt bekannte Stand für [ids], ohne Netz — für den Platzhalter, der die Sterne beim
+     * Öffnen sofort füllt, statt sie nach der Antwort hereinspringen zu lassen.
+     */
+    fun cachedRatings(ids: List<String>): Map<String, DishRatingsData> =
+        ids.mapNotNull { id -> ratingsCache.stale(id)?.let { id to it } }.toMap()
 
     suspend fun dishRatingsBatch(ids: List<String>, token: String): Map<String, DishRatingsData> {
         val payload = buildJsonObject { putJsonArray("dishIds") { ids.forEach { add(it) } } }
@@ -286,6 +466,7 @@ class BackendClient @Inject constructor(
         )
         val map = decode<Map<String, DishRatingsResponse>>(text)
         return map.mapValues { (_, dto) -> DishRatingsData(ratings = dto.ratings, myRating = dto.myRating) }
+            .also { fresh -> fresh.forEach { (id, data) -> ratingsCache.set(id, data) } }
     }
 
     suspend fun rateDish(dishId: String, stars: Int, token: String) {
@@ -295,6 +476,24 @@ class BackendClient @Inject constructor(
             method = "POST",
             token = token,
             jsonBody = payload.toString(),
+        )
+    }
+
+    /**
+     * Schreibt eine gerade abgegebene Bewertung in den Cache, damit jeder andere Screen sie
+     * sofort sieht.
+     *
+     * Ohne das zeigte die Mensa-Liste nach einer Bewertung im Detail so lange den alten
+     * Schnitt, bis die TTL ablief — die UI war optimistisch, der Cache nicht.
+     */
+    fun applyLocalRating(dishId: String, stars: Int, userKey: String) {
+        val current = ratingsCache.stale(dishId) ?: DishRatingsData(emptyMap(), null)
+        ratingsCache.set(
+            dishId,
+            current.copy(
+                ratings = current.ratings + (userKey to stars.toDouble()),
+                myRating = stars,
+            ),
         )
     }
 

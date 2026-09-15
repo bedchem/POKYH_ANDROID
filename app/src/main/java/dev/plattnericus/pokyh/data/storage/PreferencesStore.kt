@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.plattnericus.pokyh.data.model.SavedAccount
+import dev.plattnericus.pokyh.ui.home.HomeLayout
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.KSerializer
@@ -48,6 +49,7 @@ class PreferencesStore @Inject constructor(
         val SEEN_CANCELLED_LESSONS = stringPreferencesKey("pokyh_seen_cancelled_lessons")
         val SCHEDULED_REMINDER_IDS = stringPreferencesKey("pokyh_scheduled_reminder_ids")
         val NOTIF_ASKED = booleanPreferencesKey("pokyh_notif_asked")
+        val HOME_LAYOUT = stringPreferencesKey("pokyh_home_layout")
 
         const val KEY_PREFIX = "pokyh_"
     }
@@ -174,6 +176,23 @@ class PreferencesStore @Inject constructor(
 
     suspend fun setScheduledReminderIds(ids: Set<String>) {
         context.dataStore.edit { it[SCHEDULED_REMINDER_IDS] = json.encodeToString(SetStringSerializer, ids) }
+    }
+
+    // ── Home-Layout (Reihenfolge + ausgeblendete Abschnitte) ───────────────
+    //
+    // Gerätelokal und kontoübergreifend: das ist eine Layout-Vorliebe, keine Kontodaten. Wer
+    // das Konto wechselt, will seinen Home-Aufbau behalten.
+    //
+    // Fällt bei kaputtem/unbekanntem JSON auf das Standardlayout zurück, statt zu werfen:
+    // [HomeLayout.sanitized] räumt einen Eintrag aus einer anderen App-Version ohnehin auf,
+    // und ein unlesbares Layout darf Home nicht blockieren.
+
+    val homeLayout: Flow<HomeLayout> = context.dataStore.data.map { prefs ->
+        prefs[HOME_LAYOUT]?.let { decodeOrNull(it, HomeLayout.serializer()) } ?: HomeLayout()
+    }
+
+    suspend fun setHomeLayout(layout: HomeLayout) {
+        context.dataStore.edit { it[HOME_LAYOUT] = json.encodeToString(HomeLayout.serializer(), layout) }
     }
 
     // ── Benachrichtigungs-Berechtigung bereits angefragt? ──────────────────

@@ -16,11 +16,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,9 +40,10 @@ import dev.plattnericus.pokyh.data.model.DishRatingsData
 import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.MediaCardSkeleton
-import dev.plattnericus.pokyh.ui.components.MiniStars
+import dev.plattnericus.pokyh.ui.components.MiniStarsSlot
 import dev.plattnericus.pokyh.ui.components.PokyhBleedCard
 import dev.plattnericus.pokyh.ui.components.PokyhSectionHeader
+import dev.plattnericus.pokyh.ui.components.SkeletonBlock
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TabRootActions
 import dev.plattnericus.pokyh.ui.components.TagChip
@@ -68,6 +72,13 @@ fun MensaScreen(
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
 
+    // Coming back to this tab re-checks that there is something to show. The tab shell keeps
+    // this screen's ViewModel alive across switches, so without it an empty state that happened
+    // once stayed empty until the app restarted — which is how "Mensa is sometimes blank after
+    // leaving Home" looked from the outside. Cheap: with days on screen this returns at once,
+    // and the TTL cache absorbs the rest.
+    LaunchedEffect(Unit) { viewModel.onAppear() }
+
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
@@ -91,9 +102,11 @@ fun MensaScreen(
                 ui.loading && ui.groups.isEmpty() -> Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
                         .padding(horizontal = PokyhSpacing.screenH),
                     verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
                 ) {
+                    SkeletonBlock(height = 18.dp, width = 120.dp)
                     repeat(2) { MediaCardSkeleton() }
                 }
 
@@ -125,6 +138,7 @@ fun MensaScreen(
                                 DishCard(
                                     dish = dish,
                                     ratings = ui.ratings[dish.id],
+                                    ratingsLoading = ui.ratingsLoading,
                                     onClick = { onDishClick(dish.id) },
                                 )
                             }
@@ -138,8 +152,20 @@ fun MensaScreen(
 
 // ── Gericht-Karte (Liste, schreibgeschützte Sterne) ─────────────────────────
 
+/**
+ * One dish.
+ *
+ * The rating line is a [MiniStarsSlot] rather than a conditional [MiniStars]: it holds its
+ * height whether the stars are loading, present or absent, so a list of cards doesn't shuffle as
+ * the ratings arrive a moment after the dishes.
+ */
 @Composable
-private fun DishCard(dish: Dish, ratings: DishRatingsData?, onClick: () -> Unit) {
+private fun DishCard(
+    dish: Dish,
+    ratings: DishRatingsData?,
+    ratingsLoading: Boolean,
+    onClick: () -> Unit,
+) {
     val colors = PokyhTheme.colors
     PokyhBleedCard(onClick = onClick) {
         DishImage(dish = dish, height = 150.dp)
@@ -169,9 +195,11 @@ private fun DishCard(dish: Dish, ratings: DishRatingsData?, onClick: () -> Unit)
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            if (ratings != null && ratings.average > 0) {
-                MiniStars(average = ratings.average, count = ratings.count)
-            }
+            MiniStarsSlot(
+                loading = ratingsLoading && ratings == null,
+                average = ratings?.average ?: 0.0,
+                count = ratings?.count ?: 0,
+            )
         }
     }
 }

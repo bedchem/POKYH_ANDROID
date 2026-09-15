@@ -150,6 +150,26 @@ object PokyhIcons {
     // ── Controls ─────────────────────────────────────────────────────────────
 
     val sort = Ph.ArrowsDownUp
+
+    // ── Editing a list (Home-Anpassung) ──────────────────────────────────────
+
+    /**
+     * The grab handle on a row that can be dragged into a different position.
+     *
+     * Up/down arrows rather than the usual six-dot grip: the app's icon family has no grip
+     * glyph, and a pair of arrows says "this moves, vertically" without one. Same vector as
+     * [sort], which is the correct coincidence — both are about the order of a list.
+     */
+    val dragHandle = Ph.ArrowsDownUp
+
+    /**
+     * Whether a section is switched on. A filled check and an empty ring, not an eye: the
+     * control is a choice about what the list contains, and a check reads as a choice where an
+     * eye reads as a preview. [PhFill] is allowed here for the same reason it is allowed on a
+     * status badge — the fill *is* the state.
+     */
+    val sectionShown = PhFill.CheckCircle
+    val sectionHidden = Ph.Circle
     val reset = Ph.ArrowsCounterClockwise
     val undo = Ph.ArrowUUpLeft
     val radioOn = PhFill.CheckCircle

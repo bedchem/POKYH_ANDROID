@@ -4,9 +4,15 @@
      circular launcher mask would clip the cutlery. The foreground bitmap is therefore the logo
      scaled into the adaptive safe zone (central 72 of the 108 canvas) over the logo's own
      sampled background color — generated from the source PNG, see the repo's icon-generation
-     notes. `monochrome` is deliberately absent: a themed-icon silhouette needs its own
-     single-color artwork, and derived-from-a-gradient-bitmap versions look wrong. -->
+     notes.
+
+     `monochrome` is the themed-icon layer for Android 13+. It is NOT derived from the foreground
+     bitmap — a silhouette taken from a gradient bitmap is a solid blob — but drawn from the
+     vector mark instead; see `drawable/ic_launcher_monochrome.xml`. Without it, a themed launcher
+     falls back to drawing the full-colour icon on a grey plate, which is the one place the app
+     looked unfinished on a modern launcher. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
 </adaptive-icon>

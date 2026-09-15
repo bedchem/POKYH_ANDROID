@@ -4,7 +4,10 @@ package dev.plattnericus.pokyh.ui.profile
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,10 +35,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.BuildConfig
@@ -68,10 +74,12 @@ import dev.plattnericus.pokyh.ui.theme.PokyhThemeMode
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
+import dev.plattnericus.pokyh.ui.theme.popIn
+import dev.plattnericus.pokyh.ui.theme.pressable
 
 private const val PRIVACY_URL = "https://pokyh.com/datenschutz"
 private const val TERMS_URL = "https://pokyh.com/nutzungsbedingungen"
-private const val SUPPORT_EMAIL = "support@pokyh.com"
+private const val SUPPORT_EMAIL = "contact@pokyh.com"
 
 /**
  * Profil — a pushed full-screen route (from the header actions on every tab root).
@@ -243,11 +251,7 @@ fun ProfileScreen(
             onDismiss = { confirmLogout = false },
             onLogoutOnly = {
                 confirmLogout = false
-                viewModel.logoutCurrentAccount(alsoRemoveFromDevice = false, onDone = onNavigateUp)
-            },
-            onLogoutAndRemove = {
-                confirmLogout = false
-                viewModel.logoutCurrentAccount(alsoRemoveFromDevice = true, onDone = onNavigateUp)
+                viewModel.logoutCurrentAccount(onDone = onNavigateUp)
             },
         )
     }
@@ -361,9 +365,15 @@ fun ProfileToolbarAction(onClick: () -> Unit, viewModel: ProfileViewModel = hilt
 // ── Sections ────────────────────────────────────────────────────────────────
 
 /** The one place in the app with a centered layout: an identity block reads as a portrait, and
- * centering it is what makes the rest of the screen read as *settings about* that person. */
+ * centering it is what makes the rest of the screen read as *settings about* that person.
+ *
+ * The portrait itself is tappable and opens at full size — a profile picture is the one image on
+ * this screen, and an 88dp disc is a thumbnail of it, not the thing itself. */
 @Composable
 private fun HeaderSection(session: UserSession, modifier: Modifier = Modifier) {
+    var avatarOpen by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -374,6 +384,15 @@ private fun HeaderSection(session: UserSession, modifier: Modifier = Modifier) {
             name = session.personName ?: session.username,
             auth = UntisImageAuth.of(session),
             size = 88.dp,
+            modifier = Modifier
+                .clip(PokyhShapes.pill)
+                .pressable(interactionSource)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClickLabel = "Profilbild öffnen",
+                    onClick = { avatarOpen = true },
+                ),
         )
         Spacer(Modifier.size(PokyhSpacing.md))
         Text(
@@ -386,6 +405,49 @@ private fun HeaderSection(session: UserSession, modifier: Modifier = Modifier) {
             style = PokyhType.callout,
             color = PokyhTheme.colors.textSecondary,
         )
+    }
+
+    if (avatarOpen) {
+        AvatarViewerDialog(session = session, onDismiss = { avatarOpen = false })
+    }
+}
+
+/**
+ * The profile picture at full size on a dimmed backdrop.
+ *
+ * A [Dialog] rather than a pushed route: it is a look at one image, not a place in the app, so
+ * it should not land on the back stack or get a screen's push transition. Anywhere outside the
+ * portrait dismisses it, which is the gesture people already try first.
+ */
+@Composable
+private fun AvatarViewerDialog(session: UserSession, onDismiss: () -> Unit) {
+    val dismissSource = remember { MutableInteractionSource() }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.82f))
+                .clickable(interactionSource = dismissSource, indication = null, onClick = onDismiss),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xl),
+                modifier = Modifier.padding(PokyhSpacing.xxxl).popIn(),
+            ) {
+                UntisAvatar(
+                    rawImageUrl = session.imageUrl,
+                    name = session.personName ?: session.username,
+                    auth = UntisImageAuth.of(session),
+                    size = 280.dp,
+                )
+                Text(
+                    text = session.personName ?: session.username,
+                    style = PokyhType.title2,
+                    color = Color.White,
+                )
+            }
+        }
     }
 }
 
@@ -761,21 +823,26 @@ fun PokyhDialog(
     )
 }
 
+/**
+ * Abbrechen or Abmelden — two choices, and signing out never deletes anything.
+ *
+ * It used to offer a third, "Abmelden & löschen", which wiped the saved credentials on the way
+ * out. That put an irreversible action one mis-tap from an everyday one, in a dialog whose
+ * subject is signing out, and it was redundant: removing a saved account has its own row in the
+ * accounts list (with its own confirmation), and wiping everything has "Cache & Daten löschen".
+ */
 @Composable
 private fun LogoutConfirmDialog(
     onDismiss: () -> Unit,
     onLogoutOnly: () -> Unit,
-    onLogoutAndRemove: () -> Unit,
 ) {
     PokyhDialog(
         title = "Wirklich abmelden?",
-        body = "Du kannst dich abmelden oder das gespeicherte Konto ganz vom Gerät entfernen.",
+        body = "Du wirst abgemeldet. Dein gespeichertes Konto bleibt auf dem Gerät, du kannst dich " +
+            "jederzeit wieder anmelden.",
         onDismiss = onDismiss,
         confirmLabel = "Abmelden",
         confirmColor = Brand.danger,
         onConfirm = onLogoutOnly,
-        extraAction = {
-            PokyhTextButton(text = "Abmelden & löschen", color = Brand.danger, onClick = onLogoutAndRemove)
-        },
     )
 }

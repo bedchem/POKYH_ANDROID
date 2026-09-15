@@ -12,6 +12,7 @@ import dev.plattnericus.pokyh.data.model.Dish
 import dev.plattnericus.pokyh.data.model.DishRatingsData
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
+import dev.plattnericus.pokyh.data.storage.PreferencesStore
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
 import dev.plattnericus.pokyh.data.untis.UntisClient
@@ -23,7 +24,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
@@ -41,6 +44,7 @@ class HomeViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
     private val backendClient: BackendClient,
+    private val preferencesStore: PreferencesStore,
 ) : ViewModel() {
 
     /** `HomeView.RecentGrade` — a flattened, most-recent-first grade entry for the "Zuletzt
@@ -57,6 +61,15 @@ class HomeViewModel @Inject constructor(
         val mensaWeek: List<MensaWeekDay> = emptyList(),
         val mensaWeekLabel: String = "",
         val dishRatings: Map<String, DishRatingsData> = emptyMap(),
+        /**
+         * True until the batch of star ratings for this week's dishes has resolved one way or
+         * the other.
+         *
+         * An explicit flag rather than `dishRatings.isEmpty()`, which cannot tell "not fetched
+         * yet" from "fetched, and nothing is rated" — and would leave the placeholder
+         * shimmering forever in the second case.
+         */
+        val loadingDishRatings: Boolean = true,
         val examsLoaded: Boolean = false,
         val nextExam: TimetableEntry? = null,
         val error: String? = null,
@@ -64,6 +77,50 @@ class HomeViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(UiState(session = appState.session.value))
     val uiState: StateFlow<UiState> = _state.asStateFlow()
+
+    /**
+     * Which blocks Home shows, and in what order — see [HomeLayout].
+     *
+     * Its own flow rather than a field of [UiState]: the layout is a persisted preference that
+     * changes when the user edits it, while [UiState] is reloaded data. Keeping them apart means
+     * a refresh can't clobber an edit, and an edit doesn't make the screen look like it reloaded.
+     */
+    val layout: StateFlow<HomeLayout> = preferencesStore.homeLayout
+        .stateIn(viewModelScope, SharingStarted.Eagerly, HomeLayout())
+
+    /**
+     * True while the Home editor is open.
+     *
+     * Deliberately *not* persisted: edit mode is something you are doing, not something you have
+     * set, and an app that reopened into edit mode would be answering a question nobody asked.
+     */
+    private val _editing = MutableStateFlow(false)
+    val editing: StateFlow<Boolean> = _editing.asStateFlow()
+
+    fun setEditing(value: Boolean) { _editing.value = value }
+
+    /**
+     * Reorder, by index into [HomeLayout.sanitized] (the editor's list, hidden entries
+     * included).
+     *
+     * Writes on every swap as the drag passes over a neighbour, not once when the finger lifts.
+     * DataStore coalesces the writes, and it means an edit survives the app being killed
+     * mid-gesture — which, on a screen whose whole job is arranging things, is the one moment
+     * losing state would be most annoying.
+     */
+    fun moveSection(from: Int, to: Int) {
+        val next = layout.value.moved(from, to)
+        viewModelScope.launch { preferencesStore.setHomeLayout(next) }
+    }
+
+    fun toggleSection(section: HomeSection) {
+        val next = layout.value.toggled(section)
+        viewModelScope.launch { preferencesStore.setHomeLayout(next) }
+    }
+
+    fun resetLayout() {
+        viewModelScope.launch { preferencesStore.setHomeLayout(HomeLayout()) }
+    }
 
     init {
         viewModelScope.launch { appState.session.collect { s -> _state.update { it.copy(session = s) } } }
@@ -196,11 +253,25 @@ class HomeViewModel @Inject constructor(
      * rating per dish without a request per card. Needs a POKYH backend token; without one the
      * cards simply show no stars. */
     private suspend fun loadDishRatings(ids: List<String>) {
-        val token = appState.session.value?.apiToken ?: return
         val unique = ids.distinct()
-        if (unique.isEmpty()) return
+        val token = appState.session.value?.apiToken
+        if (unique.isEmpty() || token == null) {
+            // Nothing to fetch, or no backend token to fetch it with — either way the stars are
+            // as resolved as they are going to get, so stop the placeholder.
+            _state.update { it.copy(loadingDishRatings = false) }
+            return
+        }
+        // Whatever the shared cache already knows, immediately — the Mensa tab and Home look at
+        // the same dishes, so arriving from there usually means the stars are already known.
+        val cached = backendClient.cachedRatings(unique)
+        if (cached.isNotEmpty()) {
+            _state.update { it.copy(dishRatings = it.dishRatings + cached, loadingDishRatings = false) }
+        }
         runCatching { backendClient.dishRatingsBatch(unique, token) }
-            .onSuccess { batch -> _state.update { it.copy(dishRatings = batch) } }
+            .onSuccess { batch ->
+                _state.update { it.copy(dishRatings = it.dishRatings + batch, loadingDishRatings = false) }
+            }
+            .onFailure { _state.update { it.copy(loadingDishRatings = false) } }
     }
 
     // ── Mensa-Wochenlogik ────────────────────────────────────────────────────

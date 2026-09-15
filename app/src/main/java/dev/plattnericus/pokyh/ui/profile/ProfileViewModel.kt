@@ -167,11 +167,18 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    /** Section 5 "Abmelden": nur diese Sitzung (removeAccount = false) oder zusätzlich das
-     * gespeicherte Konto vom Gerät löschen (ProfileView.swift `confirmLogout`-Dialog). */
-    fun logoutCurrentAccount(alsoRemoveFromDevice: Boolean, onDone: () -> Unit) {
+    /**
+     * Section 5 "Abmelden" — beendet **nur die Sitzung**. Das gespeicherte Konto bleibt auf dem
+     * Gerät, damit die nächste Anmeldung wieder per Biometrie geht.
+     *
+     * Hatte früher ein `alsoRemoveFromDevice`-Flag, über das der Abmelden-Dialog die
+     * Zugangsdaten gleich mitlöschen konnte. Das ist weg, und zwar in der API und nicht nur im
+     * Dialog: eine nicht umkehrbare Aktion gehört nicht als Nebenausgang an eine alltägliche.
+     * Wer ein Konto wirklich entfernen will, nimmt [removeAccount] in der Kontoliste (mit
+     * eigener Rückfrage) oder [clearAllData].
+     */
+    fun logoutCurrentAccount(onDone: () -> Unit) {
         val username = appState.session.value?.username ?: return
-        if (alsoRemoveFromDevice) appState.removeAccount(username)
         appState.logout(username)
         onDone()
     }

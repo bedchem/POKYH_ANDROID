@@ -359,6 +359,114 @@ fun distributionColor(grade: Int): Color = when (grade) {
  */
 fun Color.softenedFill(): Color = androidx.compose.ui.graphics.lerp(this, Color.White, 0.18f)
 
+// ── Subject pastels ─────────────────────────────────────────────────────────
+
+/** Hue in degrees of an sRGB color — the inverse of [hsv]'s hue input. */
+private fun Color.hueDegrees(): Float {
+    val r = red
+    val g = green
+    val b = blue
+    val max = maxOf(r, g, b)
+    val min = minOf(r, g, b)
+    val d = max - min
+    if (d <= 0.0001f) return 0f
+    val h = when (max) {
+        r -> ((g - b) / d) % 6f
+        g -> (b - r) / d + 2f
+        else -> (r - g) / d + 4f
+    } * 60f
+    return (h + 360f) % 360f
+}
+
+/** HSL → RGB. The pastel ramp is built in HSL, not HSV — see [subjectTone]. */
+private fun hsl(hueDeg: Float, saturation: Float, lightness: Float): Color {
+    val h = ((hueDeg % 360f) + 360f) % 360f
+    val s = saturation.coerceIn(0f, 1f)
+    val l = lightness.coerceIn(0f, 1f)
+    val c = (1f - abs(2f * l - 1f)) * s
+    val hPrime = h / 60f
+    val x = c * (1 - abs(hPrime % 2 - 1))
+    val (r1, g1, b1) = when {
+        hPrime < 1f -> Triple(c, x, 0f)
+        hPrime < 2f -> Triple(x, c, 0f)
+        hPrime < 3f -> Triple(0f, c, x)
+        hPrime < 4f -> Triple(0f, x, c)
+        hPrime < 5f -> Triple(x, 0f, c)
+        else -> Triple(c, 0f, x)
+    }
+    val m = l - c / 2f
+    return Color(r1 + m, g1 + m, b1 + m)
+}
+
+/**
+ * A subject rendered as a pastel surface: [SubjectTone.fill] for the block of color,
+ * [SubjectTone.ink] for the text on it, [SubjectTone.bar] where a saturated accent is wanted.
+ *
+ * This is a *rendering* pair, not a new identity color. It keeps the subject's hue from
+ * [subjectColor] — which is cross-platform and must not drift — and only re-pitches it, so a
+ * Stundenplan cell and a Schule-tab tile read as the same family. Anything that needs the raw
+ * identity color (a dot, a status glyph) still calls [subjectColor].
+ */
+data class SubjectTone(val fill: Color, val ink: Color, val bar: Color)
+
+/**
+ * The pastel tone for [name] in the active theme.
+ *
+ * **Built in HSL rather than HSV**, and that is the whole difference between this looking like a
+ * palette and looking like a set of tints. In HSV, "light" means value near 1, and at that end
+ * saturation still pulls the color toward a pure hue — a pastel yellow stays acidic while a
+ * pastel blue goes grey, because the two hues have very different perceived brightness at the
+ * same V. HSL's lightness axis runs to white for every hue, so fixing L and varying only the hue
+ * gives a row of tints that actually belong together, which is what a timetable full of
+ * different subjects needs.
+ *
+ * Light theme: a soft wash at L≈0.93, with ink at L≈0.30 of the same hue — enough contrast for
+ * 10sp text on the fill without the ink reading as black.
+ *
+ * Dark theme: inverted — a muted fill and a light-tinted ink. Two numbers matter there and both
+ * were wrong at first. The fill sits at **L≈0.24, clearly above the card** ([PokyhColors.card]
+ * is 0x1B1B1F, about L=0.11): tuned any darker, a cell had nearly the same luminance as the
+ * surface behind it, so the grid lost its blocks and the only thing left to see was the tint,
+ * which read as a stain rather than as a subject. And saturation is held **low (0.18)**, because
+ * a dark, saturated tint goes muddy — every hue collapses toward the same bruised purple-brown,
+ * which is exactly what the cells looked like. Low saturation on a lifted base keeps violet,
+ * green and blue apart while none of them shouts.
+ *
+ * Saturation is deliberately modest in both themes. A grid can hold a dozen subjects at once,
+ * and a dozen fully-saturated pastels is not a palette, it is confetti.
+ */
+fun subjectTone(name: String, isDark: Boolean): SubjectTone {
+    val hue = subjectColor(name).hueDegrees()
+    return if (isDark) {
+        SubjectTone(
+            fill = hsl(hue, 0.18f, 0.24f),
+            ink = hsl(hue, 0.62f, 0.88f),
+            bar = hsl(hue, 0.45f, 0.62f),
+        )
+    } else {
+        SubjectTone(
+            fill = hsl(hue, 0.62f, 0.93f),
+            ink = hsl(hue, 0.52f, 0.30f),
+            bar = hsl(hue, 0.50f, 0.58f),
+        )
+    }
+}
+
+/**
+ * The same treatment for a *status* color (cancelled, exam, replacement, event), so a status
+ * cell sits in the grid at the same visual weight as a subject cell instead of being the one
+ * saturated block on the page. Status hues stay exactly as [Brand] defines them — only the pitch
+ * changes.
+ */
+fun statusTone(color: Color, isDark: Boolean): SubjectTone {
+    val hue = color.hueDegrees()
+    return if (isDark) {
+        SubjectTone(fill = hsl(hue, 0.22f, 0.25f), ink = hsl(hue, 0.68f, 0.86f), bar = color)
+    } else {
+        SubjectTone(fill = hsl(hue, 0.70f, 0.94f), ink = hsl(hue, 0.55f, 0.32f), bar = color)
+    }
+}
+
 /** Convenience accessor mirroring the iOS call-site style `Palette.accent`, `PokyhTheme.colors.bg`. */
 object PokyhTheme {
     val colors: PokyhColors

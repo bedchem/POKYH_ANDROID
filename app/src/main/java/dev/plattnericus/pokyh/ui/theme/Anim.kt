@@ -1,7 +1,6 @@
 package dev.plattnericus.pokyh.ui.theme
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -195,7 +194,19 @@ fun Modifier.slideIn(active: Boolean): Modifier {
     }
 }
 
-/** Shimmer sweep for skeleton loaders — white 18% band, 1.5x width, linear 1.3s loop. */
+/**
+ * The shimmer sweep every skeleton block carries — one band, one speed, app-wide.
+ *
+ * The band is **the theme's own text color at a low alpha**, not white. A white band was close
+ * to invisible against the light theme's warm inset fill (the two are within a few percent of
+ * each other) and far too bright against the dark theme's — so the same modifier read as "barely
+ * moving" in one theme and "flashing" in the other. Tinting from the text ramp keeps the
+ * contrast between band and track the same in both.
+ *
+ * It sweeps a shade slower than it used to (1.6s) and eases in and out rather than running at a
+ * constant speed: a linear loop restarting at the left edge has a visible seam, and a skeleton
+ * that ticks draws more attention than the content it is standing in for.
+ */
 @Composable
 fun Modifier.shimmer(): Modifier = composed {
     var widthPx by remember { mutableFloatStateOf(0f) }
@@ -203,15 +214,20 @@ fun Modifier.shimmer(): Modifier = composed {
     val phase by transition.animateFloat(
         initialValue = -1f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing), RepeatMode.Restart),
+        animationSpec = infiniteRepeatable(
+            tween(1600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            RepeatMode.Restart,
+        ),
         label = "shimmerPhase",
     )
+    val colors = PokyhTheme.colors
+    val band = colors.textPrimary.copy(alpha = if (colors.isDark) 0.07f else 0.055f)
     this
         .onGloballyPositioned { widthPx = it.size.width.toFloat() }
-        .drawWithShimmer(phase, widthPx)
+        .drawWithShimmer(phase, widthPx, band)
 }
 
-private fun Modifier.drawWithShimmer(phase: Float, widthPx: Float): Modifier = composed {
+private fun Modifier.drawWithShimmer(phase: Float, widthPx: Float, band: Color): Modifier = composed {
     drawWithContent {
         drawContent()
         if (widthPx <= 0f) return@drawWithContent
@@ -219,7 +235,7 @@ private fun Modifier.drawWithShimmer(phase: Float, widthPx: Float): Modifier = c
         val x = phase * bandWidth
         drawRect(
             brush = Brush.linearGradient(
-                colors = listOf(Color.Transparent, Color.White.copy(alpha = 0.18f), Color.Transparent),
+                colors = listOf(Color.Transparent, band, Color.Transparent),
                 start = Offset(x, 0f),
                 end = Offset(x + bandWidth, 0f),
             ),

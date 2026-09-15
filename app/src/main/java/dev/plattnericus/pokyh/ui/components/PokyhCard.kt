@@ -372,20 +372,23 @@ fun PokyhFeatureTile(
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
-            Text(
+            // A tile is half the screen wide minus its padding — about 120dp of text column —
+            // and the labels on it are words like "Abwesenheiten" and
+            // "Fehlstunden & Entschuldigungen". Fitted text shrinks those to fit instead of
+            // letting the line breaker cut one in half, and it holds up at large system font
+            // scales, where every one of them overflows.
+            PokyhFittedText(
                 text = title,
                 style = PokyhType.title3,
                 color = tone.ink,
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
             )
             if (subtitle != null) {
-                Text(
+                PokyhFittedText(
                     text = subtitle,
                     style = PokyhType.caption,
                     color = tone.ink.copy(alpha = 0.78f),
                     maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

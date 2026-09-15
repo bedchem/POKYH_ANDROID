@@ -26,7 +26,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,9 +59,11 @@ import dev.plattnericus.pokyh.data.untis.DayKind
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.SlotKind
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
+import dev.plattnericus.pokyh.data.untis.changes
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.PokyhDayPills
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
+import dev.plattnericus.pokyh.ui.components.PokyhInlineNotice
 import dev.plattnericus.pokyh.ui.components.PokyhSegmentedControl
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTileRow
@@ -70,7 +71,9 @@ import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.SpecialDayCard
 import dev.plattnericus.pokyh.ui.components.TabRootActions
 import dev.plattnericus.pokyh.ui.components.TagChip
+import dev.plattnericus.pokyh.ui.components.TileRowSkeleton
 import dev.plattnericus.pokyh.ui.components.TopBarNav
+import dev.plattnericus.pokyh.ui.components.WeekGridSkeleton
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
 import dev.plattnericus.pokyh.ui.profile.rememberUnreadMessageCount
@@ -87,7 +90,8 @@ import dev.plattnericus.pokyh.ui.theme.appBackground
 
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 
-import dev.plattnericus.pokyh.ui.theme.softenedFill
+import dev.plattnericus.pokyh.ui.theme.statusTone
+import dev.plattnericus.pokyh.ui.theme.subjectTone
 import kotlin.math.abs
 import kotlinx.datetime.LocalDate
 
@@ -180,6 +184,7 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
                         dates = (0 until 6).map { viewModel.dateOf(offset, it) },
                         dayNums = (0 until 6).map { viewModel.dateNumOf(offset, it) },
                         todayNum = viewModel.todayDateNum(),
+                        weekNumber = viewModel.weekNumber(offset),
                         onTap = viewModel::showDetail,
                         onRetry = { viewModel.retryWeek(offset) },
                     )
@@ -190,7 +195,20 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
         }
     }
 
-    detail?.let { slot -> LessonDetailSheet(slot = slot, onDismiss = viewModel::dismissDetail) }
+    detail?.let { slot ->
+        // Resolved here rather than inside the sheet so the sheet stays a pure renderer, and so
+        // it re-resolves if the backend's key list lands while the sheet is already open.
+        val subjectImageKeys by viewModel.subjectImageKeys.collectAsStateWithLifecycle()
+        val imageUrl = remember(slot.id, subjectImageKeys) {
+            viewModel.subjectImageUrl(slot.display.subjectLong, slot.display.subjectName)
+        }
+        LessonDetailSheet(
+            slot = slot,
+            imageUrl = imageUrl,
+            imageHeader = viewModel.subjectImageHeaders(),
+            onDismiss = viewModel::dismissDetail,
+        )
+    }
 }
 
 // ── Week header (chevrons / range / "Heute" · KW n) ─────────────────────────
@@ -265,13 +283,12 @@ private fun WeekPageContent(
     dates: List<LocalDate>,
     dayNums: List<Int>,
     todayNum: Int,
+    weekNumber: Int,
     onTap: (MergedSlot) -> Unit,
     onRetry: () -> Unit,
 ) {
     when (state) {
-        is WeekPageState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = Brand.accent)
-        }
+        is WeekPageState.Loading -> WeekGridSkeleton(Modifier.fillMaxSize())
         is WeekPageState.Error -> ErrorStateView(message = state.message, onRetry = onRetry)
         is WeekPageState.Data -> {
             if (state.entries.isEmpty()) {
@@ -294,6 +311,7 @@ private fun WeekPageContent(
                     anyDayHasEntries = anyDayHasEntries,
                     onTap = onTap,
                     modifier = Modifier.fillMaxSize(),
+                    weekNumber = weekNumber,
                 )
             }
         }
@@ -334,16 +352,31 @@ private fun DayModeContent(viewModel: TimetableViewModel, ui: TimetableUiState, 
                 },
         ) {
             when (pageState) {
-                is WeekPageState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Brand.accent)
-                }
+                is WeekPageState.Loading -> TileRowSkeleton(
+                    rows = 5,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PokyhSpacing.screenH),
+                )
                 is WeekPageState.Error -> ErrorStateView(message = pageState.message, onRetry = { viewModel.retryWeek(ui.weekOffset) })
                 is WeekPageState.Data -> {
                     val dayNum = viewModel.dateNumOf(ui.weekOffset, ui.selectedDay)
                     val dayEntries = pageState.entries.filter { it.date == dayNum }
                     val anyDayHasEntries = (0 until 6).any { d -> pageState.entries.any { it.date == viewModel.dateNumOf(ui.weekOffset, d) } }
                     val kind = TimetableSlots.dayKind(dayEntries, anyDayHasEntries, ui.selectedDay)
-                    if (kind != DayKind.NORMAL) {
+                    if (kind == DayKind.WEEKEND) {
+                        // Not "Wochenende · Frei" on a card. A Saturday with no lessons is the
+                        // absence of a timetable, not an entry in it, and dressing it up as one
+                        // made an empty day the loudest thing on the screen.
+                        PokyhInlineNotice(
+                            icon = PokyhIcons.noExam,
+                            text = "Kein Unterricht",
+                            tint = Brand.success,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = PokyhSpacing.screenH),
+                        )
+                    } else if (kind != DayKind.NORMAL) {
                         Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                             SpecialDayCard(
                                 spec = specialDaySpecFor(kind),
@@ -400,33 +433,60 @@ private fun DayChipsRow(
 
 // ── Day-mode row ────────────────────────────────────────────────────────────
 
-/** Same shape as Home's lesson row, so a lesson looks the same wherever it appears. */
+/**
+ * A lesson in day mode. Same shape as Home's lesson row, so a lesson looks the same wherever it
+ * appears — and the same *semantics* as the week grid: the leading stripe is the subject's
+ * pastel bar, a changed field is a chip rather than prose, and a substitution shows both
+ * lessons.
+ *
+ * Where the grid puts the cancelled original *beside* the replacement (it has no vertical room
+ * to spend), the list puts it underneath: the row is already full-width, and reading "statt X"
+ * as a second line is more direct than a second column two thumbs wide.
+ */
 @Composable
 private fun SlotRow(slot: MergedSlot, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val colors = PokyhTheme.colors
-    val d = slot.display
-    val accent = slotColor(slot)
+    val isDark = colors.isDark
+    // For a substitution the lesson that actually happens leads the row; `display` is then the
+    // cancelled original, which becomes the "statt …" line under it.
+    val shown = slot.replacement ?: slot.display
+    val original = if (slot.replacement != null) slot.display else null
+    val cancelled = shown.isCancelled
+    val changes = shown.changes()
+    val tone = when {
+        cancelled -> statusTone(Brand.danger, isDark)
+        shown.isExam -> statusTone(Brand.warning, isDark)
+        slot.kind == SlotKind.EVENT -> statusTone(Brand.accentSoft, isDark)
+        shown.subjectName.isEmpty() -> statusTone(Brand.accent, isDark)
+        else -> subjectTone(shown.subjectName, isDark)
+    }
 
     PokyhTileRow(modifier = modifier, onClick = onClick, verticalAlignment = Alignment.Top) {
-        Box(Modifier.width(4.dp).height(44.dp).background(accent.softenedFill(), PokyhShapes.xs))
+        Box(Modifier.width(4.dp).height(44.dp).background(tone.bar, PokyhShapes.xs))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
             ) {
                 Text(
-                    text = d.subjectName.ifEmpty { d.note ?: "—" },
+                    text = shown.subjectName.ifEmpty { shown.note ?: "—" },
                     style = PokyhType.headline,
-                    color = if (d.isCancelled) Brand.danger else colors.textPrimary,
-                    textDecoration = if (d.isCancelled) TextDecoration.LineThrough else TextDecoration.None,
+                    color = if (cancelled) Brand.danger else colors.textPrimary,
+                    textDecoration = if (cancelled) TextDecoration.LineThrough else TextDecoration.None,
                 )
                 slotBadge(slot)
             }
-            val meta = listOf(d.teacherName, d.roomName).filter { it.isNotEmpty() }.joinToString(" · ")
-            if (meta.isNotEmpty()) {
-                Text(meta, style = PokyhType.footnote, color = colors.textSecondary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+            ) {
+                MetaField(shown.teacherName, changes.teacherChanged)
+                if (shown.teacherName.isNotEmpty() && shown.roomName.isNotEmpty()) {
+                    Text("·", style = PokyhType.footnote, color = colors.textTertiary)
+                }
+                MetaField(shown.roomName, changes.roomChanged)
             }
-            slot.replacement?.let { r ->
+            if (original != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
@@ -434,23 +494,43 @@ private fun SlotRow(slot: MergedSlot, onClick: () -> Unit, modifier: Modifier = 
                     Icon(
                         imageVector = PokyhIcons.replacement,
                         contentDescription = null,
-                        tint = Brand.orange,
+                        tint = colors.textTertiary,
                         modifier = Modifier.size(12.dp),
                     )
                     Text(
-                        text = "Ersatz: ${r.subjectName.ifEmpty { r.note ?: "" }}",
+                        text = "statt ${original.subjectName.ifEmpty { original.note ?: "—" }}",
                         style = PokyhType.caption,
-                        color = Brand.orange,
+                        color = colors.textTertiary,
+                        textDecoration = TextDecoration.LineThrough,
                     )
                 }
             }
         }
         Text(
-            text = "${Fmt.time(d.startTime)}\n${Fmt.time(d.endTime)}",
+            text = "${Fmt.time(shown.startTime)}\n${Fmt.time(shown.endTime)}",
             style = PokyhType.caption2.monospacedDigits(),
             color = colors.textTertiary,
             textAlign = TextAlign.End,
         )
+    }
+}
+
+/** A teacher/room value, drawn as a filled accent chip when WebUntis says *this* is the field
+ * that changed — the same highlight the week grid's cell uses, for the same reason. */
+@Composable
+private fun MetaField(text: String, changed: Boolean) {
+    if (text.isEmpty()) return
+    if (changed) {
+        Text(
+            text = text,
+            style = PokyhType.caption,
+            color = Brand.onAccent,
+            modifier = Modifier
+                .background(Brand.accent, PokyhShapes.xs)
+                .padding(horizontal = PokyhSpacing.xs, vertical = 1.dp),
+        )
+    } else {
+        Text(text, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
     }
 }
 

@@ -5,8 +5,14 @@ import kotlinx.serialization.Serializable
 /**
  * Domain models mirroring `Models.swift`. These are built manually from [dev.plattnericus.
  * pokyh.data.json.JsonDyn] by the WebUntis client (matching the messy real-world WebUntis
- * JSON) — deliberately NOT `@Serializable`. Backend DTOs (safe to decode directly) live in
- * `BackendDtos.kt`.
+ * JSON) — so none of them is decoded *from the wire* by kotlinx-serialization. Backend DTOs
+ * (safe to decode directly) live in `BackendDtos.kt`.
+ *
+ * Some are `@Serializable` anyway, and the distinction matters: that annotation is here only so
+ * the model can round-trip through the app's **own** [dev.plattnericus.pokyh.data.storage.
+ * DiskCache] — a file this app wrote, in this app's sandbox. It is never used to parse a server
+ * response. Keeping that line means a change to WebUntis's JSON can never quietly become a
+ * deserialization contract.
  */
 
 // ── Session ──────────────────────────────────────────────────────────────
@@ -70,6 +76,9 @@ data class SavedAccount(
 
 // ── Timetable ────────────────────────────────────────────────────────────
 
+// @Serializable for the offline timetable cache (see the file header — our own file, not
+// WebUntis's JSON). Every field is a primitive, so the round-trip is lossless.
+@Serializable
 data class TimetableEntry(
     var id: Int,
     var lessonId: Int,
@@ -96,6 +105,8 @@ data class TimetableEntry(
 
 // ── Grades ───────────────────────────────────────────────────────────────
 
+// @Serializable for the offline grades cache — see [TimetableEntry].
+@Serializable
 data class GradeEntry(
     var id: Int,
     var text: String,
@@ -106,6 +117,7 @@ data class GradeEntry(
     var examType: String,
 )
 
+@Serializable
 data class SubjectGrades(
     var lessonId: Int,
     var subjectName: String,

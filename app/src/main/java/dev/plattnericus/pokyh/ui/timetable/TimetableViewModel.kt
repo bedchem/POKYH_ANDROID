@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
+import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.untis.MergedSlot
@@ -60,6 +61,7 @@ private val MONTH_ABBR = listOf("Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul"
 class TimetableViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
+    private val backendClient: BackendClient,
     private val widgetDataBridge: WidgetDataBridge,
 ) : ViewModel() {
 
@@ -72,6 +74,33 @@ class TimetableViewModel @Inject constructor(
     private val _detail = MutableStateFlow<MergedSlot?>(null)
     val detail: StateFlow<MergedSlot?> = _detail.asStateFlow()
 
+    /**
+     * The subject keys the POKYH backend has a header image for.
+     *
+     * Held as a set of keys rather than a set of URLs because the backend has no placeholder: a
+     * request for a subject it has never seen is an error, not a default image. Knowing which
+     * keys exist is what lets the detail sheet choose between a photo and its monogram fallback
+     * *before* it asks for anything — same contract the web frontend works to.
+     */
+    private val _subjectImageKeys = MutableStateFlow<Set<String>>(emptySet())
+    val subjectImageKeys: StateFlow<Set<String>> = _subjectImageKeys.asStateFlow()
+
+    /**
+     * The image URL for a subject, or null when the backend has none for it.
+     *
+     * Paired with [subjectImageHeaders] — the route rejects the key as a query parameter, so the
+     * URL alone will not load.
+     */
+    fun subjectImageUrl(subjectLong: String, subjectName: String): String? {
+        val key = backendClient.subjectImageKeyOf(subjectLong, subjectName)
+        if (key.isEmpty() || key !in _subjectImageKeys.value) return null
+        return backendClient.subjectImageUrl(key)
+    }
+
+    /** The headers a subject-image request has to carry. */
+    fun subjectImageHeaders(): Pair<String, String> =
+        backendClient.apiKeyHeaderName to backendClient.apiKeyHeaderValue
+
     /** Monday of the CURRENT calendar week (ISO-8601, Monday-first) — every [weekOffset] is
      * relative to this, exactly like iOS's `thisMonday`. */
     private val thisMonday: LocalDate by lazy {
@@ -83,6 +112,7 @@ class TimetableViewModel @Inject constructor(
         selectInitialDay()
         ensureWeek(0)
         prefetchAdjacent(0)
+        viewModelScope.launch { _subjectImageKeys.value = backendClient.subjectImageKeys() }
         // `timetableHomeSignal` is bumped on every Timetable-tab (re-)selection (AppState.selectTab)
         // — jump back to "today", mirroring `.onChange(of: app.timetableHomeSignal)`.
         viewModelScope.launch {
@@ -178,6 +208,7 @@ class TimetableViewModel @Inject constructor(
         try {
             val entries = untisClient.timetable(session, session.studentId, mondayOf(offset).toString())
             _pages.update { it + (offset to WeekPageState.Data(entries)) }
+            reportSubjects(entries)
             // Current week of the default account → widget stays fresh (WidgetBridge.publish).
             if (offset == 0 && appState.isDefaultAccountActive()) widgetDataBridge.publishTimetable(entries)
         } catch (e: Exception) {
@@ -189,6 +220,21 @@ class TimetableViewModel @Inject constructor(
                 val message = (e as? AppError)?.message ?: e.message ?: "Unbekannter Fehler."
                 _pages.update { it + (offset to WeekPageState.Error(message)) }
             }
+        }
+    }
+
+    /**
+     * Tells the backend which subjects this timetable contains, so it can generate images for any
+     * it doesn't have yet, then re-reads the key list in case it just gained some.
+     *
+     * Fire-and-forget, and [BackendClient.reportSubjects] itself only acts once per process — it
+     * is a hint to the server, and nothing on screen waits for it.
+     */
+    private fun reportSubjects(entries: List<TimetableEntry>) {
+        if (entries.isEmpty()) return
+        viewModelScope.launch {
+            backendClient.reportSubjects(entries.map { it.subjectName to it.subjectLong })
+            _subjectImageKeys.value = backendClient.subjectImageKeys()
         }
     }
 

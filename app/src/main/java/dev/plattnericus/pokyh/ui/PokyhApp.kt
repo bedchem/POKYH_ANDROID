@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -137,7 +138,26 @@ private fun AuthedShell(appState: AppState) {
     }
 
     val navController = rememberNavController()
+
+    /**
+     * The NavHost's start destination, fixed for the lifetime of the shell.
+     *
+     * It used to be `effectiveTab.route`, which looks harmless and is not: `NavHost` rebuilds
+     * its graph whenever `startDestination` changes and assigns it to the controller, and
+     * assigning a graph **resets the entire back stack** — every saved tab state and every
+     * NavBackStackEntry-scoped ViewModel with it. So each tab switch raced its own
+     * `navigate()` below: the freshly created ViewModel could be torn down mid-load (Mensa
+     * arriving back from Home with nothing on screen and no request in flight was this), and a
+     * pop had no stack left to animate back through.
+     *
+     * Switching tabs is the `navigate()` call's job alone. The initial value is the persisted
+     * tab, so the app still opens where it was left, with no visible transition on launch, and
+     * it is saved so a configuration change doesn't reset the graph either.
+     */
+    val startRoute = rememberSaveable { effectiveTab.route }
+
     LaunchedEffect(effectiveTab) {
+        if (navController.currentDestination?.route == effectiveTab.route) return@LaunchedEffect
         navController.navigate(effectiveTab.route) {
             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
             launchSingleTop = true
@@ -164,7 +184,7 @@ private fun AuthedShell(appState: AppState) {
     ) { innerPadding ->
         PokyhNavHost(
             navController = navController,
-            startDestination = effectiveTab.route,
+            startDestination = startRoute,
             modifier = Modifier.padding(innerPadding).fillMaxSize(),
         )
     }

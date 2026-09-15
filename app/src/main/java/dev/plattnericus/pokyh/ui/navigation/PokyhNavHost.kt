@@ -36,32 +36,48 @@ private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTabSwitch(): Boo
     return from in TAB_ROUTES && to in TAB_ROUTES
 }
 
+/**
+ * Push/pop timing.
+ *
+ * Every half of every transition runs for [PokyhMotion.durationStandard] on the same easing, and
+ * that symmetry is the whole point: the outgoing screen used to fade in
+ * [PokyhMotion.durationFast] while still sliding for the full standard duration, so on a back
+ * gesture the screen you were leaving vanished a third of the way through the movement and left
+ * a visibly empty slide — the "broken" back animation. Two halves of one gesture have to agree.
+ *
+ * The incoming screen also starts only a quarter of the way off-screen rather than fully off:
+ * at a full screen width the movement reads as a shove, which is exactly the kind of oversized
+ * motion this app avoids.
+ */
+private val NavEasing = androidx.compose.animation.core.FastOutSlowInEasing
+private fun <T> navTween() = tween<T>(PokyhMotion.durationStandard, easing = NavEasing)
+
 private val NavEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
     if (isTabSwitch()) {
-        fadeIn(tween(PokyhMotion.durationStandard))
+        fadeIn(navTween())
     } else {
-        slideInHorizontally(tween(PokyhMotion.durationStandard)) { it / 4 } + fadeIn(tween(PokyhMotion.durationStandard))
+        slideInHorizontally(navTween()) { it / 4 } + fadeIn(navTween())
     }
 }
 private val NavExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
     if (isTabSwitch()) {
-        fadeOut(tween(PokyhMotion.durationStandard))
+        fadeOut(navTween())
     } else {
-        slideOutHorizontally(tween(PokyhMotion.durationStandard)) { -it / 4 } + fadeOut(tween(PokyhMotion.durationFast))
+        slideOutHorizontally(navTween()) { -it / 4 } + fadeOut(navTween())
     }
 }
 private val NavPopEnter: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
     if (isTabSwitch()) {
-        fadeIn(tween(PokyhMotion.durationStandard))
+        fadeIn(navTween())
     } else {
-        slideInHorizontally(tween(PokyhMotion.durationStandard)) { -it / 4 } + fadeIn(tween(PokyhMotion.durationStandard))
+        slideInHorizontally(navTween()) { -it / 4 } + fadeIn(navTween())
     }
 }
 private val NavPopExit: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
     if (isTabSwitch()) {
-        fadeOut(tween(PokyhMotion.durationStandard))
+        fadeOut(navTween())
     } else {
-        slideOutHorizontally(tween(PokyhMotion.durationStandard)) { it / 4 } + fadeOut(tween(PokyhMotion.durationFast))
+        slideOutHorizontally(navTween()) { it / 4 } + fadeOut(navTween())
     }
 }
 

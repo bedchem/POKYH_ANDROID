@@ -17,6 +17,48 @@ data class MergedSlot(
     val kind: SlotKind,
 )
 
+/**
+ * Which of a lesson's three fields WebUntis reports as *changed* for this occurrence — the
+ * lesson still happens, but not as timetabled (a different room, a stand-in teacher, a swapped
+ * subject).
+ *
+ * This is a different thing from [SlotKind.REPLACEMENT], which is the harder case: a lesson
+ * cancelled outright and a *separate* lesson put in its place. Here there is one lesson, and
+ * WebUntis hands us its `original*` fields alongside the current ones. Untis Mobile highlights
+ * exactly the field that differs (the room chip on a room change), and so does the week grid.
+ */
+data class SlotChanges(
+    val subjectChanged: Boolean,
+    val teacherChanged: Boolean,
+    val roomChanged: Boolean,
+) {
+    val any: Boolean get() = subjectChanged || teacherChanged || roomChanged
+
+    companion object {
+        val none = SlotChanges(subjectChanged = false, teacherChanged = false, roomChanged = false)
+    }
+}
+
+/**
+ * [SlotChanges] for one entry.
+ *
+ * An `original*` field is only a change when it is present, non-blank AND actually different:
+ * WebUntis fills these in for plenty of entries that did not change (it echoes the current value
+ * back), and treating those as changes would light up half the week.
+ */
+fun TimetableEntry.changes(): SlotChanges {
+    fun changed(original: String?, current: String): Boolean =
+        !original.isNullOrBlank() && original.trim() != current.trim()
+    // A cancelled lesson isn't "changed" — it's gone, and the strikethrough says so. Marking it
+    // as changed as well would put a second, contradictory highlight on the same cell.
+    if (isCancelled) return SlotChanges.none
+    return SlotChanges(
+        subjectChanged = changed(originalSubject, subjectName),
+        teacherChanged = changed(originalTeacher, teacherName),
+        roomChanged = changed(originalRoom, roomName),
+    )
+}
+
 /** HHmm int → minutes since midnight (`Fmt.minutes`). */
 private fun minutesOfTime(t: Int): Int {
     val s = t.toString().padStart(4, '0')

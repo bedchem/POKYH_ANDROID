@@ -25,6 +25,7 @@ fun secret(key: String): String = (localProperties.getProperty(key) ?: System.ge
     "\"" + it.replace("\"", "\\\"") + "\""
 }
 
+fun prop(key: String): String? = localProperties.getProperty(key) ?: System.getenv(key)
 
 // Release version. Bump it for every GitHub release and tag the release "v" + this (v2.0.1) —
 // the in-app updater compares that tag against it. versionCode is derived so it can't be

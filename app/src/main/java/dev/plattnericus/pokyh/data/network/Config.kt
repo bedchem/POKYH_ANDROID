@@ -89,6 +89,10 @@ object Config {
         const val dishComments = "/dish-comments" // + /{id}
         const val classesMine = "/classes/mine"
 
+        /** Admin announcement popups live right now. The app is always signed in, hence
+         * `audience=user`; which ones are actually due is decided on-device. */
+        const val popupsActive = "/popups/active?platform=android&audience=user"
+
         fun todos(username: String): String = "/users/$username/todos"
         fun reminders(classId: String): String = "/classes/$classId/reminders"
 

@@ -180,3 +180,25 @@ fun DishDto.toDomain(baseUrl: String): Dish {
         fat = fat,
     )
 }
+
+// ── Announcement popups ─────────────────────────────────────────────────
+
+/**
+ * An admin-authored popup (`GET /popups/active`). [html] is already rendered from Markdown and
+ * sanitised by the backend. The window [startsAt]..[endsAt] is split into [showCount] slots of
+ * [slotMs]; the popup is shown at most once per slot. [slotMs] == null means "show once".
+ */
+@Serializable
+data class ApiPopup(
+    val id: String,
+    val revision: Int,
+    val title: String,
+    val html: String,
+    val showCount: Int,
+    val startsAt: String? = null,
+    val endsAt: String? = null,
+    val slotMs: Long? = null,
+)
+
+@Serializable
+data class ApiPopupsResponse(val popups: List<ApiPopup> = emptyList())

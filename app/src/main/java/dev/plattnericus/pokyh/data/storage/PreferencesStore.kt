@@ -50,6 +50,7 @@ class PreferencesStore @Inject constructor(
         val SCHEDULED_REMINDER_IDS = stringPreferencesKey("pokyh_scheduled_reminder_ids")
         val NOTIF_ASKED = booleanPreferencesKey("pokyh_notif_asked")
         val HOME_LAYOUT = stringPreferencesKey("pokyh_home_layout")
+        val POPUPS_SEEN = stringPreferencesKey("pokyh_popups_seen")
 
         const val KEY_PREFIX = "pokyh_"
     }
@@ -195,6 +196,18 @@ class PreferencesStore @Inject constructor(
         context.dataStore.edit { it[HOME_LAYOUT] = json.encodeToString(HomeLayout.serializer(), layout) }
     }
 
+    // ── Gesehene Admin-Popups ("id:revision" → letzter Slot + Anzahl) ─────────
+    // Gerätelokal, wie auf der Website (localStorage). Eine neue Revision ("allen erneut
+    // anzeigen" im Admin) ergibt einen neuen Schlüssel und damit ein ungesehenes Popup.
+
+    val popupsSeen: Flow<Map<String, PopupSeenEntry>> = context.dataStore.data.map { prefs ->
+        prefs[POPUPS_SEEN]?.let { decodeOrNull(it, MapStringPopupSeenSerializer) } ?: emptyMap()
+    }
+
+    suspend fun setPopupsSeen(seen: Map<String, PopupSeenEntry>) {
+        context.dataStore.edit { it[POPUPS_SEEN] = json.encodeToString(MapStringPopupSeenSerializer, seen) }
+    }
+
     // ── Benachrichtigungs-Berechtigung bereits angefragt? ──────────────────
 
     val notifAsked: Flow<Boolean> = context.dataStore.data.map { it[NOTIF_ASKED] ?: false }
@@ -224,6 +237,11 @@ class PreferencesStore @Inject constructor(
 
 private val SavedAccountsSerializer = ListSerializer(SavedAccount.serializer())
 private val MapStringDoubleSerializer = MapSerializer(serializer<String>(), serializer<Double>())
+
+@kotlinx.serialization.Serializable
+data class PopupSeenEntry(val slot: Int, val count: Int, val at: Long)
+
+private val MapStringPopupSeenSerializer = MapSerializer(serializer<String>(), PopupSeenEntry.serializer())
 private val SetIntSerializer = SetSerializer(serializer<Int>())
 private val SetStringSerializer = SetSerializer(serializer<String>())
 

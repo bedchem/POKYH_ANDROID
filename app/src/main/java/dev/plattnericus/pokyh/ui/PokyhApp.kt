@@ -119,6 +119,12 @@ fun PokyhApp(appState: AppState) {
             SuccessFlash()
         }
 
+        // Admin announcement popups (backend /popups/active). Held back while the sign-in
+        // check is on screen so the two never stack.
+        if (phase == AppState.Phase.Authed && !showSuccessFlash) {
+            dev.plattnericus.pokyh.ui.popups.AnnouncementPopupHost()
+        }
+
         // ProfileScreen's "Konto hinzufügen" row (ProfileViewModel.addAccount -> AppState.
         // addAccount) only flips `AppState.showAddAccount` — LockScreen hosts its own copy of
         // this sheet for the Lock phase, so this one only needs to cover Authed.

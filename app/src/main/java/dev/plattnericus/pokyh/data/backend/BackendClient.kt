@@ -5,6 +5,8 @@ import dev.plattnericus.pokyh.core.util.TtlCache
 import dev.plattnericus.pokyh.data.model.ApiClass
 import dev.plattnericus.pokyh.data.model.ApiComment
 import dev.plattnericus.pokyh.data.model.ApiErrorBody
+import dev.plattnericus.pokyh.data.model.ApiPopup
+import dev.plattnericus.pokyh.data.model.ApiPopupsResponse
 import dev.plattnericus.pokyh.data.model.ApiReminder
 import dev.plattnericus.pokyh.data.model.ApiTodo
 import dev.plattnericus.pokyh.data.model.ApiUser
@@ -571,6 +573,11 @@ class BackendClient @Inject constructor(
         ratingsCache.set(dishId, data)
         _ratingUpdates.update { it + (dishId to data) }
     }
+
+    // ── Popups (Admin-Mitteilungen) ─────────────────────────────────────────
+
+    suspend fun activePopups(): List<ApiPopup> =
+        decode<ApiPopupsResponse>(request(Config.Routes.popupsActive)).popups
 
     // ── Authentifizierte Requests ───────────────────────────────────────────
 

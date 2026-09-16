@@ -162,7 +162,7 @@ private fun ButtonShell(
         } else if (icon != null) {
             Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(18.dp))
         }
-        Text(text, style = if (compact) PokyhType.headline else PokyhType.button, color = contentColor)
+        PokyhFittedText(text, style = if (compact) PokyhType.headline else PokyhType.button, color = contentColor, maxLines = 1)
     }
 }
 
@@ -200,7 +200,7 @@ fun PokyhTextButton(
                 modifier = Modifier.size(16.dp),
             )
         }
-        Text(text, style = PokyhType.headline, color = if (enabled) color else PokyhTheme.colors.textTertiary)
+        PokyhFittedText(text, style = PokyhType.headline, color = if (enabled) color else PokyhTheme.colors.textTertiary, maxLines = 2)
     }
 }
 

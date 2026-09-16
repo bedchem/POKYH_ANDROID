@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
+import dev.plattnericus.pokyh.ui.components.PokyhFittedText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -146,7 +146,7 @@ private fun PokyhBottomNavItem(
             )
         }
         Spacer(Modifier.size(PokyhSpacing.xs))
-        Text(
+        PokyhFittedText(
             text = item.label,
             style = PokyhType.navLabel,
             color = contentColor,

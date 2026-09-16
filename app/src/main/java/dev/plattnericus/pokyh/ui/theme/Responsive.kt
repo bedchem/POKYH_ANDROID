@@ -4,9 +4,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -55,3 +58,46 @@ fun Modifier.centeredForm(maxWidth: Dp = 480.dp): Modifier =
  */
 @Composable
 fun Modifier.appBackground(): Modifier = this.readableContent()
+
+/**
+ * The narrowest layout width the screens are designed for. Every tile, row and chip is laid out
+ * to fit at this width with the default font size.
+ */
+private const val DesignMinWidthDp = 380f
+
+/** Above this system font scale text stops getting bigger inside the app — see [ProvideResponsiveDensity]. */
+private const val MaxFontScale = 1.3f
+
+/** The furthest the app shrinks. Past this touch targets and text get too small, and the
+ * component-level fixes (fitted text, rows that stack their trailing label) take over. */
+private const val MinScale = 0.85f
+
+/**
+ * Makes the whole app fit narrow phones, large "Display size" settings and big system fonts.
+ *
+ * **Why the app scales instead of every screen re-flowing.** On a phone whose effective width is
+ * below [DesignMinWidthDp] — a small phone, or a normal one with display size turned up — every
+ * two-up tile, every row with a label on the right and every stat card loses the room its German
+ * compounds need, and Android's line breaker then cuts them mid-word ("Abwesenheit / en",
+ * "Erscheinungsbil / d"). Shrinking dp for that phone makes the app lay out exactly as it does on
+ * the design width, just physically a little smaller, which is what the system's own display
+ * size slider does anyway.
+ *
+ * Both factors count, because both eat the same room: the width that matters for text is the
+ * screen width *divided by* the font scale. The font scale is also capped at [MaxFontScale] —
+ * past that, labels in fixed-width places cannot fit whatever the layout does.
+ */
+@Composable
+fun ProvideResponsiveDensity(content: @Composable () -> Unit) {
+    val base = LocalDensity.current
+    val widthDp = LocalConfiguration.current.screenWidthDp.toFloat()
+    val fontScale = base.fontScale.coerceAtMost(MaxFontScale)
+    // Only ever shrinks: a wide phone at default font size keeps its dp exactly as is.
+    val textAwareWidth = widthDp / fontScale.coerceAtLeast(1f)
+    val scale = if (widthDp <= 0f) 1f else (textAwareWidth / DesignMinWidthDp).coerceIn(MinScale, 1f)
+    val density = Density(base.density * scale, fontScale)
+    CompositionLocalProvider(
+        LocalDensity provides density,
+        content = content,
+    )
+}

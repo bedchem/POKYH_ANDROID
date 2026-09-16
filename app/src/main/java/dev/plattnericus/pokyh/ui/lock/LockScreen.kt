@@ -94,27 +94,47 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
     var appeared by rememberSaveable { mutableStateOf(false) }
     var failures by rememberSaveable { mutableIntStateOf(0) }
     var showAddAccountSheet by rememberSaveable { mutableStateOf(false) }
+    // What actually went wrong, in words. The old screen had one message for everything —
+    // "Biometrie fehlgeschlagen" — so a fingerprint or PIN that was accepted, followed by a
+    // WebUntis login that failed, told the user their finger was wrong.
+    var problem by rememberSaveable { mutableStateOf<String?>(null) }
+    // One prompt at a time: opening a second one cancels the first, and that cancel used to be
+    // counted as a failed attempt.
+    var promptOpen by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val activity = LocalContext.current.findFragmentActivity()
     val biometricAuthenticator = remember(activity) { activity?.let { BiometricAuthenticator(it) } }
     val biometricAvailable = viewModel.biometricAvailable && biometricAuthenticator != null
-    val showFallback = failures >= 3
+    val showFallback = problem != null || failures >= 3
 
     fun attemptUnlock(username: String? = null) {
         val authenticator = biometricAuthenticator
         if (authenticator != null && biometricAvailable) {
+            if (promptOpen || busy) return
+            promptOpen = true
             authenticator.authenticate(
                 title = "Entsperren",
-                subtitle = "Mit Biometrie anmelden",
+                subtitle = "Mit Biometrie oder Geräte-PIN anmelden",
                 onSuccess = {
+                    promptOpen = false
+                    problem = null
                     scope.launch {
                         val ok = viewModel.unlock(username)
-                        if (!ok) failures++
+                        // The identity check passed — anything failing now is the login, and the
+                        // message says so instead of blaming the fingerprint.
+                        if (!ok && !viewModel.showAddAccount.value) {
+                            problem = viewModel.error.value ?: "Anmeldung fehlgeschlagen. Bitte erneut versuchen."
+                        }
                     }
                 },
-                onError = { _ -> failures++ },
+                onError = { message ->
+                    promptOpen = false
+                    failures++
+                    problem = message.ifBlank { "Biometrie nicht verfügbar." }
+                },
                 onFailed = {},
+                onCancel = { promptOpen = false },
             )
         } else {
             // **No usable biometric is a dead end, not a failed attempt.** Counting a failure and
@@ -145,7 +165,8 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
 
     val statusText = when {
         busy -> statusTextRaw.ifEmpty { "Anmelden…" }
-        showFallback -> "Biometrie fehlgeschlagen.\nWähle ein Konto oder melde dich mit Passwort an."
+        problem != null -> problem + "\nWähle ein Konto oder melde dich mit Passwort an."
+        showFallback -> "Entsperren nicht möglich.\nWähle ein Konto oder melde dich mit Passwort an."
         else -> "Mit Biometrie entsperren"
     }
 

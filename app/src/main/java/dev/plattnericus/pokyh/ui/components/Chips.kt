@@ -58,6 +58,8 @@ fun TagChip(
             text = text,
             style = if (large) PokyhType.caption else PokyhType.badgeChip,
             color = color,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
@@ -80,7 +82,7 @@ fun MiniBadge(
         if (icon != null) {
             Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(9.dp))
         }
-        Text(text, style = PokyhType.badgeChip, color = color)
+        Text(text, style = PokyhType.badgeChip, color = color, maxLines = 1, softWrap = false)
     }
 }
 
@@ -147,6 +149,6 @@ fun StatusLabel(
         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
     ) {
         Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(13.dp))
-        Text(text, style = PokyhType.caption, color = color)
+        Text(text, style = PokyhType.caption, color = color, maxLines = 1, softWrap = false)
     }
 }

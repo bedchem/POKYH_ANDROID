@@ -89,10 +89,12 @@ fun <T> PokyhSegmentedControl(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
+                PokyhFittedText(
                     text = label(option),
                     style = if (isSelected) PokyhType.footnote.semibold() else PokyhType.footnote,
                     color = labelColor,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = PokyhSpacing.xs),
                 )
             }
         }

@@ -197,7 +197,17 @@ class AppState @Inject constructor(
         }
         // Back online while signed in on the stored session → sign in for real in the background,
         // so the POKYH token (and with it the outbox) comes back without the user doing anything.
-        scope.launch { networkMonitor.online.collect { online -> if (online) retryOfflineLogin() } }
+        scope.launch {
+            var wasOnline = networkMonitor.online.value
+            networkMonitor.online.collect { online ->
+                // Requests that failed while the phone had no network say nothing about the
+                // servers. Without this the banner kept claiming "WebUntis antwortet nicht" after
+                // the connection came back, until some screen happened to load again.
+                if (online && !wasOnline) serviceHealth.forgetOutages()
+                wasOnline = online
+                if (online) retryOfflineLogin()
+            }
+        }
     }
 
     // ── Login ─────────────────────────────────────────────────────────────────
@@ -261,7 +271,9 @@ class AppState @Inject constructor(
         _statusText.value = "Verbinde mit WebUntis…"
 
         val snap: UserSession? = if (allowOffline) diskCache.read(sessionKey(username), UserSession.serializer())?.takeIf { it.studentId > 0 } else null
-        val loginDeferred = backgroundScope.async { buildSession(username, password) }
+        val startedAt = System.currentTimeMillis()
+        val untisAnswered = java.util.concurrent.atomic.AtomicBoolean(false)
+        val loginDeferred = backgroundScope.async { buildSession(username, password, untisAnswered) }
 
         if (snap == null) {
             // No offline candidate → just wait for the real answer, however long it takes.
@@ -283,11 +295,19 @@ class AppState @Inject constructor(
             return
         }
 
+        // **WebUntis answering means the connection is fine**, so a slow POKYH backend (a cold
+        // server, a long token exchange) gets extra time instead of dropping a working phone into
+        // offline mode — that is how "Offline angemeldet" used to appear on good Wi-Fi.
         val raced = withTimeoutOrNull(OFFLINE_TIMEOUT_MS) { runCatching { loginDeferred.await() } }
+            ?: if (untisAnswered.get()) {
+                withTimeoutOrNull(BACKEND_GRACE_MS) { runCatching { loginDeferred.await() } }
+            } else {
+                null
+            }
         if (raced == null) {
             // Timed out → offline snapshot now; the real login keeps running in [backgroundScope]
             // and silently upgrades the session if/when it eventually succeeds.
-            enterOffline(snap, viaSheet)
+            enterOffline(snap, viaSheet, startedAt)
             offlineLogin = OfflineLogin(snap.username, password, save)
             reconnectJob = backgroundScope.launch {
                 runCatching { loginDeferred.await() }.getOrNull()?.let { upgradeFromBackground(it, save, password) }
@@ -299,7 +319,7 @@ class AppState @Inject constructor(
             onFailure = { e ->
                 // Fast network failure (e.g. airplane mode) + cache → also go offline.
                 if (e.isNetworkError()) {
-                    enterOffline(snap, viaSheet)
+                    enterOffline(snap, viaSheet, startedAt)
                     offlineLogin = OfflineLogin(snap.username, password, save)
                 } else {
                     _error.value = errorMessage(e)
@@ -311,11 +331,16 @@ class AppState @Inject constructor(
     }
 
     /** WebUntis login → POKYH-only backend fallback → POKYH backend account. Sets [backendStatus]. */
-    private suspend fun buildSession(username: String, password: String): UserSession {
+    private suspend fun buildSession(
+        username: String,
+        password: String,
+        untisAnswered: java.util.concurrent.atomic.AtomicBoolean? = null,
+    ): UserSession {
         var s: UserSession
         var backendOnly = false
         try {
             s = untisClient.login(username, password)
+            untisAnswered?.set(true)
         } catch (untisError: Throwable) {
             // No (working) WebUntis account → try a direct POKYH-backend login with the same
             // credentials (the backend also knows pure-POKYH accounts).
@@ -455,7 +480,7 @@ class AppState @Inject constructor(
     }
 
     /** Switch into offline mode: show the cached (token-less) session. */
-    private fun enterOffline(snap: UserSession, viaSheet: Boolean) {
+    private fun enterOffline(snap: UserSession, viaSheet: Boolean, loginStartedAt: Long) {
         _busy.value = false
         _statusText.value = ""
         if (viaSheet) _showAddAccount.value = false
@@ -469,7 +494,7 @@ class AppState @Inject constructor(
         // ran past the offline timeout. Say so straight away instead of waiting for the
         // interceptor's second strike, which offline may never arrive: the banner explaining why
         // this session is cached has to be on screen from the moment the session is.
-        serviceHealth.markDown(PokyhService.UNTIS, "Anmeldung nicht möglich")
+        serviceHealth.markDown(PokyhService.UNTIS, "Anmeldung nicht möglich", unlessOkSince = loginStartedAt)
         scope.launch { prefsStore.setLastActive(snap.username) }
     }
 
@@ -511,6 +536,9 @@ class AppState @Inject constructor(
         if (s.hasUntis) diskCache.write(sessionKey(s.username), offlineSnapshot(s), UserSession.serializer())
         _session.value = s
         _isOffline.value = false
+        // The login that just succeeded went through WebUntis; clear the "Anmeldung nicht
+        // möglich" mark from going offline instead of waiting for the next screen to load.
+        if (s.hasUntis) serviceHealth.reportOk(PokyhService.UNTIS)
         onAuthenticated()
     }
 
@@ -773,6 +801,9 @@ class AppState @Inject constructor(
     private companion object {
         /** Time without a login answer before falling back to the offline snapshot. */
         const val OFFLINE_TIMEOUT_MS = 5_000L
+
+        /** Extra wait once WebUntis has answered but the POKYH backend has not yet. */
+        const val BACKEND_GRACE_MS = 15_000L
 
         /** Time spent backgrounded before auto-locking — 10 minutes, same as iOS. */
         const val AUTO_LOCK_INTERVAL_MS = 600_000L

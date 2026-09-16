@@ -34,6 +34,9 @@ class LockViewModel @Inject constructor(
 
     val busy: StateFlow<Boolean> = appState.busy
     val statusText: StateFlow<String> = appState.statusText
+
+    /** Why the last login failed — shown after a successful fingerprint/PIN whose login did not. */
+    val error: StateFlow<String?> = appState.error
     val accounts: StateFlow<List<SavedAccount>> = appState.accounts
 
     /** LockView.swift's automatic `app.showAddAccount` trigger from [AppState.unlockWithBiometrics]'s

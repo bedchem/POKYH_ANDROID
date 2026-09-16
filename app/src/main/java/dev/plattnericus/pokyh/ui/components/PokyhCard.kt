@@ -25,7 +25,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.plattnericus.pokyh.ui.theme.DecorativeTone
@@ -268,26 +270,31 @@ fun PokyhRow(
         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
     ) {
         if (leading != null) leading()
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
-            Text(
-                text = title,
-                style = PokyhType.body,
-                color = titleColor,
-                textDecoration = titleDecoration,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = PokyhType.footnote,
-                    color = PokyhTheme.colors.textSecondary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        if (trailing != null) trailing()
+        TitleWithTrailing(
+            modifier = Modifier.weight(1f),
+            title = {
+                Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
+                    Text(
+                        text = title,
+                        style = PokyhType.body,
+                        color = titleColor,
+                        textDecoration = titleDecoration,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (subtitle != null) {
+                        Text(
+                            text = subtitle,
+                            style = PokyhType.footnote,
+                            color = PokyhTheme.colors.textSecondary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            },
+            trailing = trailing,
+        )
         if (showChevron) {
             Icon(
                 imageVector = PokyhIcons.chevronRight,
@@ -295,6 +302,66 @@ fun PokyhRow(
                 tint = PokyhTheme.colors.textTertiary,
                 modifier = Modifier.size(18.dp),
             )
+        }
+    }
+}
+
+/**
+ * A row's text and its trailing value, side by side when they fit and stacked when they don't.
+ *
+ * In a plain [Row] the trailing slot is measured first and the title gets whatever is left — on a
+ * narrow phone or with a large font that left "Erscheinungsbild" next to "System" too little room
+ * for its one word, and the line breaker split it ("Erscheinungsbil / d"). "Fits" here is the
+ * title's longest word, not its whole length: a long title may still wrap between words beside
+ * its value, but once a single word would have to break, the value moves under the title instead.
+ */
+@Composable
+private fun TitleWithTrailing(
+    title: @Composable () -> Unit,
+    trailing: @Composable (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Layout(
+        contents = listOf(title, trailing ?: {}),
+        modifier = modifier,
+    ) { (titleMeasurables, trailingMeasurables), constraints ->
+        val titleMeasurable = titleMeasurables.first()
+        val trailingMeasurable = trailingMeasurables.firstOrNull()
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else null
+        val loose = Constraints(maxWidth = width ?: Constraints.Infinity)
+
+        if (trailingMeasurable == null) {
+            val t = titleMeasurable.measure(loose)
+            val w = width ?: t.width
+            return@Layout layout(w, maxOf(t.height, constraints.minHeight)) {
+                t.placeRelative(0, (maxOf(t.height, constraints.minHeight) - t.height) / 2)
+            }
+        }
+
+        val gap = PokyhSpacing.iconText.roundToPx()
+        val trailingWidth = trailingMeasurable.maxIntrinsicWidth(Constraints.Infinity)
+        val titleMinWidth = titleMeasurable.minIntrinsicWidth(Constraints.Infinity)
+        val sideBySide = width == null || titleMinWidth + gap + trailingWidth <= width
+
+        if (sideBySide) {
+            val tr = trailingMeasurable.measure(loose)
+            val titleMax = width?.let { (it - tr.width - gap).coerceAtLeast(0) } ?: Constraints.Infinity
+            val t = titleMeasurable.measure(Constraints(maxWidth = titleMax))
+            val w = width ?: (t.width + gap + tr.width)
+            val h = maxOf(t.height, tr.height, constraints.minHeight)
+            layout(w, h) {
+                t.placeRelative(0, (h - t.height) / 2)
+                tr.placeRelative(w - tr.width, (h - tr.height) / 2)
+            }
+        } else {
+            val t = titleMeasurable.measure(loose)
+            val tr = trailingMeasurable.measure(loose)
+            val spacing = PokyhSpacing.xs.roundToPx()
+            val h = maxOf(t.height + spacing + tr.height, constraints.minHeight)
+            layout(width, h) {
+                t.placeRelative(0, 0)
+                tr.placeRelative(0, t.height + spacing)
+            }
         }
     }
 }

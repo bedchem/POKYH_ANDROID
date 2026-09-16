@@ -48,6 +48,9 @@ class BiometricAuthenticator(private val activity: FragmentActivity) {
         onSuccess: () -> Unit,
         onError: (String) -> Unit,
         onFailed: () -> Unit,
+        /** The prompt went away without a verdict — dismissed, timed out, or cancelled by the
+         * system (app backgrounded, a second prompt replacing the first). Not a wrong finger. */
+        onCancel: () -> Unit = {},
     ) {
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
@@ -66,7 +69,14 @@ class BiometricAuthenticator(private val activity: FragmentActivity) {
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                onError(errString.toString())
+                when (errorCode) {
+                    BiometricPrompt.ERROR_USER_CANCELED,
+                    BiometricPrompt.ERROR_NEGATIVE_BUTTON,
+                    BiometricPrompt.ERROR_CANCELED,
+                    BiometricPrompt.ERROR_TIMEOUT,
+                    -> onCancel()
+                    else -> onError(errString.toString())
+                }
             }
 
             override fun onAuthenticationFailed() {

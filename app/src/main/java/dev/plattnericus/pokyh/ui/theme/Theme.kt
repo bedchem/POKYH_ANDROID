@@ -129,8 +129,9 @@ fun PokyhAppTheme(themeMode: PokyhThemeMode, content: @Composable () -> Unit) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = PokyhMaterialTypography,
-            content = content,
-        )
+        ) {
+            ProvideResponsiveDensity(content)
+        }
     }
 }
 

@@ -22,10 +22,16 @@ import javax.inject.Singleton
  * you right now* — a 500 or a 503 qualifies even though the socket opened, while a 401 or a 404
  * is the server working correctly and saying no, and flagging those would light the banner every
  * time a session expires or a subject has no image.
+ *
+ * **A cancelled call is not an observation at all.** Leaving a screen, pulling to refresh twice or
+ * closing a live-update stream cancels its requests, and OkHttp reports that as an IOException
+ * ("Canceled"). Counting those made two quick screen changes enough to declare WebUntis down on a
+ * perfectly good connection.
  */
 @Singleton
 class ServiceHealthInterceptor @Inject constructor(
     private val health: ServiceHealth,
+    private val network: NetworkMonitor,
 ) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -33,6 +39,8 @@ class ServiceHealthInterceptor @Inject constructor(
             ?: return chain.proceed(chain.request())
         try {
             val response = chain.proceed(chain.request())
+            // Any HTTP answer, even an error page, means the phone itself is online.
+            network.reportReachable()
             if (response.code >= 500) {
                 health.reportDown(service, "Server antwortet mit Fehler ${response.code}")
             } else {
@@ -40,7 +48,7 @@ class ServiceHealthInterceptor @Inject constructor(
             }
             return response
         } catch (e: IOException) {
-            health.reportDown(service, describe(e))
+            if (!chain.call().isCanceled()) health.reportDown(service, describe(e))
             throw e
         }
     }

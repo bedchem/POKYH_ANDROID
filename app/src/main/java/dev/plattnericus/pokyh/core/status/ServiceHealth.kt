@@ -77,10 +77,21 @@ class ServiceHealth @Inject constructor() {
      * which, offline, may never be sent — is how the user ends up in offline mode with nothing
      * on screen saying so.
      */
-    fun markDown(service: PokyhService, message: String?) {
+    fun markDown(service: PokyhService, message: String?, unlessOkSince: Long = Long.MAX_VALUE) {
         _states.update { current ->
             val previous = current[service] ?: ServiceState()
+            // It answered after the moment the caller is asking about — the outage being reported
+            // is already disproven, and marking it down would leave a stale banner up.
+            if (previous.reachable == true && previous.lastOkAt >= unlessOkSince) return@update current
             current + (service to previous.copy(reachable = false, message = message))
+        }
+    }
+
+    /** Back to "unknown" for every service currently marked down; the next request decides. */
+    fun forgetOutages() {
+        synchronized(failures) { failures.clear() }
+        _states.update { current ->
+            current.mapValues { (_, state) -> if (state.reachable == false) state.copy(reachable = null, message = null) else state }
         }
     }
 

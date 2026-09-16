@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -51,6 +52,7 @@ class PreferencesStore @Inject constructor(
         val NOTIF_ASKED = booleanPreferencesKey("pokyh_notif_asked")
         val HOME_LAYOUT = stringPreferencesKey("pokyh_home_layout")
         val POPUPS_SEEN = stringPreferencesKey("pokyh_popups_seen")
+        val UPDATE_SNOOZED_UNTIL = longPreferencesKey("pokyh_update_snoozed_until")
 
         const val KEY_PREFIX = "pokyh_"
     }
@@ -206,6 +208,14 @@ class PreferencesStore @Inject constructor(
 
     suspend fun setPopupsSeen(seen: Map<String, PopupSeenEntry>) {
         context.dataStore.edit { it[POPUPS_SEEN] = json.encodeToString(MapStringPopupSeenSerializer, seen) }
+    }
+
+    // ── Update-Hinweis "Morgen" (Epoch-ms, bis wann nicht automatisch gefragt wird) ──
+
+    val updateSnoozedUntil: Flow<Long> = context.dataStore.data.map { it[UPDATE_SNOOZED_UNTIL] ?: 0L }
+
+    suspend fun setUpdateSnoozedUntil(epochMillis: Long) {
+        context.dataStore.edit { it[UPDATE_SNOOZED_UNTIL] = epochMillis }
     }
 
     // ── Benachrichtigungs-Berechtigung bereits angefragt? ──────────────────

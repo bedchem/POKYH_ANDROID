@@ -3,4 +3,6 @@
     <!-- Shared via FileProvider: exported .ics timetable files and share-sheet targets. -->
     <cache-path name="shared_cache" path="shared/" />
     <files-path name="shared_files" path="shared/" />
+    <!-- Downloaded update APKs, handed to the system installer (core/update/AppUpdater). -->
+    <cache-path name="updates" path="updates/" />
 </paths>

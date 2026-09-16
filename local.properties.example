@@ -5,3 +5,10 @@ sdk.dir=/path/to/Android/Sdk
 ## Ask a project maintainer, or read them from pokyh-backend/.env if you have it.
 POKYH_API_KEY=
 POKYH_SERVER_KEY=
+
+## Release signing (optional). Defaults to ~/.android/debug.keystore with the standard debug
+## passwords — the key every published POKYH APK is signed with. Keep a backup of it.
+# POKYH_KEYSTORE_PATH=
+# POKYH_KEYSTORE_PASSWORD=
+# POKYH_KEY_ALIAS=
+# POKYH_KEY_PASSWORD=

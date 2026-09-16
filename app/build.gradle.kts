@@ -25,36 +25,58 @@ fun secret(key: String): String = (localProperties.getProperty(key) ?: System.ge
     "\"" + it.replace("\"", "\\\"") + "\""
 }
 
+
+// Release version. Bump it for every GitHub release and tag the release "v" + this (v2.0.1) —
+// the in-app updater compares that tag against it. versionCode is derived so it can't be
+// forgotten (2.0.1 -> 20001); it has to stay above the Flutter app's versionCode 1.
+val appVersionName = "2.0.0"
+val appVersionCode = appVersionName.split(".").map { it.toInt() }.let { (major, minor, patch) ->
+    major * 10_000 + minor * 100 + patch
+}
+
 android {
     namespace = "dev.plattnericus.pokyh"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "dev.plattnericus.pokyh"
+        // The Flutter app's ID rather than the namespace: this app installs as an update over
+        // the old one instead of next to it. Changing it would split users into a second app.
+        applicationId = "dev.plattnericus.project"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         buildConfigField("String", "BACKEND_API_KEY", secret("POKYH_API_KEY"))
         buildConfigField("String", "BACKEND_SERVER_KEY", secret("POKYH_SERVER_KEY"))
         buildConfigField("String", "BACKEND_BASE_URL", "\"https://api.pokyh.com\"")
         buildConfigField("String", "UNTIS_BASE_URL", "\"https://lbs-brixen.webuntis.com/WebUntis\"")
         buildConfigField("String", "UNTIS_SCHOOL", "\"lbs-brixen\"")
+        // GitHub repo whose latest release the in-app updater checks (core/update/AppUpdater).
+        buildConfigField("String", "UPDATE_REPO", "\"bedchem/POKYH_ANDROID\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
 
     signingConfigs {
-        // Debug builds use the auto-generated debug keystore (fine for the emulator).
-        // A dedicated release keystore is created separately before any Play Store upload.
+        // Android only installs an update signed with the same key as the installed app. The
+        // Flutter app's releases were signed with the maintainer's ~/.android/debug.keystore, so
+        // that key stays the release key — lose it and nobody can ever update again. Override
+        // with POKYH_KEYSTORE_* in local.properties if it moves.
+        create("release") {
+            storeFile = file(prop("POKYH_KEYSTORE_PATH") ?: "${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = prop("POKYH_KEYSTORE_PASSWORD") ?: "android"
+            keyAlias = prop("POKYH_KEY_ALIAS") ?: "androiddebugkey"
+            keyPassword = prop("POKYH_KEY_PASSWORD") ?: "android"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {

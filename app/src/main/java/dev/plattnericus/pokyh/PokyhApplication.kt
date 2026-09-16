@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import dagger.hilt.android.HiltAndroidApp
 import dev.plattnericus.pokyh.core.notifications.NotificationSyncWorker
 import dev.plattnericus.pokyh.core.notifications.PokyhNotifications
+import dev.plattnericus.pokyh.core.update.LegacyFlutterCleanup
 import dev.plattnericus.pokyh.data.sync.Outbox
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -37,6 +38,8 @@ class PokyhApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // Leftovers of the Flutter app this version replaced (off the main thread: file I/O).
+        Thread { LegacyFlutterCleanup.runIfNeeded(this) }.start()
         pokyhNotifications.ensureChannel()
         // Queued Todos/Erinnerungen go out as soon as there is a connection — app-wide, not per screen.
         outbox.start()

@@ -23,10 +23,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.rememberNavController
+import dev.plattnericus.pokyh.core.update.AppUpdater
 import dev.plattnericus.pokyh.state.AppState
+import dev.plattnericus.pokyh.ui.update.UpdateDialogHost
+import dev.plattnericus.pokyh.ui.update.UpdateViewModel
 import dev.plattnericus.pokyh.ui.navigation.AppTab
 import dev.plattnericus.pokyh.ui.components.AnimatedCheck
 import dev.plattnericus.pokyh.ui.components.BrandSpinner
@@ -119,9 +123,15 @@ fun PokyhApp(appState: AppState) {
             SuccessFlash()
         }
 
+        // Update prompt from GitHub releases — in every phase, since an outdated app that can't
+        // sign in is exactly when it matters.
+        val updateViewModel: UpdateViewModel = hiltViewModel()
+        val updateState by updateViewModel.updater.state.collectAsStateWithLifecycle()
+        UpdateDialogHost(updateViewModel)
+
         // Admin announcement popups (backend /popups/active). Held back while the sign-in
-        // check is on screen so the two never stack.
-        if (phase == AppState.Phase.Authed && !showSuccessFlash) {
+        // check or the update prompt is on screen so they never stack.
+        if (phase == AppState.Phase.Authed && !showSuccessFlash && updateState == AppUpdater.State.Idle) {
             dev.plattnericus.pokyh.ui.popups.AnnouncementPopupHost()
         }
 

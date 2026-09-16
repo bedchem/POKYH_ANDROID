@@ -46,6 +46,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.BuildConfig
+import dev.plattnericus.pokyh.core.update.AppUpdater
 import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.data.model.UserSession
@@ -113,7 +114,11 @@ fun ProfileScreen(
     val clearing by viewModel.clearing.collectAsStateWithLifecycle()
     val cacheSize by viewModel.cacheSize.collectAsStateWithLifecycle()
     val cacheCleared by viewModel.cacheCleared.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { viewModel.refreshCacheSize() }
+    val updateCheck by viewModel.updateCheck.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) {
+        viewModel.refreshCacheSize()
+        viewModel.clearUpdateCheckResult()
+    }
 
     var confirmLogout by remember { mutableStateOf(false) }
     var confirmClearData by remember { mutableStateOf(false) }
@@ -238,6 +243,28 @@ fun ProfileScreen(
                             leading = { RowGlyph(PokyhIcons.messages) },
                             onClick = {
                                 context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$SUPPORT_EMAIL")))
+                            },
+                        )
+                        PokyhRowSeparator()
+                        PokyhRow(
+                            title = "Nach Updates suchen",
+                            leading = { RowGlyph(PokyhIcons.download) },
+                            onClick = viewModel::checkForUpdates,
+                            enabled = updateCheck != AppUpdater.ManualCheck.Checking,
+                            showChevron = false,
+                            trailing = {
+                                when (updateCheck) {
+                                    AppUpdater.ManualCheck.Checking -> CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Brand.accent,
+                                    )
+                                    AppUpdater.ManualCheck.UpToDate ->
+                                        StatusLabel(text = "Aktuell", color = Brand.success, icon = PokyhIcons.ok)
+                                    AppUpdater.ManualCheck.Failed ->
+                                        StatusLabel(text = "Fehlgeschlagen", color = Brand.warning, icon = PokyhIcons.warningBadge)
+                                    AppUpdater.ManualCheck.Idle -> Unit
+                                }
                             },
                         )
                         PokyhRowSeparator()

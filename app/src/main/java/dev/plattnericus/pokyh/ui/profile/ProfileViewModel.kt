@@ -4,6 +4,7 @@ import android.content.Context
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.plattnericus.pokyh.BuildConfig
+import dev.plattnericus.pokyh.core.update.AppUpdater
 import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.SavedAccount
@@ -47,8 +48,16 @@ class ProfileViewModel @Inject constructor(
     private val secureCredentialStore: SecureCredentialStore,
     private val prefsStore: PreferencesStore,
     private val outbox: Outbox,
+    private val appUpdater: AppUpdater,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
+
+    val updateCheck: StateFlow<AppUpdater.ManualCheck> = appUpdater.manualCheck
+
+    /** "Nach Updates suchen" — a found update opens the app-wide update dialog. */
+    fun checkForUpdates() = appUpdater.checkNow()
+
+    fun clearUpdateCheckResult() = appUpdater.clearManualCheckResult()
 
     val session: StateFlow<UserSession?> = appState.session
     val backendStatus: StateFlow<BackendStatus> = appState.backendStatus

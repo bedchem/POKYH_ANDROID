@@ -191,4 +191,40 @@ object PokyhIcons {
     val decorCelebrate = Ph.Confetti
     val decorMood = Ph.Smiley
     val decorBackpack = Ph.Backpack
+
+    // ── Lesson marks ─────────────────────────────────────────────────────────
+    // What WebUntis's per-period `icons` array can say. See [lessonMarkIcon].
+
+    val markHomework = Ph.Backpack
+    val markNote = Ph.FileText
+    val markExam = Ph.ClipboardText
+    val markAttachment = Ph.Paperclip
+    val markSubstitution = Ph.ArrowsLeftRight
+    val markOnline = Ph.Lightning
+    val markClassRegister = Ph.BookBookmark
+    val markUnknown = Ph.Info
+}
+
+/**
+ * One of WebUntis's period icon names → the glyph the grid draws for it.
+ *
+ * **Matched loosely and never dropped.** Servers spell these differently across versions
+ * (`HOMEWORK`, `HOMEWORK_DUE`, `homeworkGiven`), and the set grows; matching on a substring of
+ * the upper-cased name covers the variants, and anything still unrecognised falls through to
+ * [PokyhIcons.markUnknown] rather than vanishing. A mark the user can ask about beats a lesson
+ * that quietly hides the fact that something is attached to it.
+ */
+fun lessonMarkIcon(untisIconName: String): ImageVector {
+    val name = untisIconName.uppercase()
+    fun has(vararg keys: String) = keys.any { it in name }
+    return when {
+        has("HOMEWORK") -> PokyhIcons.markHomework
+        has("EXAM", "TEST") -> PokyhIcons.markExam
+        has("ATTACH", "FILE", "DOCUMENT") -> PokyhIcons.markAttachment
+        has("SUBSTITUT", "STANDIN", "STAND_IN") -> PokyhIcons.markSubstitution
+        has("ONLINE", "VIDEO", "TEAMS", "ZOOM") -> PokyhIcons.markOnline
+        has("CLASSREG", "CLASS_REG", "REGISTER") -> PokyhIcons.markClassRegister
+        has("NOTE", "INFO", "TEXT", "COMMENT") -> PokyhIcons.markNote
+        else -> PokyhIcons.markUnknown
+    }
 }

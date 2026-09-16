@@ -8,12 +8,14 @@ import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
 import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.TimetableEntry
+import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.components.shareIcs
 import javax.inject.Inject
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,7 +36,13 @@ enum class TimetableMode(val label: String) { WEEK("Woche"), DAY("Tag") }
  * but cached per [weekOffset] here so paging never re-shows a spinner for an already-loaded week. */
 sealed interface WeekPageState {
     data object Loading : WeekPageState
-    data class Data(val entries: List<TimetableEntry>) : WeekPageState
+    data class Data(
+        val entries: List<TimetableEntry>,
+        /** Epoch millis this copy was produced — what the "Stand …" label reads. */
+        val savedAt: Long = 0L,
+        /** True when WebUntis couldn't be reached and this came off the disk. */
+        val stale: Boolean = false,
+    ) : WeekPageState
     data class Error(val message: String) : WeekPageState
 }
 
@@ -63,6 +71,7 @@ class TimetableViewModel @Inject constructor(
     private val untisClient: UntisClient,
     private val backendClient: BackendClient,
     private val widgetDataBridge: WidgetDataBridge,
+    private val offlineStore: OfflineStore,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(TimetableUiState())
@@ -199,18 +208,32 @@ class TimetableViewModel @Inject constructor(
         }
     }
 
+    /** `tt-<studentId>-<monday>` — one file per week per account, so switching accounts or
+     * paging back never serves someone else's week. */
+    private fun weekCacheKey(studentId: Int, offset: Int) = "tt-$studentId-${mondayOf(offset)}"
+
     private suspend fun fetchWeek(offset: Int, silent: Boolean) {
         val session = appState.session.value ?: return
         if (!session.hasUntis) {
             _pages.update { it + (offset to WeekPageState.Data(emptyList())) }
             return
         }
+        val key = weekCacheKey(session.studentId, offset)
         try {
-            val entries = untisClient.timetable(session, session.studentId, mondayOf(offset).toString())
-            _pages.update { it + (offset to WeekPageState.Data(entries)) }
-            reportSubjects(entries)
-            // Current week of the default account → widget stays fresh (WidgetBridge.publish).
-            if (offset == 0 && appState.isDefaultAccountActive()) widgetDataBridge.publishTimetable(entries)
+            val result = offlineStore.load(key, ListSerializer(TimetableEntry.serializer())) {
+                untisClient.timetable(session, session.studentId, mondayOf(offset).toString())
+            }
+            val entries = result.value
+            _pages.update { it + (offset to WeekPageState.Data(entries, result.savedAt, result.stale)) }
+            // Only a live answer is worth telling the rest of the app about: reporting subjects
+            // from a restored week would ask the backend to generate images it was already asked
+            // for, and republishing it to the widget would overwrite a fresher snapshot with an
+            // older one just because this screen happened to open offline.
+            if (!result.stale) {
+                reportSubjects(entries)
+                // Current week of the default account → widget stays fresh (WidgetBridge.publish).
+                if (offset == 0 && appState.isDefaultAccountActive()) widgetDataBridge.publishTimetable(entries)
+            }
         } catch (e: Exception) {
             if (e is AppError && e.isSessionExpired) {
                 appState.handleSessionExpired()

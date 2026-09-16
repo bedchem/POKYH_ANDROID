@@ -42,6 +42,12 @@ data class SlotChanges(
 /**
  * [SlotChanges] for one entry.
  *
+ * Two signals, and both are needed. WebUntis flags the *new* value in place
+ * (`position3[].current.status == "ADDED"`, surfaced as [TimetableEntry.addedRooms] and friends)
+ * far more often than it fills in an `original*` field — in a real week of this school's data,
+ * every room change came through that way and `removed` was null throughout. Reading only
+ * `original*`, which is what this did, meant no room change was ever highlighted.
+ *
  * An `original*` field is only a change when it is present, non-blank AND actually different:
  * WebUntis fills these in for plenty of entries that did not change (it echoes the current value
  * back), and treating those as changes would light up half the week.
@@ -53,11 +59,23 @@ fun TimetableEntry.changes(): SlotChanges {
     // as changed as well would put a second, contradictory highlight on the same cell.
     if (isCancelled) return SlotChanges.none
     return SlotChanges(
-        subjectChanged = changed(originalSubject, subjectName),
-        teacherChanged = changed(originalTeacher, teacherName),
-        roomChanged = changed(originalRoom, roomName),
+        subjectChanged = addedSubjects.isNotEmpty() || changed(originalSubject, subjectName),
+        teacherChanged = addedTeachers.isNotEmpty() || changed(originalTeacher, teacherName),
+        roomChanged = addedRooms.isNotEmpty() || changed(originalRoom, roomName),
     )
 }
+
+/**
+ * Splits a comma-joined field ([TimetableEntry.roomName] and friends) into its parts, each
+ * tagged with whether WebUntis marked *that part* as new.
+ *
+ * A lesson moved into a second room comes back as `"Inf VI, a+2/05"` with only `Inf VI` added,
+ * and highlighting the whole string would claim both rooms changed. The grid draws the parts and
+ * gives a background to the new ones only.
+ */
+fun splitChanged(joined: String, added: List<String>): List<Pair<String, Boolean>> =
+    joined.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        .map { part -> part to added.any { it.trim() == part } }
 
 /** HHmm int → minutes since midnight (`Fmt.minutes`). */
 private fun minutesOfTime(t: Int): Int {
@@ -138,7 +156,11 @@ object TimetableSlots {
     fun dayKind(dayEntries: List<TimetableEntry>, slots: List<MergedSlot>, hasOtherDayEntries: Boolean, index: Int): DayKind {
         if (index == 5 && dayEntries.isEmpty()) return DayKind.WEEKEND
         val base = baseDayKind(dayEntries, hasOtherDayEntries)
-        if (base == DayKind.NORMAL && slots.isNotEmpty() && slots.all { it.kind == SlotKind.REPLACEMENT }) {
+        // **Two slots at least.** "Tag durchgehend ersetzt" replaces the whole column with a
+        // card that names no subject, teacher or room, so it has to be earned: a day whose
+        // single slot happens to be a replacement is one substituted lesson, and drawing it as
+        // a cell tells the reader far more than a card saying the day was replaced.
+        if (base == DayKind.NORMAL && slots.size >= 2 && slots.all { it.kind == SlotKind.REPLACEMENT }) {
             val first = slots[0].replacement
             val same = slots.all {
                 it.replacement?.subjectName == first?.subjectName &&
@@ -163,13 +185,28 @@ object TimetableSlots {
 // ── Grid geometry constants (TimetableView.swift `pxPerMin` / `gutter` / `periods`) ────────
 // Density-independent: screens multiply PX_PER_MINUTE by 1.dp and GRID_GUTTER_DP by 1.dp.
 
-const val PX_PER_MINUTE: Float = 0.82f
+/**
+ * At iOS's 0.82 a standard 50-minute period is 41dp, and 41dp is *exactly* the subject, the
+ * teacher and the room with nothing to spare — so the grid rounded down to two lines and the room
+ * was the line that fell off, on most cells, most of the week. 0.95 gives the period 48dp, which
+ * holds all three comfortably at any font scale; the week is ~70dp taller overall, in a view that
+ * already scrolls.
+ */
+const val PX_PER_MINUTE: Float = 0.95f
 const val GRID_GUTTER_DP: Int = 42
 
 /** One fixed timetable period: number + start/end in minutes-since-midnight. */
 data class TimetablePeriod(val number: Int, val startMinute: Int, val endMinute: Int)
 
-/** Fixed 10-period grid, 07:50–16:45, exactly as iOS (`TimetableView.periods`). */
+/**
+ * The 10-period grid this school runs, 07:50–16:45, exactly as iOS (`TimetableView.periods`).
+ *
+ * **This is a default, not a fact about every timetable.** WebUntis gives lesson times but not
+ * the bell schedule on the route this app calls, so the axis uses these for its period numbers
+ * and draws its rules from the lessons' own start/end times as well — and `WeekGrid` drops the
+ * numbers entirely on a timetable whose lessons don't line up with them. A school with a
+ * different schedule therefore gets a correct grid with clock times, never mislabelled periods.
+ */
 val TIMETABLE_PERIODS: List<TimetablePeriod> = listOf(
     TimetablePeriod(1, 470, 520),
     TimetablePeriod(2, 520, 570),

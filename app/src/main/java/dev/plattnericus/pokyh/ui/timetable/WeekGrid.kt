@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -42,6 +43,7 @@ import dev.plattnericus.pokyh.data.untis.TIMETABLE_PERIODS
 import dev.plattnericus.pokyh.data.untis.TimetablePeriod
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
 import dev.plattnericus.pokyh.data.untis.changes
+import dev.plattnericus.pokyh.data.untis.splitChanged
 import dev.plattnericus.pokyh.ui.components.SpecialDayCard
 import dev.plattnericus.pokyh.ui.components.SpecialDaySpec
 import dev.plattnericus.pokyh.ui.theme.Brand
@@ -52,6 +54,7 @@ import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.SubjectTone
+import dev.plattnericus.pokyh.ui.theme.lessonMarkIcon
 import dev.plattnericus.pokyh.ui.theme.pressable
 import dev.plattnericus.pokyh.ui.theme.smoothCorner
 import dev.plattnericus.pokyh.ui.theme.statusTone
@@ -59,9 +62,10 @@ import dev.plattnericus.pokyh.ui.theme.subjectTone
 import kotlinx.datetime.LocalDate
 
 /**
- * The week grid — six day columns (Mo–Sa) against the fixed 10-period time axis. Geometry
- * constants ([PX_PER_MINUTE]/[GRID_GUTTER_DP]/[TIMETABLE_PERIODS]) come from `TimetableSlots.kt`
- * so every screen agrees on the same pixel math.
+ * The week grid — six day columns (Mo–Sa) against a time axis built from the week's own lesson
+ * times. Geometry constants ([PX_PER_MINUTE]/[GRID_GUTTER_DP]) come from `TimetableSlots.kt` so
+ * every screen agrees on the same pixel math; [TIMETABLE_PERIODS] supplies the period *numbers*
+ * where a timetable matches it, and is dropped where it doesn't.
  *
  * **The look is Untis Mobile's, in POKYH's pastels.** A lesson is one soft tinted block and
  * nothing else — no outline, no stripe, no divider. The tint *is* the subject, and it does the
@@ -71,13 +75,15 @@ import kotlinx.datetime.LocalDate
  * With nothing else drawing edges, an outline is free to mean something, and does:
  *
  *  - **danger** — cancelled. The text is struck through as well.
- *  - **accent** — this lesson happens, but not as timetabled. The field that changed (room,
- *    teacher, subject) is drawn as a filled chip, so "different room on Thursday" is one glance,
- *    not a diff you have to reconstruct.
+ *  - **accent** — the lesson itself was substituted (stand-in teacher, swapped subject). A
+ *    *room* change is not outlined: the field that changed is drawn as a filled chip, and the
+ *    chip already says it — see [ChangeableLine].
  *
- * A [SlotKind.REPLACEMENT] — the original cancelled outright and something else put in its place
- * — is two lessons in one time band, and is drawn as two cells **side by side**: the lesson that
- * actually happens on the leading side, the cancelled original beside it. See [ReplacementPair].
+ * Whatever else WebUntis attaches to a period — homework, a note, an exam, a file — arrives as
+ * its `icons` array and is drawn in the cell's corner by [LessonMarks].
+ *
+ * Two lessons in one time band are drawn **side by side**, the one that happens leading; see
+ * [resolveHorizontal].
  *
  * Unlike iOS (which threads a `GeometryReader`-measured width down from the pager to avoid a
  * measurement pass per scrolled page), this measures its own width once via [BoxWithConstraints]
@@ -109,15 +115,33 @@ fun WeekGrid(
             }
         }
         val allEntries = remember(dayEntries) { dayEntries.flatten() }
-        val minMins = remember(allEntries) { allEntries.minOfOrNull { Fmt.minutes(it.startTime) } ?: 470 }
-        val maxMins = remember(allEntries) { allEntries.maxOfOrNull { Fmt.minutes(it.endTime) } ?: 1005 }
-        val totalHeight = remember(minMins, maxMins) { maxOf(380.dp, ((maxMins - minMins) * PX_PER_MINUTE).dp) }
-        val visiblePeriods = remember(minMins, maxMins) {
-            TIMETABLE_PERIODS.filter { it.endMinute > minMins && it.startMinute < maxMins }
+        val minMins = remember(allEntries) {
+            allEntries.minOfOrNull { Fmt.minutes(it.startTime) } ?: TIMETABLE_PERIODS.first().startMinute
         }
-        val boundaryTimes = remember(visiblePeriods, minMins, maxMins) {
+        val maxMins = remember(allEntries) {
+            allEntries.maxOfOrNull { Fmt.minutes(it.endTime) } ?: TIMETABLE_PERIODS.last().endMinute
+        }
+        val totalHeight = remember(minMins, maxMins) { maxOf(380.dp, ((maxMins - minMins) * PX_PER_MINUTE).dp) }
+        // **Numbered only when the numbers are this school's.** [TIMETABLE_PERIODS] is one
+        // school's bell schedule; on a timetable that doesn't use it, "1./2./3." next to the
+        // clock would be confidently wrong. If most lessons don't start on a known period
+        // boundary the axis drops the numbers and shows times alone, which is right anywhere.
+        val visiblePeriods = remember(allEntries, minMins, maxMins) {
+            val onGrid = allEntries.count { e ->
+                TIMETABLE_PERIODS.any { it.startMinute == Fmt.minutes(e.startTime) }
+            }
+            if (allEntries.isNotEmpty() && onGrid * 2 < allEntries.size) {
+                emptyList()
+            } else {
+                TIMETABLE_PERIODS.filter { it.endMinute > minMins && it.startMinute < maxMins }
+            }
+        }
+        // Rules come from the lessons themselves as well as the period table, so a cell edge
+        // always lands on a line — whatever times the school actually runs.
+        val boundaryTimes = remember(allEntries, visiblePeriods, minMins, maxMins) {
             val set = sortedSetOf<Int>()
             visiblePeriods.forEach { set.add(it.startMinute); set.add(it.endMinute) }
+            allEntries.forEach { set.add(Fmt.minutes(it.startTime)); set.add(Fmt.minutes(it.endTime)) }
             set.filter { it >= minMins - 2 && it <= maxMins + 2 }
         }
 
@@ -300,13 +324,16 @@ private fun TimeAxis(
 // ── Day column ──────────────────────────────────────────────────────────────
 
 /**
- * One thing to draw in a day column, already resolved to the time range it actually occupies.
+ * One thing to draw in a day column, already resolved to the time range *and* the slice of the
+ * column's width it occupies.
  *
  * Slots are not that. A [SlotKind.REPLACEMENT] slot is *two* lessons — the cancelled one it is
  * filed under and the one that happens — and it carries the cancelled entry as its `display`, so
  * its times are the cancelled lesson's. Laying out from slots directly is what produced a
  * replacement drawn from 07:50 when it starts at 09:30. Flattening to cells first means every
  * box on screen has one entry, one time range, and one thing it opens when tapped.
+ *
+ * [start]/[width] are per-mille of the column, straight from WebUntis where it supplies them.
  */
 private data class GridCell(
     val key: String,
@@ -316,8 +343,10 @@ private data class GridCell(
     val kind: SlotKind,
     val startMinute: Int,
     val endMinute: Int,
-    /** Drawn as a narrow colour strip instead of a text cell — see [buildGridCells]. */
-    val asBar: Boolean,
+    /** Left edge, per-mille of the column width. */
+    val start: Int = 0,
+    /** Width, per-mille of the column width. */
+    val width: Int = PerMille,
 ) {
     val isCancelled: Boolean get() = kind == SlotKind.CANCELLED || entry.isCancelled
 
@@ -325,24 +354,24 @@ private data class GridCell(
         startMinute < other.endMinute && other.startMinute < endMinute
 }
 
+private const val PerMille = 1000
+
 /**
- * Flattens a day's slots into the boxes the column draws, and decides which of them collapse to
- * a bar.
+ * Flattens a day's slots into the boxes the column draws.
  *
- * **A cancelled lesson that shares any of its time with a lesson that does happen becomes a
- * narrow strip, and keeps its full length.** This is Untis Mobile's own handling and it is the
- * only arrangement that stays honest about both facts. The alternatives were tried and are
- * worse: stretching the replacement over the cancelled block hides the cancellation and repeats
- * the cancelled subject inside it; cutting the cancelled block off where the replacement starts
- * (what this did before) loses that the lesson was called off for the whole morning, not just
- * the part nobody covered.
+ * Every cell is a full cell — a cancelled lesson included. It used to collapse to a 9dp strip
+ * whenever anything ran alongside it, and that is what this replaces: the strips were lane-
+ * numbered by their position in the list rather than by what they actually overlapped, so two
+ * cancellations that never shared a minute were still stacked on different sides of the column
+ * (one flush right, one inset) while the lesson beside them gave up width for *both*. A column
+ * with two cancellations ended up with a lesson squeezed to half width, two red slivers at
+ * different depths, and a band of dead space above them where nothing was drawn at all.
  *
- * As a strip it costs about a fifth of the column, carries no text — there is nothing to read
- * about a lesson that isn't happening, and its detail sheet is one tap away — and leaves the
- * lesson you actually have to attend with the room and the type size it needs.
- *
- * A cancellation with nothing put in its place stays a full cell, struck through: there it *is*
- * the information.
+ * **The result is deduplicated**, and it has to be. One lesson that covers two cancelled periods
+ * is filed under both of them, so `buildSlots` hands back two [SlotKind.REPLACEMENT] slots with
+ * the *same* replacement — two identical cells. They used to land exactly on top of each other
+ * and go unnoticed; [resolveHorizontal] gives each one its own lane, which is how a Monday with
+ * one event and two cancellations turned into three slivers too narrow to draw anything in.
  */
 private fun buildGridCells(slots: List<MergedSlot>): List<GridCell> {
     val cells = mutableListOf<GridCell>()
@@ -363,7 +392,6 @@ private fun buildGridCells(slots: List<MergedSlot>): List<GridCell> {
                 kind = SlotKind.REPLACEMENT,
                 startMinute = Fmt.minutes(replacement.startTime),
                 endMinute = Fmt.minutes(replacement.endTime),
-                asBar = false,
             )
             // The cancelled original gets a cell of its own ONLY when it isn't already in the
             // list as a standalone cancellation. It is whenever the replacement covers just part
@@ -384,7 +412,6 @@ private fun buildGridCells(slots: List<MergedSlot>): List<GridCell> {
                     kind = SlotKind.CANCELLED,
                     startMinute = Fmt.minutes(slot.display.startTime),
                     endMinute = Fmt.minutes(slot.display.endTime),
-                    asBar = false,
                 )
             }
         } else {
@@ -395,16 +422,80 @@ private fun buildGridCells(slots: List<MergedSlot>): List<GridCell> {
                 kind = slot.kind,
                 startMinute = Fmt.minutes(slot.display.startTime),
                 endMinute = Fmt.minutes(slot.display.endTime),
-                asBar = false,
             )
         }
     }
 
-    val happening = cells.filter { !it.isCancelled }
-    return cells.map { cell ->
-        if (cell.isCancelled && happening.any { it.overlaps(cell) }) cell.copy(asBar = true) else cell
+    return resolveHorizontal(
+        cells
+            // A zero-length period has no height to draw and overlaps nothing, so it would share
+            // a lane with the lesson at the same minute and paint on top of it.
+            .filter { it.endMinute > it.startMinute }
+            .distinctBy { "${it.entry.id}-${it.startMinute}-${it.endMinute}-${it.kind}" },
+    )
+}
+
+/**
+ * Decides how wide each cell is and which side of the column it sits on.
+ *
+ * Two rules, and between them they settle every arrangement in the grid:
+ *
+ *  - **The lesson that happens leads.** Cancelled cells are laid out last, so they take the
+ *    trailing lane and the lesson you actually have to attend keeps the leading edge. Before
+ *    this the sides came from WebUntis's own `layoutStartPosition`, which puts the cancellation
+ *    first whenever it starts earlier — a column where the thing to read was pushed right and
+ *    the thing that isn't happening got the margin.
+ *  - **A shared column splits [ActiveShare]/the rest, not down the middle.** A cancellation only
+ *    has to be seen; the lesson beside it has to be *read*, and at a sixth of the screen an even
+ *    split leaves neither legible.
+ *
+ * A cell widens into any lane that is free for its whole duration, so the common case — one
+ * cancelled block with nothing overlapping it — is still a full-width cell, not a quarter of one.
+ */
+private fun resolveHorizontal(cells: List<GridCell>): List<GridCell> {
+    // Happening first, so cancellations fill in around them rather than the other way round.
+    val ordered = cells.sortedWith(
+        compareBy({ it.isCancelled }, { it.startMinute }, { -(it.endMinute - it.startMinute) }),
+    )
+    val lanes = mutableMapOf<String, Int>()
+    for (cell in ordered) {
+        var lane = 0
+        while (ordered.any { it.key != cell.key && lanes[it.key] == lane && it.overlaps(cell) }) lane++
+        lanes[cell.key] = lane
+    }
+    val laneCount = (lanes.values.maxOrNull() ?: 0) + 1
+
+    // Two lanes with the trailing one holding nothing but cancellations is the arrangement worth
+    // weighting. Anything more crowded splits evenly — there is no "the important one" to favour.
+    // ...and only when there is actually a lesson in the leading lane to favour. Two
+    // cancellations overlapping each other and nothing else is two of the same thing, and
+    // giving one of them three quarters of the column would be arbitrary.
+    val trailing = ordered.filter { lanes[it.key] == 1 }
+    val leading = ordered.filter { lanes[it.key] == 0 }
+    val weighted = laneCount == 2 &&
+        trailing.isNotEmpty() &&
+        trailing.all { it.isCancelled } &&
+        leading.any { !it.isCancelled }
+    val edges = if (weighted) {
+        listOf(0, ActiveShare, PerMille)
+    } else {
+        (0..laneCount).map { it * PerMille / laneCount }
+    }
+
+    return ordered.map { cell ->
+        val lane = lanes.getValue(cell.key)
+        var last = lane
+        while (last + 1 < laneCount &&
+            ordered.none { it.key != cell.key && lanes[it.key] == last + 1 && it.overlaps(cell) }
+        ) {
+            last++
+        }
+        cell.copy(start = edges[lane], width = edges[last + 1] - edges[lane])
     }
 }
+
+/** What the lesson that happens keeps when a cancellation runs alongside it. */
+private const val ActiveShare = 750
 
 /**
  * One day.
@@ -432,7 +523,6 @@ private fun DayColumn(
 ) {
     val colors = PokyhTheme.colors
     val cells = remember(slots) { buildGridCells(slots) }
-    val bars = remember(cells) { cells.filter { it.asBar } }
 
     Box(
         Modifier
@@ -465,37 +555,30 @@ private fun DayColumn(
             cells.forEach { cell ->
                 val top = ((cell.startMinute - minMins) * PX_PER_MINUTE).dp
                 val rawHeight = ((cell.endMinute - cell.startMinute) * PX_PER_MINUTE).dp
-
-                if (cell.asBar) {
-                    // Strips are stacked from the trailing edge inward, so a second parallel
-                    // cancellation sits beside the first rather than on top of it.
-                    val lane = bars.indexOfFirst { it.key == cell.key }.coerceAtLeast(0)
-                    Box(
-                        modifier = Modifier
-                            .width(BarWidth)
-                            .height(rawHeight)
-                            .offset(x = width - (BarWidth + BarGap) * (lane + 1), y = top)
-                            .padding(vertical = 1.dp),
-                    ) {
-                        TappableCell(slot = cell.slot, onTap = onTap) { m ->
-                            CancelledBar(modifier = m)
-                        }
-                    }
-                } else {
-                    // Give up exactly as much width as the strips running alongside this cell.
-                    val alongside = bars.count { it.overlaps(cell) }
-                    val cellWidth = (width - (BarWidth + BarGap) * alongside).coerceAtLeast(MinCellWidth)
-                    val h = maxOf(MinCellHeight, rawHeight)
-                    Box(
-                        modifier = Modifier
-                            .width(cellWidth)
-                            .height(h)
-                            .offset(y = top)
-                            .padding(vertical = 1.dp),
-                    ) {
-                        TappableCell(slot = cell.slot, onTap = onTap) { m ->
-                            GridLessonCell(entry = cell.entry, kind = cell.kind, height = h, modifier = m)
-                        }
+                val h = maxOf(MinCellHeight, rawHeight)
+                // Both edges are computed from the per-mille span and the gap is taken off the
+                // *leading* one, so the trailing lane still ends flush with the column. Taking
+                // it off the width instead pushed the 25% lane half a point past the edge.
+                val sharing = cell.width < PerMille
+                val left = width * cell.start / PerMille + if (cell.start > 0) CellGap else 0.dp
+                val right = width * (cell.start + cell.width) / PerMille
+                val cellWidth = (right - left).coerceAtLeast(MinCellWidth)
+                Box(
+                    modifier = Modifier
+                        .width(cellWidth)
+                        .height(h)
+                        .offset(x = left, y = top)
+                        .padding(vertical = 1.dp),
+                ) {
+                    TappableCell(slot = cell.slot, onTap = onTap) { m ->
+                        GridLessonCell(
+                            entry = cell.entry,
+                            kind = cell.kind,
+                            height = h,
+                            width = cellWidth,
+                            dense = sharing,
+                            modifier = m,
+                        )
                     }
                 }
             }
@@ -506,33 +589,21 @@ private fun DayColumn(
 /** Below this a cell can't hold even one line of text legibly, so it stops shrinking. */
 private val MinCellHeight = 26.dp
 
-/** A cell never gives up so much width to strips that its subject becomes unreadable. */
-private val MinCellWidth = 28.dp
-
-/** The strip a cancelled lesson collapses to when something else runs in its place. */
-private val BarWidth = 9.dp
-private val BarGap = 2.dp
+/** A cell never shrinks past the point where even a colour block stops registering. */
+private val MinCellWidth = 10.dp
 
 /**
- * The strip itself: a solid danger fill, no text.
+ * Below this a cell carries no text.
  *
- * Solid rather than the usual soft tint, and that is deliberate — it is 9dp wide, and a pastel
- * wash at that size is a smudge you cannot name. The one saturated shape in the column reads
- * immediately as "something was cancelled here", which is all it has to say; the rest is in the
- * detail sheet.
+ * A quarter-column is about 15dp, and `"St.t.Syst."` in 15dp is `"S…"` — a character of noise
+ * where the tint, the red ring and the strikethrough have already said "cancelled", and the
+ * detail sheet is one tap away. Dropping the text there is what makes the 75/25 split usable
+ * instead of just narrow.
  */
-@Composable
-private fun CancelledBar(modifier: Modifier = Modifier) {
-    val isDark = PokyhTheme.colors.isDark
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(
-                Brand.danger.copy(alpha = if (isDark) 0.80f else 0.65f),
-                smoothCorner(3.dp),
-            ),
-    )
-}
+private val TextMinCellWidth = 34.dp
+
+/** The seam between two cells sharing one column. */
+private val CellGap = 2.dp
 
 
 /** Press-scale + click wiring, so [GridLessonCell] stays a pure renderer. */
@@ -571,6 +642,7 @@ private fun GridLessonCell(
     entry: TimetableEntry,
     kind: SlotKind,
     height: Dp,
+    width: Dp,
     modifier: Modifier = Modifier,
     dense: Boolean = false,
 ) {
@@ -579,12 +651,16 @@ private fun GridLessonCell(
     val changes = entry.changes()
     val tone = cellTone(entry = entry, kind = kind, isDark = isDark)
 
-    // Kept thin and semi-transparent. At 1.5dp and near-full opacity a column with two or three
-    // cancellations read as a page of red boxes; the strikethrough is the primary signal and the
-    // outline only has to group the cell.
+    // **A cancelled lesson is ringed in red, a substituted one in blue — a moved one is not
+    // ringed at all.** A different room is the most common change by far, and ringing the cell
+    // for it put a border on half the week; the badge on the room is already the whole message,
+    // and it says *which* room in the bargain. The ring is kept for the changes that replace the
+    // lesson itself (a stand-in teacher, a swapped subject), where there is no single field the
+    // badge can carry. Both are drawn heavily enough to survive a quarter-width cell.
+    val substituted = changes.teacherChanged || changes.subjectChanged
     val outline: Color? = when {
-        cancelled -> Brand.danger.copy(alpha = if (isDark) 0.55f else 0.40f)
-        changes.any -> Brand.accent.copy(alpha = if (isDark) 0.65f else 0.50f)
+        cancelled -> Brand.danger.copy(alpha = if (isDark) 0.85f else 0.60f)
+        substituted -> Brand.accent.copy(alpha = if (isDark) 0.95f else 0.75f)
         else -> null
     }
 
@@ -592,59 +668,52 @@ private fun GridLessonCell(
     val padH = if (dense) 3.dp else 5.dp
 
     /**
-     * The lines this cell has room for, most important first.
+     * **Subject, then teacher, then room — always, whatever changed.**
      *
-     * A standard 50-minute period is only ~41dp tall, which fits the subject and one more line —
-     * and that second line used to be the teacher, unconditionally. So a room change, the thing
-     * the highlight exists to announce, was drawn on a line that was never rendered at that
-     * height: the cell showed a blue outline and no reason for it.
-     *
-     * A changed field therefore takes the second line. Nothing is lost — whichever line drops
-     * out is an unchanged value, which the detail sheet still lists in full.
+     * A changed field used to be promoted to the second line so it survived a short cell, and
+     * that made the room jump above the teacher on exactly the cells a reader is already trying
+     * to re-read. The three lines mean nothing if they are not in the same place on every cell;
+     * the fix for a change that falls off the bottom is a cell tall enough to hold it, which
+     * [PX_PER_MINUTE] now gives.
      */
-    val secondaryLines = buildList {
-        val teacher = entry.teacherName to changes.teacherChanged
-        val room = entry.roomName to changes.roomChanged
-        if (changes.roomChanged && !changes.teacherChanged) {
-            add(room to PokyhType.gridCellTime)
-            add(teacher to PokyhType.gridCellRoom)
-        } else {
-            add(teacher to PokyhType.gridCellTime)
-            add(room to PokyhType.gridCellRoom)
-        }
-    }.filter { (value, _) -> value.first.isNotEmpty() }
+    val secondaryLines = listOf(
+        fieldParts(entry.teacherName, entry.addedTeachers, entry.originalTeacher, dense) to PokyhType.gridCellTime,
+        fieldParts(entry.roomName, entry.addedRooms, entry.originalRoom, dense) to PokyhType.gridCellRoom,
+    ).filter { (parts, _) -> parts.isNotEmpty() }
     val roomForLines = when {
-        height > 52.dp -> 2
-        height > 34.dp -> 1
+        height > 42.dp -> 2
+        height > 28.dp -> 1
         else -> 0
     }
 
     Box(
         modifier = modifier
+            // `fillMaxSize` is load-bearing, not tidiness: the only thing that used to give this
+            // Box a width was the Column inside it, so a cell narrow enough to draw no text
+            // collapsed to nothing at all and the 25% lane simply vanished off the grid.
+            .fillMaxSize()
             .clip(CellShape)
             .background(tone.fill, CellShape)
             .then(
-                if (outline != null) Modifier.border(1.dp, outline, CellShape) else Modifier,
+                if (outline != null) Modifier.border(1.5.dp, outline, CellShape) else Modifier,
             ),
     ) {
+        if (width < TextMinCellWidth) return@Box
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = padH, vertical = 3.dp),
+                .padding(horizontal = padH, vertical = 2.5.dp),
             verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
             ChangeableLine(
-                text = subjectText,
-                highlighted = changes.subjectChanged,
+                parts = listOf(subjectText to if (changes.subjectChanged) PartMark.Added else PartMark.Plain),
                 style = PokyhType.gridCellSubject,
                 color = tone.ink,
                 struck = cancelled,
             )
-            secondaryLines.take(roomForLines).forEach { (value, style) ->
-                val (text, highlighted) = value
+            secondaryLines.take(roomForLines).forEach { (parts, style) ->
                 ChangeableLine(
-                    text = text,
-                    highlighted = highlighted,
+                    parts = parts,
                     style = style,
                     color = tone.ink.copy(alpha = 0.78f),
                     struck = cancelled,
@@ -652,13 +721,89 @@ private fun GridLessonCell(
             }
         }
 
+        LessonMarks(
+            icons = entry.icons,
+            tint = tone.ink,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(horizontal = 2.dp, vertical = 2.dp),
+        )
     }
 }
 
 /**
- * One line of a cell. When the field is the one that *changed* it is drawn as a filled chip
- * rather than plain text — Untis Mobile's convention, and the fastest read there is of "this
- * lesson is in a different room today".
+ * The little glyphs in a cell's bottom-right corner: homework set, a note on the period, an
+ * attachment, an exam.
+ *
+ * **Drawn as an overlay in the corner, not as a line.** A cell has room for three lines and they
+ * are already spoken for by subject, teacher and room; a fourth would have pushed the room off
+ * again on every cell that has a mark. The corner is the one part of a lesson block that is
+ * reliably empty — the room sits bottom-*left* — and it is where Untis Mobile puts the same
+ * information.
+ *
+ * At most [MaxMarks], because the corner of a 40dp cell is not a list. Anything beyond that is
+ * in the detail sheet, which lists them all with their text.
+ */
+@Composable
+private fun LessonMarks(icons: List<String>, tint: Color, modifier: Modifier = Modifier) {
+    if (icons.isEmpty()) return
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+        icons.take(MaxMarks).forEach { name ->
+            Icon(
+                imageVector = lessonMarkIcon(name),
+                contentDescription = null,
+                tint = tint.copy(alpha = 0.72f),
+                modifier = Modifier.size(MarkSize),
+            )
+        }
+    }
+}
+
+private const val MaxMarks = 2
+private val MarkSize = 9.dp
+
+/** How a single part of a field is drawn — see [ChangeableLine]. */
+private enum class PartMark { Plain, Added, Removed }
+
+/**
+ * A comma-joined field split into the parts a cell draws, **changed ones first**.
+ *
+ * Two kinds of change, and both get a badge, because both are things you have to act on:
+ *
+ *  - **Added** — the room the lesson moved into, the teacher standing in. Blue.
+ *  - **Removed** — a teacher who is out and not replaced, which WebUntis reports by dropping the
+ *    name from the current list and leaving it in `original*`. Without this the cell simply had
+ *    one fewer name on it and nothing said why.
+ *
+ * A lesson moved into an extra room arrives as `"Inf VI, a+2/05"` with only `Inf VI` flagged, and
+ * the cell that has to show it is often a fraction of a column wide. Leading with the parts that
+ * changed means the thing worth reading is the thing that survives the truncation; in a [dense]
+ * cell the unchanged parts are dropped outright rather than eaten by an ellipsis.
+ */
+private fun fieldParts(
+    joined: String,
+    added: List<String>,
+    original: String?,
+    dense: Boolean,
+): List<Pair<String, PartMark>> {
+    val current = splitChanged(joined, added)
+        .map { (text, isAdded) -> text to if (isAdded) PartMark.Added else PartMark.Plain }
+    val present = current.map { it.first }
+    val gone = splitChanged(original.orEmpty(), emptyList())
+        .map { it.first }
+        .filter { it !in present }
+        .map { it to PartMark.Removed }
+
+    val parts = (current + gone).sortedBy { it.second == PartMark.Plain }
+    if (dense && parts.any { it.second != PartMark.Plain }) {
+        return parts.filter { it.second != PartMark.Plain }
+    }
+    return parts
+}
+
+/**
+ * One line of a cell. A part that *changed* is drawn as a filled chip rather than plain text —
+ * Untis Mobile's convention, and the fastest read there is of "this lesson is in a different room
+ * today". Parts are chipped individually, so a lesson that gained a second room highlights the
+ * room it gained and leaves the one it always had alone.
  *
  * The chip is a **solid [Brand.accent] with white on it in both themes**, and that is the point:
  * every other mark in the grid is a soft tint of the subject, so the one saturated block on the
@@ -669,32 +814,43 @@ private fun GridLessonCell(
  */
 @Composable
 private fun ChangeableLine(
-    text: String,
-    highlighted: Boolean,
+    parts: List<Pair<String, PartMark>>,
     style: androidx.compose.ui.text.TextStyle,
     color: Color,
     struck: Boolean,
 ) {
-    if (highlighted) {
-        Text(
-            text = text,
-            style = style,
-            color = Brand.onAccent,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .background(Brand.accent, smoothCorner(4.dp))
-                .padding(horizontal = 4.dp, vertical = 1.5.dp),
-        )
-    } else {
-        Text(
-            text = text,
-            style = style,
-            color = color,
-            textDecoration = if (struck) TextDecoration.LineThrough else TextDecoration.None,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        parts.forEach { (text, mark) ->
+            val fill = when (mark) {
+                PartMark.Added -> Brand.accent
+                PartMark.Removed -> Brand.danger
+                PartMark.Plain -> null
+            }
+            if (fill != null) {
+                Text(
+                    text = text,
+                    style = style,
+                    color = Brand.onAccent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    // A dropped name keeps its strikethrough *on* the badge: the badge says the
+                    // roster changed, the rule says this is the name that left.
+                    textDecoration = if (mark == PartMark.Removed) TextDecoration.LineThrough else TextDecoration.None,
+                    modifier = Modifier
+                        .background(fill, smoothCorner(4.dp))
+                        .padding(horizontal = 4.dp, vertical = 1.5.dp),
+                )
+            } else {
+                Text(
+                    text = text,
+                    style = style,
+                    color = color,
+                    textDecoration = if (struck) TextDecoration.LineThrough else TextDecoration.None,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

@@ -3,6 +3,7 @@ package dev.plattnericus.pokyh.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.plattnericus.pokyh.core.images.ImagePrefetcher
 import dev.plattnericus.pokyh.core.util.SchoolDates
 import dev.plattnericus.pokyh.core.util.mondayOfWeek
 import dev.plattnericus.pokyh.core.util.todayLocalDate
@@ -12,6 +13,7 @@ import dev.plattnericus.pokyh.data.model.Dish
 import dev.plattnericus.pokyh.data.model.DishRatingsData
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
+import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.storage.PreferencesStore
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
@@ -33,6 +35,7 @@ import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
+import kotlinx.serialization.builtins.ListSerializer
 
 /**
  * HomeView.swift, ported. No repository layer — timetable/grades/exams load only with a linked
@@ -45,6 +48,8 @@ class HomeViewModel @Inject constructor(
     private val untisClient: UntisClient,
     private val backendClient: BackendClient,
     private val preferencesStore: PreferencesStore,
+    private val offlineStore: OfflineStore,
+    private val imagePrefetcher: ImagePrefetcher,
 ) : ViewModel() {
 
     /** `HomeView.RecentGrade` — a flattened, most-recent-first grade entry for the "Zuletzt
@@ -55,11 +60,17 @@ class HomeViewModel @Inject constructor(
         val session: UserSession? = null,
         val loadingToday: Boolean = true,
         val todaySlots: List<MergedSlot> = emptyList(),
+        /** When today's lessons were produced, and whether they came off the disk. */
+        val todaySavedAt: Long = 0L,
+        val todayStale: Boolean = false,
         val loadingGrades: Boolean = true,
         val recentGrades: List<RecentGrade> = emptyList(),
         val loadingMensa: Boolean = true,
         val mensaWeek: List<MensaWeekDay> = emptyList(),
         val mensaWeekLabel: String = "",
+        /** When the menu was produced, and whether it came off the disk. */
+        val mensaSavedAt: Long = 0L,
+        val mensaStale: Boolean = false,
         val dishRatings: Map<String, DishRatingsData> = emptyMap(),
         /**
          * True until the batch of star ratings for this week's dishes has resolved one way or
@@ -100,26 +111,26 @@ class HomeViewModel @Inject constructor(
     fun setEditing(value: Boolean) { _editing.value = value }
 
     /**
-     * Reorder, by index into [HomeLayout.sanitized] (the editor's list, hidden entries
-     * included).
+     * Reorder, by index into [HomeLayout.sanitized].
      *
      * Writes on every swap as the drag passes over a neighbour, not once when the finger lifts.
      * DataStore coalesces the writes, and it means an edit survives the app being killed
      * mid-gesture — which, on a screen whose whole job is arranging things, is the one moment
      * losing state would be most annoying.
      */
-    fun moveSection(from: Int, to: Int) {
-        val next = layout.value.moved(from, to)
+    /**
+     * Persist an arrangement, once.
+     *
+     * **Called when the card is set down, not while it moves.** Every swap used to write
+     * straight to DataStore and wait for the flow to come back around, which put a disk
+     * round-trip inside the drag loop: the neighbour only stepped aside once the write had
+     * landed, so the reorder visibly lagged the finger. The screen now owns the live order
+     * and hands it over at the end — one write per drag instead of one per swap.
+     */
+    fun setOrder(sections: List<HomeSection>) {
+        val next = HomeLayout(order = sections.map { it.name })
+        if (next.order == layout.value.sanitized.map { it.name }) return
         viewModelScope.launch { preferencesStore.setHomeLayout(next) }
-    }
-
-    fun toggleSection(section: HomeSection) {
-        val next = layout.value.toggled(section)
-        viewModelScope.launch { preferencesStore.setHomeLayout(next) }
-    }
-
-    fun resetLayout() {
-        viewModelScope.launch { preferencesStore.setHomeLayout(HomeLayout()) }
     }
 
     init {
@@ -179,10 +190,22 @@ class HomeViewModel @Inject constructor(
         _state.update { it.copy(loadingToday = true) }
         try {
             val monday = SchoolDates.mondayIso()
-            val all = untisClient.timetable(session, session.studentId, monday)
+            val result = offlineStore.load(
+                key = "home-week-${session.studentId}-$monday",
+                serializer = ListSerializer(TimetableEntry.serializer()),
+            ) { untisClient.timetable(session, session.studentId, monday) }
+            val all = result.value
             val today = SchoolDates.todayNum()
             val slots = TimetableSlots.buildSlots(all.filter { it.date == today })
-            _state.update { it.copy(todaySlots = slots, loadingToday = false) }
+            _state.update {
+                it.copy(
+                    todaySlots = slots,
+                    loadingToday = false,
+                    todaySavedAt = result.savedAt,
+                    todayStale = result.stale,
+                )
+            }
+            prefetchSubjectImages(all.filter { it.date >= today })
         } catch (e: AppError) {
             if (e.isSessionExpired) appState.handleSessionExpired()
             _state.update { it.copy(loadingToday = false) }
@@ -234,18 +257,48 @@ class HomeViewModel @Inject constructor(
     private suspend fun loadMensa() {
         _state.update { it.copy(loadingMensa = true) }
         try {
-            val dishes = backendClient.dishes()
-            val week = mensaWeek(dishes)
+            val mensa = backendClient.dishesWithFreshness()
+            val week = mensaWeek(mensa.dishes)
             _state.update {
                 it.copy(
                     mensaWeek = week,
                     mensaWeekLabel = if (week.any { day -> day.isToday }) "Diese Woche" else "Nächste Woche",
                     loadingMensa = false,
+                    mensaSavedAt = mensa.savedAt,
+                    mensaStale = mensa.stale,
                 )
             }
             loadDishRatings(week.flatMap { day -> day.dishes }.map { dish -> dish.id })
+            // Home shows three dishes per day at thumbnail size; the Mensa tab and the dish
+            // sheet show the same photos full-width. Pulling them now — while this screen is
+            // already talking to the server — is what makes those screens instant, and what
+            // leaves them with pictures at all when the connection is gone later.
+            imagePrefetcher.prefetch(week.flatMap { day -> day.dishes }.mapNotNull { it.imageUrl })
         } catch (e: Exception) {
             _state.update { it.copy(loadingMensa = false) }
+        }
+    }
+
+    /**
+     * Pull the header images for the subjects in today's and tomorrow's lessons.
+     *
+     * Only those: the backend has an image per subject and a school year's worth is a lot of
+     * megabytes to fetch speculatively. The lessons a user is about to tap on are the next two
+     * days' — that is what the Home list shows and what the timetable opens on.
+     */
+    private fun prefetchSubjectImages(entries: List<TimetableEntry>) {
+        if (entries.isEmpty()) return
+        viewModelScope.launch {
+            val keys = runCatching { backendClient.subjectImageKeys() }.getOrNull() ?: return@launch
+            val urls = entries
+                .map { backendClient.subjectImageKeyOf(it.subjectLong, it.subjectName) }
+                .filter { it.isNotEmpty() && it in keys }
+                .distinct()
+                .map { backendClient.subjectImageUrl(it) }
+            imagePrefetcher.prefetch(
+                urls = urls,
+                headers = backendClient.apiKeyHeaderName to backendClient.apiKeyHeaderValue,
+            )
         }
     }
 

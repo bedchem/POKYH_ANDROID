@@ -162,7 +162,12 @@ private fun LessonDetailContent(
 
             DetailsCard(detailEntryFor(slot))
             slot.replacement?.let { InsteadCard(it) }
-            d.note?.takeIf { it.isNotEmpty() }?.let { SectionCard("Notiz", it) }
+            // Every free-text field WebUntis can attach to a period, each under its own heading.
+            // `note` and `lessonText` are different things and a server may send either or both;
+            // folding them into one card meant whichever lost the coin toss was never shown.
+            d.note?.takeIf { it.isNotBlank() }?.let { SectionCard("Notiz", it) }
+            d.lessonText?.takeIf { it.isNotBlank() && it != d.note }?.let { SectionCard("Stundentext", it) }
+            d.substitutionText?.takeIf { it.isNotBlank() }?.let { SectionCard("Vertretungstext", it) }
             if (d.isExam) d.examDescription?.takeIf { it.isNotEmpty() }?.let { SectionCard("Prüfungsinhalt", it) }
         }
     }

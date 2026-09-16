@@ -50,6 +50,7 @@ import dev.plattnericus.pokyh.core.util.GradeMath
 import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.model.GradeEntry
 import dev.plattnericus.pokyh.data.model.SubjectGrades
+import dev.plattnericus.pokyh.ui.components.AsOfLabel
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhFittedText
@@ -103,6 +104,7 @@ fun GradesScreen(
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val freshness by viewModel.freshness.collectAsStateWithLifecycle()
     var yearMenuOpen by remember { mutableStateOf(false) }
 
     val dashboard = remember(subjects) { buildGradesDashboard(subjects, todayLocalDate()) }
@@ -156,6 +158,7 @@ fun GradesScreen(
                 error != null -> ErrorStateView(message = error!!, onRetry = viewModel::retry)
                 else -> GradesContent(
                     dashboard = dashboard,
+                    freshness = freshness,
                     subjects = subjects,
                     sort = sort,
                     year = year,
@@ -170,6 +173,7 @@ fun GradesScreen(
 @Composable
 private fun GradesContent(
     dashboard: GradesDashboard,
+    freshness: GradesViewModel.Freshness,
     subjects: List<SubjectGrades>,
     sort: GradesViewModel.SortMode,
     year: Int,
@@ -210,7 +214,10 @@ private fun GradesContent(
             .padding(bottom = PokyhSpacing.xxxl),
         verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
     ) {
-        DashboardEyebrow(dashboard)
+        Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
+            DashboardEyebrow(dashboard)
+            AsOfLabel(savedAt = freshness.savedAt, stale = freshness.stale)
+        }
 
         StatCardGrid(dashboard)
 

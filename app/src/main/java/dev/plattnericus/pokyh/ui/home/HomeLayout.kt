@@ -8,9 +8,8 @@ import kotlinx.serialization.Serializable
  * One block of the Home screen.
  *
  * The enum — not the composables — is what Home is built from: the screen renders whatever
- * [HomeLayout.order] lists, in that order, and asks this enum what each entry is called. Adding
- * a block to Home is therefore adding a case here plus a branch in `HomeSectionContent`, and
- * nothing else needs to know the order exists.
+ * [HomeLayout.order] lists, in that order. Adding a block to Home is therefore adding a case here
+ * plus a branch in `HomeSectionContent`, and nothing else needs to know the order exists.
  *
  * **The name of a case is persisted.** [HomeLayout] is stored by \[name\], so renaming a case
  * silently drops it out of every existing user's saved layout (it no longer parses, and
@@ -18,53 +17,17 @@ import kotlinx.serialization.Serializable
  */
 enum class HomeSection(
     val title: String,
-    /** What this block is, in the editor's own words — the user is choosing between blocks
-     * there, not looking at them, so each needs to say what it would show. */
-    val editorDescription: String,
     val glyph: ImageVector,
 ) {
-    Shortcuts(
-        title = "Schnellzugriff",
-        editorDescription = "Noten, Abwesenheiten, Todos und Erinnerungen",
-        glyph = PokyhIcons.decorSubjects,
-    ),
-    NextLesson(
-        title = "Nächste Stunde",
-        editorDescription = "Die Stunde, die als Nächstes beginnt",
-        glyph = PokyhIcons.timetable,
-    ),
-    Exam(
-        title = "Nächste Schularbeit",
-        editorDescription = "Die nächste anstehende Prüfung",
-        glyph = PokyhIcons.exam,
-    ),
-    Today(
-        title = "Heute",
-        editorDescription = "Alle Stunden des heutigen Tages",
-        glyph = PokyhIcons.tabTimetable,
-    ),
-    Mensa(
-        title = "Mensa",
-        editorDescription = "Der Speiseplan der Woche",
-        glyph = PokyhIcons.mensa,
-    ),
-    Grades(
-        title = "Zuletzt eingetragen",
-        editorDescription = "Die neuesten Noten",
-        glyph = PokyhIcons.tabGrades,
-    ),
+    Shortcuts(title = "Schnellzugriff", glyph = PokyhIcons.decorSubjects),
+    Exam(title = "Nächste Schularbeit", glyph = PokyhIcons.exam),
+    Today(title = "Heute", glyph = PokyhIcons.tabTimetable),
+    Mensa(title = "Mensa", glyph = PokyhIcons.mensa),
+    Grades(title = "Zuletzt eingetragen", glyph = PokyhIcons.tabGrades),
     ;
 
     companion object {
-        /**
-         * The layout a fresh install gets: the day in the order it happens, with the quick
-         * links on top.
-         *
-         * [NextLesson] is deliberately not in it. It overlaps [Today] (which already lists the
-         * same lessons), so having both on by default would show the same information twice —
-         * it exists for people who would rather have the one next thing than the whole day, and
-         * the editor is where they say so.
-         */
+        /** The layout a fresh install gets: the day in the order it happens, quick links on top. */
         val defaultOrder: List<HomeSection> = listOf(Shortcuts, Exam, Today, Mensa, Grades)
 
         fun parse(raw: String): HomeSection? = entries.firstOrNull { it.name == raw }
@@ -72,25 +35,27 @@ enum class HomeSection(
 }
 
 /**
- * Which Home blocks are shown, and in what order.
+ * The order the Home blocks are in.
  *
- * Order and visibility are stored separately rather than as one "visible list": a hidden block
- * keeps its place, so turning it back on puts it where it was instead of at the bottom. That is
- * the difference between a toggle and a delete, and the editor offers a toggle.
+ * **Order only — nothing can be switched off.** Hiding blocks was the other half of this and it
+ * is gone: it turned Home into a screen you had to configure before it was useful, it could be
+ * emptied completely (which needed its own empty state to dig yourself back out of), and the
+ * thing people actually wanted was to put the block they look at first at the top. Every block
+ * is always present; you choose where.
  */
 @Serializable
 data class HomeLayout(
     val order: List<String> = HomeSection.defaultOrder.map { it.name },
-    val hidden: Set<String> = emptySet(),
 ) {
     /**
-     * The layout as the screen should use it: known sections only, every section present
-     * exactly once, in the saved order with anything new appended.
+     * The layout as the screen should use it: known sections only, every section present exactly
+     * once, in the saved order with anything new appended.
      *
      * Everything here is a *forward-compatibility* concern rather than defensive padding. A
-     * layout saved by an older build won't mention a section added since, and a layout saved by
-     * a newer one may mention a section this build doesn't have — both have to resolve to
-     * something sensible instead of a Home screen with a missing block or a crash.
+     * layout saved by an older build won't mention a section added since, and one saved by a
+     * newer build may mention a section this build doesn't have — both have to resolve to
+     * something sensible instead of a Home screen with a missing block or a crash. Dropping a
+     * section (`NextLesson`) rides on the same path: its name no longer parses and falls out.
      */
     val sanitized: List<HomeSection>
         get() {
@@ -100,22 +65,9 @@ data class HomeLayout(
         }
 
     /** The sections to render, in order. */
-    val visible: List<HomeSection> get() = sanitized.filter { it.name !in hidden }
+    val visible: List<HomeSection> get() = sanitized
 
-    fun isVisible(section: HomeSection): Boolean = section.name !in hidden
-
-    fun toggled(section: HomeSection): HomeLayout = copy(
-        hidden = if (section.name in hidden) hidden - section.name else hidden + section.name,
-        // Persist the full resolved order alongside the change, so a layout written by this
-        // build always names every section this build knows about.
-        order = sanitized.map { it.name },
-    )
-
-    /**
-     * [from] and [to] index into [sanitized] — i.e. into the editor's list, which shows hidden
-     * sections too. Moving is independent of visibility on purpose: you arrange the shelf, then
-     * decide what sits on it.
-     */
+    /** [from] and [to] index into [sanitized]. */
     fun moved(from: Int, to: Int): HomeLayout {
         val list = sanitized.toMutableList()
         if (from !in list.indices || to !in list.indices || from == to) return this

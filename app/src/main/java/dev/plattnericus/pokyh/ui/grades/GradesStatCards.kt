@@ -96,8 +96,8 @@ private enum class StatSize {
     val blockGap: Dp get() = if (compact) PokyhSpacing.md else PokyhSpacing.lg
 }
 
-/** How many recent entries the square tile can show in full. */
-private const val CompactRecentCount = 2
+/** How many recent entries the card shows — the same three at either size. */
+private const val RecentCount = 3
 
 /** The small rounded pill in a card's top-right corner. */
 @Composable
@@ -435,7 +435,6 @@ internal fun DistributionStatCard(
     compact: Boolean = false,
 ) {
     val size = if (compact) StatSize.Compact else StatSize.Full
-    val colors = PokyhTheme.colors
     PokyhCard(modifier = modifier, padding = size.padding) {
         CardHeader(
             title = "Notenverteilung",
@@ -458,25 +457,10 @@ internal fun DistributionStatCard(
                         Modifier.size(168.dp)
                     },
                 )
-                // The count, in the hole of the ring.
-                //
-                // This card was the only one of the four without a number of its own: three
-                // cards led with a figure and this one led with a shape, so at a glance it read
-                // as decoration. The donut's own hole is the obvious place for it — it is the
-                // total the arcs are shares of — and it costs no height, which a square tile has
-                // none of to spare.
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "${dashboard.allCount}",
-                        style = if (compact) PokyhType.statSmall else PokyhType.statMedium,
-                        color = colors.textPrimary,
-                    )
-                    Text(
-                        text = if (dashboard.allCount == 1) "Note" else "Noten",
-                        style = PokyhType.caption2,
-                        color = colors.textTertiary,
-                    )
-                }
+                // Nothing in the hole of the ring. A grade total used to sit there, on the
+                // argument that every other card leads with a number — but it is the one figure
+                // on the card that the arcs are not about, it took the centre of the eye from
+                // the shape that is, and the screen's own eyebrow already counts the grades.
             }
         }
         Spacer(Modifier.size(PokyhSpacing.md))
@@ -594,39 +578,70 @@ internal fun RecentStatCard(
             return@PokyhCard
         }
         Spacer(Modifier.size(size.blockGap))
-        // A square tile fits two entries, not three: at ~150dp, minus padding, header and the
-        // gaps, the third row ran past the bottom edge and was clipped mid-line. Showing two
-        // whole entries beats showing two and a half.
-        val shown = if (compact) dashboard.recent.take(CompactRecentCount) else dashboard.recent
-        shown.forEachIndexed { index, item ->
-            if (index > 0) {
-                Spacer(Modifier.size(if (compact) PokyhSpacing.sm else PokyhSpacing.md))
-                Box(Modifier.fillMaxWidth().height(1.dp).background(colors.separator))
-                Spacer(Modifier.size(if (compact) PokyhSpacing.sm else PokyhSpacing.md))
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        // **All three, in the square tile too, sharing its height in equal bands.** Two used to
+        // be the compact limit because the third row ran past the bottom edge and was clipped
+        // mid-line — each entry stacked its date under its subject between two 12dp gaps and a
+        // rule, about 48dp of tile per grade. A compact entry is now one line, and the three of
+        // them are laid out by `weight` rather than stacked at the top: the list takes whatever
+        // the header leaves and divides it, so the rows reach the bottom edge instead of
+        // crowding into the upper half, and they cannot overrun it however tall the tile is or
+        // how large the system font is set.
+        //
+        // The weights are compact-only, and have to be. The full-width card has no fixed height
+        // — it wraps its content — so there is no leftover space for a weight to divide, and
+        // asking for one would collapse every row to nothing.
+        val shown = dashboard.recent.take(RecentCount)
+        Column(modifier = if (compact) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth()) {
+            shown.forEachIndexed { index, item ->
+                if (index > 0) {
+                    if (!compact) Spacer(Modifier.size(PokyhSpacing.md))
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(colors.separator))
+                    if (!compact) Spacer(Modifier.size(PokyhSpacing.md))
+                }
+                Row(
+                    modifier = if (compact) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+                ) {
+                    if (compact) {
+                        Text(
+                            text = item.subject,
+                            style = PokyhType.footnote.semibold(),
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Text(
+                            text = Fmt.dateShort(item.date),
+                            style = PokyhType.caption2.monospacedDigits(),
+                            color = colors.textTertiary,
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.weight(1f))
+                    } else {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = item.subject,
+                                style = PokyhType.headline,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = Fmt.dateShort(item.date),
+                                style = PokyhType.caption2.monospacedDigits(),
+                                color = colors.textTertiary,
+                            )
+                        }
+                    }
                     Text(
-                        text = item.subject,
-                        style = if (compact) PokyhType.footnote.semibold() else PokyhType.headline,
-                        color = colors.textPrimary,
+                        text = Fmt.num(item.numeric),
+                        style = (if (compact) PokyhType.footnote.semibold() else PokyhType.title3).monospacedDigits(),
+                        color = bandColor(gradeBand(item.numeric)),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = Fmt.dateShort(item.date),
-                        style = PokyhType.caption2.monospacedDigits(),
-                        color = colors.textTertiary,
                     )
                 }
-                Text(
-                    text = Fmt.num(item.numeric),
-                    style = (if (compact) PokyhType.headline else PokyhType.title3).monospacedDigits(),
-                    color = bandColor(gradeBand(item.numeric)),
-                )
             }
         }
     }

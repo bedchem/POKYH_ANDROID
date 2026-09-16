@@ -49,7 +49,7 @@ class LockViewModel @Inject constructor(
     /** LockView.swift `app.showAddAccount = true` — opens the add-account/password-login flow;
      * whatever hosts [LockScreen] shows [dev.plattnericus.pokyh.ui.login.LoginScreen] (isAdditional
      * = true) while [dev.plattnericus.pokyh.state.AppState.showAddAccount] stays true. */
-    fun addAccount() = appState.addAccount()
+    fun addAccount(prefillUsername: String? = null) = appState.addAccount(prefillUsername)
 
     /**
      * Builds the session for [username] (or the default/last-active account) — call ONLY after

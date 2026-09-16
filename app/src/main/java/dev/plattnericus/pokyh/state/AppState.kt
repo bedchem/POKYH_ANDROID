@@ -9,6 +9,11 @@ import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.MessageFolder
 import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.data.model.UserSession
+import dev.plattnericus.pokyh.core.status.PokyhService
+import dev.plattnericus.pokyh.core.status.NetworkMonitor
+import dev.plattnericus.pokyh.core.status.ServiceHealth
+import dev.plattnericus.pokyh.core.status.ServiceState
+import dev.plattnericus.pokyh.core.status.unreachable
 import dev.plattnericus.pokyh.data.storage.DiskCache
 import dev.plattnericus.pokyh.data.storage.PreferencesStore
 import dev.plattnericus.pokyh.data.storage.SecureCredentialStore
@@ -52,6 +57,8 @@ class AppState @Inject constructor(
     private val diskCache: DiskCache,
     private val notifications: PokyhNotifications,
     private val widgetDataBridge: WidgetDataBridge,
+    private val serviceHealth: ServiceHealth,
+    private val networkMonitor: NetworkMonitor,
 ) {
     /** `AppState.Phase` (Store.swift) — which top-level screen currently owns the UI. */
     sealed interface Phase {
@@ -108,6 +115,18 @@ class AppState @Inject constructor(
     /** Offline mode active (cached data shown, real login didn't make it in time). */
     private val _isOffline = MutableStateFlow(false)
     val isOffline: StateFlow<Boolean> = _isOffline.asStateFlow()
+
+    /**
+     * Which servers are answering, for the app-wide status strip.
+     *
+     * Re-exposed from [ServiceHealth] here because the shell already takes an `AppState` and
+     * nothing else about it is a ViewModel — threading a second singleton through the composable
+     * tree to say one thing would be ceremony.
+     */
+    val serviceStates: StateFlow<Map<PokyhService, ServiceState>> get() = serviceHealth.states
+
+    /** Whether the phone itself has a usable network — see [NetworkMonitor]. */
+    val deviceOnline: StateFlow<Boolean> get() = networkMonitor.online
 
     private val _statusText = MutableStateFlow("")
     val statusText: StateFlow<String> = _statusText.asStateFlow()
@@ -179,10 +198,21 @@ class AppState @Inject constructor(
 
     // ── Login ─────────────────────────────────────────────────────────────────
 
-    /** New/manual login (LoginView "Anmelden"). Never offline-falls-back — there is nothing
-     * cached yet for a brand-new account, so this always waits for the real round-trip. */
+    /**
+     * New/manual login (LoginView "Anmelden").
+     *
+     * **Falls back to the cached session only for an account this device already knows, and only
+     * when the typed password matches the stored one.** A brand-new account has nothing cached
+     * and nothing to check a password against, so it waits for the real round-trip however long
+     * that takes — but someone who types the right password for an account they are already
+     * signed into should not be locked out of their own timetable because WebUntis is down. That
+     * is the same trust the lock screen already places in the Keystore-encrypted store when it
+     * restores a session behind a fingerprint; typing the password is, if anything, the stronger
+     * proof of the two.
+     */
     suspend fun login(username: String, password: String, save: Boolean = true) {
-        performLogin(username, password, save, allowOffline = false)
+        val stored = credentialStore.getCredentials(username)?.second
+        performLogin(username, password, save, allowOffline = stored != null && stored == password)
     }
 
     /** Re-login for an already-saved account (Face-ID unlock, silent relaunch) — races
@@ -232,7 +262,15 @@ class AppState @Inject constructor(
             try {
                 finalize(loginDeferred.await(), save, password, viaSheet)
             } catch (e: Throwable) {
-                _error.value = errorMessage(e)
+                // Say which of the two it was. “Keine Verbindung” on an account that simply
+                // has no stored copy yet reads as a bug in the app; the real answer is that
+                // there is nothing to open offline until it has been opened online once.
+                _error.value = if (e.isNetworkError() && !allowOffline) {
+                    "Ohne Internet lässt sich nur ein Konto öffnen, das auf diesem Gerät schon " +
+                        "einmal angemeldet war — mit dem dort gespeicherten Passwort."
+                } else {
+                    errorMessage(e)
+                }
             }
             _busy.value = false
             _statusText.value = ""
@@ -410,6 +448,11 @@ class AppState @Inject constructor(
         _session.value = snap
         _phase.value = Phase.Authed
         _isOffline.value = true
+        // Reaching this line *means* WebUntis did not answer the login — either it failed or it
+        // ran past the offline timeout. Say so straight away instead of waiting for the
+        // interceptor's second strike, which offline may never arrive: the banner explaining why
+        // this session is cached has to be on screen from the moment the session is.
+        serviceHealth.markDown(PokyhService.UNTIS, "Anmeldung nicht möglich")
         scope.launch { prefsStore.setLastActive(snap.username) }
     }
 
@@ -448,9 +491,36 @@ class AppState @Inject constructor(
         imageUrl = null,
     )
 
-    private fun errorMessage(e: Throwable): String = (e as? AppError)?.message ?: e.message ?: "Unbekannter Fehler."
+    /**
+     * A login failure, phrased so it points at something the reader can act on.
+     *
+     * A raw `UnknownHostException` or an OkHttp timeout message on the login screen reads as
+     * "the app is broken", when the actual situation is one of three very different things —
+     * the phone has no connection, WebUntis is down, or the credentials are wrong — and only the
+     * last one is answered by trying again. [ServiceHealth] already knows which server stopped
+     * answering, so the message says it.
+     */
+    private fun errorMessage(e: Throwable): String {
+        if (e is AppError) return e.message ?: "Unbekannter Fehler."
+        if (!e.isNetworkError()) return e.message ?: "Unbekannter Fehler."
+        val down = serviceHealth.states.value.unreachable()
+        return when {
+            down.isEmpty() -> "Keine Verbindung. Prüfe dein WLAN oder mobiles Netz."
+            else -> "${down.joinToString(" & ") { it.label }} ist nicht erreichbar. " +
+                "Versuch es später noch einmal."
+        }
+    }
 
-    private fun Throwable.isNetworkError(): Boolean = this is IOException
+    /**
+     * Was this a connectivity failure?
+     *
+     * **Both forms count.** The clients catch [IOException] and rethrow it as an [AppError]
+     * carrying a readable message, so by the time a login failure reaches here the original
+     * type is usually gone. Testing only `is IOException` is what stopped a saved account from
+     * signing in offline: the fallback to the stored session never fired, and the screen showed
+     * the words “Keine Verbindung” while refusing to act on it.
+     */
+    private fun Throwable.isNetworkError(): Boolean = this is IOException || (this is AppError && isNetwork)
 
     // ── Account list bookkeeping (PreferencesStore-backed) ───────────────────
 
@@ -534,8 +604,8 @@ class AppState @Inject constructor(
     }
 
     /** Opens the "add account" flow — a screens-phase LoginScreen reacts to [showAddAccount]. */
-    fun addAccount() {
-        _prefillUsername.value = null
+    fun addAccount(prefillUsername: String? = null) {
+        _prefillUsername.value = prefillUsername
         _showAddAccount.value = true
     }
 
@@ -546,6 +616,9 @@ class AppState @Inject constructor(
         if (_session.value?.username == username) {
             _session.value = null
             _isOffline.value = false
+            // The next account gets a clean slate: this one's outage is not theirs, and an
+            // amber bar left over from a signed-out session would be explaining nothing.
+            serviceHealth.reset()
             _phase.value = if (_accounts.value.isEmpty()) Phase.Login else Phase.Lock
         }
     }
@@ -559,6 +632,7 @@ class AppState @Inject constructor(
         if (_session.value?.username == username) {
             _session.value = null
             _isOffline.value = false
+            serviceHealth.reset()
         }
     }
 

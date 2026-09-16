@@ -16,6 +16,8 @@ import dev.plattnericus.pokyh.data.model.DishRatingsResponse
 import dev.plattnericus.pokyh.data.model.MenuResponse
 import dev.plattnericus.pokyh.data.model.toDomain
 import dev.plattnericus.pokyh.data.network.Config
+import dev.plattnericus.pokyh.core.status.PokyhService
+import dev.plattnericus.pokyh.core.status.ServiceHealth
 import dev.plattnericus.pokyh.data.storage.DiskCache
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -48,6 +50,7 @@ import kotlin.coroutines.resumeWithException
 class BackendClient @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val diskCache: DiskCache,
+    private val serviceHealth: ServiceHealth,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -279,6 +282,35 @@ class BackendClient @Inject constructor(
     }
 
     /**
+     * Der Speiseplan samt Herkunft — für die „Stand …"-Anzeige.
+     *
+     * [dishes] wirft bei Netzproblemen nicht, sondern fällt still auf die Platte zurück, und
+     * genau das macht den Unterschied unsichtbar: der Screen zeigt dann einen Plan von letzter
+     * Woche, ohne es zu sagen. Diese Variante gibt zusätzlich zurück, ob der Plan vom Netz kam
+     * und wann die Kopie geschrieben wurde.
+     */
+    suspend fun dishesWithFreshness(force: Boolean = false): DishesResult {
+        val before = serviceHealth.states.value[PokyhService.BACKEND]?.lastOkAt ?: 0L
+        val dishes = dishes(force)
+        val after = serviceHealth.states.value[PokyhService.BACKEND]?.lastOkAt ?: 0L
+        // Hat der Server während dieses Aufrufs geantwortet, ist der Plan frisch. Das ist
+        // zuverlässiger als ein Flag im Client: die Antwort kann aus dem RAM-Cache eines
+        // Aufrufs von vor zwei Minuten stammen, der sehr wohl frisch war.
+        val fresh = after > before || (after > 0L && System.currentTimeMillis() - after < DishFreshWindowMs)
+        return DishesResult(
+            dishes = dishes,
+            savedAt = if (fresh) System.currentTimeMillis() else (diskCache.savedAt(dishDiskKey) ?: 0L),
+            stale = !fresh,
+        )
+    }
+
+    data class DishesResult(val dishes: List<Dish>, val savedAt: Long, val stale: Boolean)
+
+    /** Innerhalb dieser Spanne gilt eine Backend-Antwort als „gerade eben" — deckt den RAM-Cache
+     * ab, dessen TTL fünf Minuten beträgt. */
+    private val DishFreshWindowMs = 300_000L
+
+    /**
      * Der zuletzt gespeicherte Speiseplan von der Platte, ohne Netz.
      *
      * Dafür gedacht, dass ein Screen beim Kaltstart sofort etwas anzeigen kann, während
@@ -302,7 +334,7 @@ class BackendClient @Inject constructor(
             execute(request)
         } catch (e: IOException) {
             dishesFallback()?.let { return it }
-            throw AppError("Mensa nicht ladbar (keine Verbindung).")
+            throw AppError.noConnection("Mensa nicht ladbar (keine Verbindung).")
         }
         return response.use { resp ->
             val text = resp.body?.string().orEmpty()
@@ -519,7 +551,7 @@ class BackendClient @Inject constructor(
         val response = try {
             execute(builder.build())
         } catch (e: IOException) {
-            throw AppError("Keine Verbindung")
+            throw AppError.noConnection()
         }
         return response.use { resp ->
             val text = resp.body?.string().orEmpty()

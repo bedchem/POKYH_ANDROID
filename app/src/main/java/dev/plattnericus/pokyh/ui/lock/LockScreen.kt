@@ -116,9 +116,17 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
                 onFailed = {},
             )
         } else {
-            // No usable biometric — same outcome as a failed attempt (pushes into the
-            // account-chooser/password fallback instead of silently logging in unverified).
+            // **No usable biometric is a dead end, not a failed attempt.** Counting a failure and
+            // stopping is what this used to do, and on a device with no enrolled fingerprint — or
+            // one sitting in biometric lockout — tapping your own saved account then did visibly
+            // nothing at all, forever. Signing in unverified is not the answer either, so it
+            // opens the password sheet on that account: still a credential check, and one that
+            // works with no internet, against the stored password.
             failures++
+            if (username != null) {
+                viewModel.addAccount(username)
+                showAddAccountSheet = true
+            }
         }
     }
 

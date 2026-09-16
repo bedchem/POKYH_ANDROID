@@ -101,6 +101,34 @@ data class TimetableEntry(
     var originalRoom: String? = null,
     var note: String? = null,
     var examDescription: String? = null,
+    /**
+     * The teachers/subjects/rooms WebUntis marks as *not regular* for this occurrence — the
+     * stand-in teacher, the swapped subject, the room that was added.
+     *
+     * These come from `position*[].current.status` and are the only signal WebUntis gives for
+     * most changes: it leaves `removed` null and simply flags the new value as `ADDED` (or
+     * `SUBSTITUTED`) next to the ones that stayed `REGULAR`. Reading only `original*` therefore
+     * missed every room change in practice — see `parseTimetable`.
+     *
+     * They are subsets of [teacherName]/[subjectName]/[roomName], which stay the full list, so a
+     * cell can draw all its rooms and highlight only the one that is new.
+     */
+    var addedTeachers: List<String> = emptyList(),
+    var addedSubjects: List<String> = emptyList(),
+    var addedRooms: List<String> = emptyList(),
+    /**
+     * WebUntis's own `icons` array for this period, verbatim — `"HOMEWORK"`, `"NOTES"`,
+     * `"EXAM"`, `"ATTACHMENT"`, and whatever else a given server sends.
+     *
+     * Kept as the raw strings rather than mapped to an enum at the edge, so a name this app has
+     * never seen still arrives intact and can be shown as a generic marker instead of being
+     * silently dropped. [dev.plattnericus.pokyh.ui.theme.lessonMarkIcon] does the mapping.
+     */
+    var icons: List<String> = emptyList(),
+    /** The stand-in note WebUntis attaches to a substitution, separate from [note]. */
+    var substitutionText: String? = null,
+    /** `lessonText` — the teacher's free text for the period, separate from `lessonInfo`. */
+    var lessonText: String? = null,
 )
 
 // ── Grades ───────────────────────────────────────────────────────────────

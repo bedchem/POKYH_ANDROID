@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -29,6 +28,9 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.rememberNavController
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.navigation.AppTab
+import dev.plattnericus.pokyh.ui.components.AnimatedCheck
+import dev.plattnericus.pokyh.ui.components.BrandSpinner
+import dev.plattnericus.pokyh.ui.components.OfflineNotice
 import dev.plattnericus.pokyh.ui.navigation.PokyhBottomNav
 import dev.plattnericus.pokyh.ui.navigation.PokyhNavHost
 import dev.plattnericus.pokyh.ui.navigation.PokyhNavItem
@@ -58,6 +60,8 @@ fun PokyhApp(appState: AppState) {
     val busy by appState.busy.collectAsStateWithLifecycle()
     val isOffline by appState.isOffline.collectAsStateWithLifecycle()
     val statusText by appState.statusText.collectAsStateWithLifecycle()
+    val serviceStates by appState.serviceStates.collectAsStateWithLifecycle()
+    val deviceOnline by appState.deviceOnline.collectAsStateWithLifecycle()
 
     // Brief, skippable success confirmation on Login/Lock -> Authed, so signing in resolves
     // instead of cutting straight to the tab shell. Purely additive: reacts to the existing
@@ -68,7 +72,9 @@ fun PokyhApp(appState: AppState) {
     LaunchedEffect(phase) {
         if (phase == AppState.Phase.Authed && previousPhase != AppState.Phase.Authed) {
             showSuccessFlash = true
-            delay(500)
+            // Long enough for the tick to finish being drawn and register as finished.
+            // At 500ms the stroke was still travelling when the overlay disappeared.
+            delay(950)
             showSuccessFlash = false
         }
         previousPhase = phase
@@ -85,9 +91,24 @@ fun PokyhApp(appState: AppState) {
             SwitchingOverlay(statusText.ifEmpty { "Lädt…" })
         }
 
-        if (isOffline && phase == AppState.Phase.Authed) {
-            OfflineBanner(
-                Modifier
+        // Above every screen and its top bar: an outage is a property of the app, not of
+        // whichever tab is open, and it has to be seen without hunting for it.
+        //
+        // **Signed in only.** The Login and Lock screens have their own error line for a
+        // failed attempt, and a banner there would be answering a question nobody has asked
+        // yet — it belongs where it explains something already on screen: data that may be
+        // out of date.
+        if (phase == AppState.Phase.Authed) {
+            OfflineNotice(
+                states = serviceStates,
+                isOffline = isOffline,
+                deviceOnline = deviceOnline,
+                // Only the success check holds it back, and only for the ~1s it is on
+                // screen. It used to wait on `busy` as well, which couples the one thing
+                // the user has to be told to a flag set in half a dozen places — if any of
+                // them leaves it stuck, the banner never appears at all.
+                ready = !showSuccessFlash,
+                modifier = Modifier
                     .align(Alignment.TopCenter)
                     .systemBarsPadding()
                     .padding(top = PokyhSpacing.sm),
@@ -202,7 +223,7 @@ private fun SuccessFlash() {
                 .popIn(),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(PokyhIcons.check, contentDescription = null, tint = Brand.onAccent, modifier = Modifier.size(38.dp))
+            AnimatedCheck(color = Brand.onAccent, strokeWidth = 4.dp, modifier = Modifier.size(42.dp))
         }
     }
 }
@@ -223,28 +244,9 @@ private fun SwitchingOverlay(text: String) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
         ) {
-            CircularProgressIndicator(color = Brand.accent, strokeWidth = 3.dp, modifier = Modifier.size(30.dp))
+            BrandSpinner(color = Brand.accent, strokeWidth = 3.dp, modifier = Modifier.size(32.dp))
             Text(text, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
         }
     }
 }
 
-/** A slim top capsule. Floating chrome like the bottom nav, so it keeps a visible shadow rather
- * than the near-flat card default. */
-@Composable
-private fun OfflineBanner(modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .floatingSurface(shape = PokyhShapes.pill, color = Brand.warning)
-            .padding(horizontal = PokyhSpacing.lg, vertical = PokyhSpacing.sm),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(PokyhIcons.offline, contentDescription = null, tint = Brand.onAccent, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.size(PokyhSpacing.sm))
-        Text(
-            text = "Offline – gespeicherte Daten",
-            style = PokyhType.caption,
-            color = Brand.onAccent,
-        )
-    }
-}

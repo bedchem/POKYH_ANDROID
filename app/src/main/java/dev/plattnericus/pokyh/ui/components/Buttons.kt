@@ -158,7 +158,7 @@ private fun ButtonShell(
         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm, Alignment.CenterHorizontally),
     ) {
         if (loading) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = contentColor, strokeWidth = 2.dp)
+            BrandSpinner(color = contentColor, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
         } else if (icon != null) {
             Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(18.dp))
         }

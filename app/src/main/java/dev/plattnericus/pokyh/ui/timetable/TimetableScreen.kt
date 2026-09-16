@@ -60,6 +60,7 @@ import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.SlotKind
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
 import dev.plattnericus.pokyh.data.untis.changes
+import dev.plattnericus.pokyh.ui.components.AsOfLabel
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.PokyhDayPills
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
@@ -165,10 +166,13 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
         },
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding)) {
+            val shownPage = pages[ui.weekOffset] as? WeekPageState.Data
             WeekHeader(
                 offset = ui.weekOffset,
                 rangeText = viewModel.rangeText(ui.weekOffset),
                 weekNumber = viewModel.weekNumber(ui.weekOffset),
+                savedAt = shownPage?.savedAt ?: 0L,
+                stale = shownPage?.stale == true,
                 onPrev = { viewModel.setWeekOffset((ui.weekOffset - 1).coerceIn(-TIMETABLE_PAGE_SPAN, TIMETABLE_PAGE_SPAN)) },
                 onNext = { viewModel.setWeekOffset((ui.weekOffset + 1).coerceIn(-TIMETABLE_PAGE_SPAN, TIMETABLE_PAGE_SPAN)) },
                 onToday = { viewModel.goToday() },
@@ -219,7 +223,16 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
  * different schedules.
  */
 @Composable
-private fun WeekHeader(offset: Int, rangeText: String, weekNumber: Int, onPrev: () -> Unit, onNext: () -> Unit, onToday: () -> Unit) {
+private fun WeekHeader(
+    offset: Int,
+    rangeText: String,
+    weekNumber: Int,
+    savedAt: Long,
+    stale: Boolean,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onToday: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -249,6 +262,8 @@ private fun WeekHeader(offset: Int, rangeText: String, weekNumber: Int, onPrev: 
                     color = PokyhTheme.colors.textSecondary,
                 )
             }
+            // Only shows over a week restored from the disk — see [AsOfLabel].
+            AsOfLabel(savedAt = savedAt, stale = stale)
         }
         PokyhIconButton(
             icon = PokyhIcons.chevronRight,

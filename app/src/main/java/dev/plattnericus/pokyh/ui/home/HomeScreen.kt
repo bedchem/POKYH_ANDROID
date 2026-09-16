@@ -1,13 +1,12 @@
 package dev.plattnericus.pokyh.ui.home
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn as animateFadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -30,11 +29,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +43,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,6 +59,7 @@ import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.SlotKind
+import dev.plattnericus.pokyh.ui.components.AsOfLabel
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.IconTile
 import dev.plattnericus.pokyh.ui.components.MensaDayCardSkeleton
@@ -82,7 +86,6 @@ import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.DecorativeTone
 import dev.plattnericus.pokyh.ui.theme.PokyhDecorative
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
-import dev.plattnericus.pokyh.ui.theme.PokyhMotion
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
@@ -109,11 +112,10 @@ import kotlinx.datetime.toLocalDateTime
  * [dev.plattnericus.pokyh.ui.components.PokyhTopBar] title, so the greeting itself carries the
  * screen's [PokyhType.display] heading and hosts the Messages/Profile actions.
  *
- * **What Home shows, and in what order, belongs to the user.** The blocks come from
- * [HomeLayout]; the pencil in the greeting row opens [HomeEditor], where they can be dragged
- * into a different order and switched on or off. The default is still the day in the order it
- * happens — quick links, next exam, today's lessons, today's menu, newest grades — so a user who
- * never opens the editor sees exactly what they saw before.
+ * **The order of the blocks belongs to the user.** They come from [HomeLayout]; the pencil in
+ * the greeting row arms arrange mode *on this screen*, where a long press lifts a card and
+ * moves it. Nothing can be switched off — the default order is the day in the order it
+ * happens: quick links, next exam, today’s lessons, today’s menu, newest grades.
  */
 @Composable
 fun HomeScreen(
@@ -122,12 +124,11 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val layout by viewModel.layout.collectAsStateWithLifecycle()
-    val editing by viewModel.editing.collectAsStateWithLifecycle()
+    val arranging by viewModel.editing.collectAsStateWithLifecycle()
 
-    // In edit mode the system back gesture closes the editor rather than leaving Home. Without
-    // this, backing out of "arrange my home screen" would drop you into the previous tab with
-    // the editor still the thing Home would show on return — a state you never asked to be in.
-    BackHandler(enabled = editing) { viewModel.setEditing(false) }
+    // Back leaves arrange mode rather than the tab — the same expectation any editable
+    // surface sets, and cheaper than making the user find the Fertig button again.
+    BackHandler(enabled = arranging) { viewModel.setEditing(false) }
 
     Box(modifier = Modifier.fillMaxSize().appBackground()) {
         if (state.error != null) {
@@ -135,83 +136,142 @@ fun HomeScreen(
             return@Box
         }
 
-        // Editor and content crossfade in place rather than pushing a route: you are editing
-        // *this* screen, and watching it become editable says that better than a new screen
-        // would. It also keeps the greeting and the pencil on screen throughout.
-        AnimatedContent(
-            targetState = editing,
-            transitionSpec = {
-                animateFadeIn(tween(PokyhMotion.durationStandard)) togetherWith
-                    fadeOut(tween(PokyhMotion.durationFast))
-            },
-            label = "homeMode",
-        ) { isEditing ->
-            if (isEditing) {
-                HomeEditor(
-                    layout = layout,
-                    session = state.session,
-                    onMove = viewModel::moveSection,
-                    onToggle = viewModel::toggleSection,
-                    onReset = viewModel::resetLayout,
-                    onDone = { viewModel.setEditing(false) },
-                )
-            } else {
-                HomeContent(
-                    state = state,
-                    layout = layout,
-                    onNavigate = onNavigate,
-                    onEdit = { viewModel.setEditing(true) },
-                    viewModel = viewModel,
-                )
-            }
-        }
+        HomeContent(
+            state = state,
+            layout = layout,
+            arranging = arranging,
+            onNavigate = onNavigate,
+            onSetArranging = viewModel::setEditing,
+            onOrderChanged = viewModel::setOrder,
+            viewModel = viewModel,
+        )
     }
 }
 
+/**
+ * Home, and the same Home while it is being rearranged.
+ *
+ * **There is no editor screen any more.** Arranging used to crossfade Home out for a list of
+ * labelled rows, which meant choosing an order for blocks you could not see — the thing being
+ * arranged was a name, not the card you actually recognise. Here the blocks are the real ones,
+ * with their real content, and they move where they sit.
+ *
+ * **Nothing drags until the pencil says so.** A long press is also how the app scrolls, taps
+ * and opens things, and a Home screen whose cards come loose under a resting thumb would be a
+ * worse screen the other 99% of the time. The pencil arms it; then a long press lifts a card.
+ */
 @Composable
 private fun HomeContent(
     state: HomeViewModel.UiState,
     layout: HomeLayout,
+    arranging: Boolean,
     onNavigate: (String) -> Unit,
-    onEdit: () -> Unit,
+    onSetArranging: (Boolean) -> Unit,
+    onOrderChanged: (List<HomeSection>) -> Unit,
     viewModel: HomeViewModel,
 ) {
-    val sections = layout.visible
+    val saved = layout.visible
+    val listState = rememberLazyListState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = PokyhSpacing.screenH)
-            .padding(top = PokyhSpacing.lg, bottom = PokyhSpacing.xxxl),
+    // **The order being dragged lives here, not in DataStore.** Each swap used to go out to
+    // disk and come back through a Flow before the list saw it, so the neighbour stepped
+    // aside a beat after the finger had already passed it — the lag *was* the bad feel. The
+    // screen now reorders itself on the spot and writes once, when the card is set down.
+    var working by remember { mutableStateOf(saved) }
+    val reorder = rememberReorderState(listState) { from, to ->
+        // ReorderState speaks in LazyColumn indices, and index 0 is the greeting, not a card.
+        // Shift into `working`'s indices, and refuse any swap with the greeting itself —
+        // otherwise every move lands one slot off and a card can be dropped above the header.
+        val f = from - HeaderItems
+        val t = to - HeaderItems
+        if (f in working.indices && t in working.indices) {
+            working = working.toMutableList().also { it.add(t, it.removeAt(f)) }
+            true
+        } else {
+            false
+        }
+    }
+
+    // Adopt an order that changed elsewhere — keyed on the *saved* order alone.
+    //
+    // It used to be keyed on the drag state as well, and that was the snap-back: the moment the
+    // finger lifted, this ran with the saved order still being the old one (the write had only
+    // just been sent), put the list back how it was, and then the write landed and put it
+    // forward again. Keyed on `saved` only, releasing a card changes nothing here; when the
+    // write comes back it matches `working` already and there is nothing to move.
+    LaunchedEffect(saved) {
+        if (!reorder.isDragging && reorder.settlingKey == null) working = saved
+    }
+    // One write per drag, on release.
+    var wasDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(reorder.isDragging) {
+        if (wasDragging && !reorder.isDragging) onOrderChanged(working)
+        wasDragging = reorder.isDragging
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = PokyhSpacing.screenH,
+            end = PokyhSpacing.screenH,
+            top = PokyhSpacing.lg,
+            bottom = PokyhSpacing.xxxl,
+        ),
         verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
+        // Dragging a card while the list is also flinging under it puts the two in a fight
+        // neither wins; the drag owns the scroll for its duration.
+        userScrollEnabled = !reorder.isDragging,
     ) {
-        GreetingHeader(
-            session = state.session,
-            onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
-            onProfile = { onNavigate(PokyhDestinations.PROFILE) },
-            onEdit = onEdit,
-            modifier = Modifier.fadeIn(),
-        )
+        item(key = "greeting") {
+            GreetingHeader(
+                session = state.session,
+                arranging = arranging,
+                onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
+                onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                onToggleArrange = { onSetArranging(!arranging) },
+                modifier = Modifier.fadeIn(),
+            )
+        }
 
-        sections.forEachIndexed { index, section ->
-            // The stagger is by *position on screen*, not by section identity, so a reordered
-            // Home still settles top to bottom.
+        itemsIndexed(working, key = { _, section -> section.name }) { index, section ->
             HomeSectionContent(
                 section = section,
                 state = state,
                 onNavigate = onNavigate,
                 viewModel = viewModel,
-                modifier = Modifier.fadeIn(40 + index * 40),
+                modifier = Modifier
+                    // Every card that is *not* in the hand slides to its new place instead
+                    // of teleporting there. Without it the list re-lays out in one frame and
+                    // the card you dragged past appears to blink to the other side.
+                    .animateItem(
+                        // …except the card in the hand. The reorder already pins it to the
+                        // finger, and a placement animation on top pulls it the other way on
+                        // every swap — that tug is the wobble.
+                        placementSpec = if (reorder.activeKey == section.name) {
+                            null
+                        } else {
+                            spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMediumLow,
+                                visibilityThreshold = IntOffset.VisibilityThreshold,
+                            )
+                        },
+                    )
+                    // The stagger is by *position on screen*, not by section identity, so a
+                    // reordered Home still settles top to bottom.
+                    .fadeIn(40 + index * 40)
+                    .then(
+                        if (arranging) {
+                            Modifier.reorderable(reorder, section.name)
+                        } else {
+                            Modifier
+                        },
+                    ),
             )
-        }
-
-        if (sections.isEmpty()) {
-            EmptyLayoutNotice(onEdit = onEdit)
         }
     }
 }
-
 /** Every Home block dispatches from here — see [HomeSection]. */
 @Composable
 private fun HomeSectionContent(
@@ -230,12 +290,6 @@ private fun HomeSectionContent(
             modifier = modifier,
         )
 
-        HomeSection.NextLesson -> NextLessonSection(
-            loading = state.loadingToday,
-            slots = state.todaySlots,
-            modifier = modifier,
-        )
-
         HomeSection.Exam -> {
             val exam = state.nextExam
             when {
@@ -248,6 +302,8 @@ private fun HomeSectionContent(
         HomeSection.Today -> TodaySection(
             loading = state.loadingToday,
             slots = state.todaySlots,
+            savedAt = state.todaySavedAt,
+            stale = state.todayStale,
             modifier = modifier,
         )
 
@@ -255,34 +311,22 @@ private fun HomeSectionContent(
             loading = state.loadingMensa,
             week = state.mensaWeek,
             weekLabel = state.mensaWeekLabel,
+            savedAt = state.mensaSavedAt,
+            stale = state.mensaStale,
             ratings = state.dishRatings,
             ratingsLoading = state.loadingDishRatings,
             onClick = viewModel::selectMensaTab,
             modifier = modifier,
         )
 
-        HomeSection.Grades -> {
-            if (state.loadingGrades || state.recentGrades.isNotEmpty()) {
-                GradesSection(
-                    loading = state.loadingGrades,
-                    grades = state.recentGrades,
-                    modifier = modifier,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyLayoutNotice(onEdit: () -> Unit) {
-    PokyhCard {
-        Text(
-            text = "Auf deiner Startseite ist gerade nichts eingeblendet.",
-            style = PokyhType.body,
-            color = PokyhTheme.colors.textPrimary,
+        // Always rendered, empty or not. It used to vanish when there was nothing in it,
+        // which made a block disappear from the middle of Home for a reason the reader
+        // could not see — and left a gap in an order they had arranged themselves.
+        HomeSection.Grades -> GradesSection(
+            loading = state.loadingGrades,
+            grades = state.recentGrades,
+            modifier = modifier,
         )
-        Spacer(Modifier.size(PokyhSpacing.md))
-        PokyhTextButton(text = "Startseite anpassen", icon = PokyhIcons.edit, onClick = onEdit)
     }
 }
 
@@ -296,9 +340,10 @@ private fun EmptyLayoutNotice(onEdit: () -> Unit) {
 @Composable
 private fun GreetingHeader(
     session: UserSession?,
+    arranging: Boolean,
     onMessages: () -> Unit,
     onProfile: () -> Unit,
-    onEdit: () -> Unit,
+    onToggleArrange: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = PokyhTheme.colors
@@ -311,24 +356,32 @@ private fun GreetingHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
         ) {
-            if (session != null) {
+            if (arranging) {
+                // The one line of instruction the mode needs, in the space the class label
+                // usually has. Without it the pencil arms something invisible.
+                PokyhLabel("Karte gedrückt halten zum Verschieben", modifier = Modifier.weight(1f))
+            } else if (session != null) {
                 val klasse = session.klasseName.ifEmpty { "LBS Brixen" }
                 PokyhLabel("$klasse · LBS Brixen", modifier = Modifier.weight(1f))
             } else {
                 Spacer(Modifier.weight(1f))
             }
-            PokyhIconButton(
-                icon = PokyhIcons.edit,
-                contentDescription = "Startseite anpassen",
-                onClick = onEdit,
-                tinted = true,
-            )
-            TabRootActions(
-                avatarContent = { CurrentUserAvatar() },
-                unreadMessages = rememberUnreadMessageCount(),
-                onMessages = onMessages,
-                onProfile = onProfile,
-            )
+            if (arranging) {
+                PokyhTextButton(text = "Fertig", onClick = onToggleArrange)
+            } else {
+                PokyhIconButton(
+                    icon = PokyhIcons.edit,
+                    contentDescription = "Startseite anordnen",
+                    onClick = onToggleArrange,
+                    tinted = true,
+                )
+                TabRootActions(
+                    avatarContent = { CurrentUserAvatar() },
+                    unreadMessages = rememberUnreadMessageCount(),
+                    onMessages = onMessages,
+                    onProfile = onProfile,
+                )
+            }
         }
         Spacer(Modifier.size(PokyhSpacing.md))
         Text("$greeting,", style = PokyhType.display, color = colors.textPrimary)
@@ -341,7 +394,6 @@ private fun GreetingHeader(
         )
     }
 }
-
 private fun currentGreeting(): String {
     val hour = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).hour
     return when (hour) {
@@ -376,162 +428,6 @@ private fun firstNameOf(session: UserSession?): String {
  * Hidden rows stay in place, dimmed, instead of moving to a separate list — so switching one
  * back on is one tap and it reappears exactly where the row sits.
  */
-@Composable
-private fun HomeEditor(
-    layout: HomeLayout,
-    session: UserSession?,
-    onMove: (Int, Int) -> Unit,
-    onToggle: (HomeSection) -> Unit,
-    onReset: () -> Unit,
-    onDone: () -> Unit,
-) {
-    val colors = PokyhTheme.colors
-    val sections = layout.sanitized
-    val listState = rememberLazyListState()
-    val reorder = rememberReorderState(listState, onMove)
-
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = PokyhSpacing.screenH,
-            end = PokyhSpacing.screenH,
-            top = PokyhSpacing.lg,
-            bottom = PokyhSpacing.xxxl,
-        ),
-        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
-    ) {
-        item(key = "editor-header") {
-            Column(Modifier.padding(bottom = PokyhSpacing.md)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    PokyhLabel("Startseite anpassen", modifier = Modifier.weight(1f))
-                    PokyhTextButton(text = "Fertig", onClick = onDone)
-                }
-                Spacer(Modifier.size(PokyhSpacing.sm))
-                Text(
-                    text = if (session != null) "Deine Startseite" else "Startseite",
-                    style = PokyhType.largeTitle,
-                    color = colors.textPrimary,
-                )
-                Spacer(Modifier.size(PokyhSpacing.sm))
-                Text(
-                    text = "Halte einen Abschnitt gedrückt, um ihn zu verschieben. Tippe auf das " +
-                        "Auge, um ihn ein- oder auszublenden.",
-                    style = PokyhType.footnote,
-                    color = colors.textSecondary,
-                )
-            }
-        }
-
-        itemsIndexed(sections, key = { _, section -> section.name }) { index, section ->
-            HomeEditorRow(
-                section = section,
-                visible = layout.isVisible(section),
-                tone = PokyhDecorative.cycle(index, colors.isDark),
-                onToggle = { onToggle(section) },
-                modifier = Modifier
-                    .animateItem()
-                    .reorderable(reorder, section.name),
-            )
-        }
-
-        item(key = "editor-reset") {
-            Box(Modifier.fillMaxWidth().padding(top = PokyhSpacing.lg), contentAlignment = Alignment.Center) {
-                PokyhTextButton(
-                    text = "Standard wiederherstellen",
-                    icon = PokyhIcons.refresh,
-                    onClick = onReset,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeEditorRow(
-    section: HomeSection,
-    visible: Boolean,
-    tone: DecorativeTone,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = PokyhTheme.colors
-    // A hidden row keeps its full layout and loses its colour — it is still an item in the list,
-    // just not one that is switched on. Fading it out entirely would read as "deleted".
-    val contentAlpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0.45f,
-        animationSpec = tween(PokyhMotion.durationStandard),
-        label = "editorRowAlpha",
-    )
-    val tileFill by animateColorAsState(
-        targetValue = if (visible) tone.fill else colors.cardAlt,
-        animationSpec = tween(PokyhMotion.durationStandard),
-        label = "editorRowTile",
-    )
-    val toggleSource = remember { MutableInteractionSource() }
-
-    PokyhTileRow(modifier = modifier) {
-        Icon(
-            imageVector = PokyhIcons.dragHandle,
-            contentDescription = null,
-            tint = colors.textTertiary,
-            modifier = Modifier.size(20.dp),
-        )
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .background(tileFill, PokyhShapes.md),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = section.glyph,
-                contentDescription = null,
-                tint = if (visible) tone.ink else colors.textTertiary,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        Column(
-            modifier = Modifier.weight(1f).alpha(contentAlpha),
-            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs),
-        ) {
-            PokyhFittedText(
-                text = section.title,
-                style = PokyhType.headline,
-                color = colors.textPrimary,
-                maxLines = 1,
-            )
-            PokyhFittedText(
-                text = section.editorDescription,
-                style = PokyhType.caption,
-                color = colors.textSecondary,
-                maxLines = 2,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(PokyhShapes.pill)
-                .clickable(
-                    interactionSource = toggleSource,
-                    indication = null,
-                    onClickLabel = if (visible) "Ausblenden" else "Einblenden",
-                    onClick = onToggle,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = if (visible) PokyhIcons.sectionShown else PokyhIcons.sectionHidden,
-                contentDescription = null,
-                tint = if (visible) colors.accentText else colors.textTertiary,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-    }
-}
-
 // ── Shortcuts ───────────────────────────────────────────────────────────────
 
 private data class ShortcutItem(
@@ -574,38 +470,6 @@ private fun ShortcutsGrid(
                     )
                 }
             }
-        }
-    }
-}
-
-// ── Nächste Stunde ──────────────────────────────────────────────────────────
-
-/**
- * The next lesson that hasn't finished yet — the one-line answer to "where do I have to be".
- *
- * Derived from the day's slots the screen already loaded rather than from a request of its own,
- * which is why it can be an optional block at no cost. Off by default because [HomeSection.Today]
- * covers the same ground; on, for anyone who wants the single next thing at the top.
- */
-@Composable
-private fun NextLessonSection(loading: Boolean, slots: List<MergedSlot>, modifier: Modifier = Modifier) {
-    val nowMinutes = remember(slots) {
-        val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-        now.hour * 60 + now.minute
-    }
-    val next = remember(slots, nowMinutes) {
-        slots.firstOrNull { Fmt.minutes(it.display.endTime) >= nowMinutes } ?: slots.lastOrNull()
-    }
-
-    PokyhSection(modifier = modifier, title = "Nächste Stunde") {
-        when {
-            loading -> TileRowSkeleton(rows = 1)
-            next == null -> PokyhInlineNotice(
-                icon = PokyhIcons.noExam,
-                text = "Heute kein Unterricht mehr",
-                tint = Brand.success,
-            )
-            else -> HomeSlotRow(slot = next)
         }
     }
 }
@@ -668,8 +532,18 @@ private fun examWhen(dateNum: Int): String {
 // ── Heute (Unterricht) ──────────────────────────────────────────────────────
 
 @Composable
-private fun TodaySection(loading: Boolean, slots: List<MergedSlot>, modifier: Modifier = Modifier) {
-    PokyhSection(modifier = modifier, title = "Heute") {
+private fun TodaySection(
+    loading: Boolean,
+    slots: List<MergedSlot>,
+    savedAt: Long,
+    stale: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    PokyhSection(
+        modifier = modifier,
+        title = "Heute",
+        trailing = { AsOfLabel(savedAt = savedAt, stale = stale) },
+    ) {
         when {
             loading -> TileRowSkeleton(rows = 2)
             slots.isEmpty() -> PokyhInlineNotice(
@@ -742,12 +616,21 @@ private val MensaDayWidth = 212.dp
  * than its neighbours and left the row looking like it had been knocked askew. "Heute" and the
  * weekday now share one line, and the strip measures itself to its tallest card so a day with
  * one dish still lines up with a day that has three.
+ *
+ * **The strip opens on today**, not on Monday. Monday's menu is the answer to "what's for lunch"
+ * on exactly one day of the week; every other day it was a card you had to scroll past, and by
+ * Thursday today's card started off screen entirely. Scrolling rather than reordering keeps the
+ * week in week order — the days already gone are still there, one swipe back — and it costs
+ * nothing on Friday, where the scroll simply runs out at the end of the strip and Friday lands
+ * flush to the right edge.
  */
 @Composable
 private fun MensaWeekSection(
     loading: Boolean,
     week: List<HomeViewModel.MensaWeekDay>,
     weekLabel: String,
+    savedAt: Long,
+    stale: Boolean,
     ratings: Map<String, DishRatingsData>,
     ratingsLoading: Boolean,
     onClick: () -> Unit,
@@ -756,8 +639,14 @@ private fun MensaWeekSection(
     PokyhSection(
         modifier = modifier,
         title = "Mensa",
-        trailing = if (weekLabel.isEmpty()) null else {
-            { PokyhLabel(weekLabel) }
+        trailing = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AsOfLabel(savedAt = savedAt, stale = stale)
+                if (weekLabel.isNotEmpty()) PokyhLabel(weekLabel)
+            }
         },
     ) {
         when {
@@ -771,21 +660,33 @@ private fun MensaWeekSection(
             week.none { it.dishes.isNotEmpty() } ->
                 PokyhInlineNotice(icon = PokyhIcons.mensa, text = "Kein Speiseplan verfügbar")
 
-            else -> Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Min)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
-            ) {
-                week.forEach { day ->
-                    MensaDayCard(
-                        day = day,
-                        ratings = ratings,
-                        ratingsLoading = ratingsLoading,
-                        onClick = onClick,
-                        modifier = Modifier.fillMaxHeight(),
-                    )
+            else -> {
+                val scrollState = rememberScrollState()
+                val todayIndex = week.indexOfFirst { it.isToday }
+                val density = LocalDensity.current
+                val stride = with(density) { (MensaDayWidth + PokyhSpacing.rowGap).roundToPx() }
+                // `scrollTo` clamps to the strip's own maximum, which is what makes Friday work:
+                // there is nothing after it to scroll to, so the card ends up flush right instead
+                // of the strip trying to put it at the leading edge over empty space.
+                LaunchedEffect(todayIndex, stride, scrollState.maxValue) {
+                    if (todayIndex > 0) scrollState.scrollTo(todayIndex * stride)
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
+                        .horizontalScroll(scrollState),
+                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
+                ) {
+                    week.forEach { day ->
+                        MensaDayCard(
+                            day = day,
+                            ratings = ratings,
+                            ratingsLoading = ratingsLoading,
+                            onClick = onClick,
+                            modifier = Modifier.fillMaxHeight(),
+                        )
+                    }
                 }
             }
         }
@@ -938,10 +839,17 @@ private fun GradesSection(
     modifier: Modifier = Modifier,
 ) {
     PokyhSection(modifier = modifier, title = "Zuletzt eingetragen") {
-        if (loading) {
-            TileRowSkeleton(rows = 2)
-        } else {
-            PokyhListCard(items = grades) { grade -> GradeRow(grade) }
+        when {
+            loading -> TileRowSkeleton(rows = 2)
+            // A block that renders nothing is a hole in an order the user arranged
+            // themselves — and at the start of a school year, which is exactly when there
+            // are no grades, it would be a hole for weeks. The placeholder keeps the shape
+            // of the screen and says why it is empty.
+            grades.isEmpty() -> PokyhInlineNotice(
+                icon = PokyhIcons.tabGrades,
+                text = "Noch keine Noten eingetragen",
+            )
+            else -> PokyhListCard(items = grades) { grade -> GradeRow(grade) }
         }
     }
 }
@@ -979,3 +887,6 @@ internal fun GradeBubble(
         )
     }
 }
+
+/** Items in Home's LazyColumn above the first card — the greeting. See [HomeContent]. */
+private const val HeaderItems = 1

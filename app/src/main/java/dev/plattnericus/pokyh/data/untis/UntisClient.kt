@@ -636,6 +636,16 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                 val pos1 = ge["position1"].array
                 val pos2 = ge["position2"].array
                 val pos3 = ge["position3"].array
+                // WebUntis flags a changed field on the *current* value ("status":"ADDED") and
+                // leaves "removed" null; only an outright swap fills `removed` in. Both have to
+                // be read or the common case — a room added to a lesson — looks regular.
+                fun added(positions: List<JsonDyn>) = positions
+                    .filter { it["current"]["status"].string?.let { s -> s != "REGULAR" } == true }
+                    .mapNotNull { it["current"]["displayName"].string }
+                    .filter { it.isNotEmpty() }
+                val addedTeachers = added(pos1)
+                val addedSubjects = added(pos2)
+                val addedRooms = added(pos3)
                 val activeTeachers = pos1.mapNotNull { it["current"]["displayName"].string }.filter { it.isNotEmpty() }
                 val activeTeachersLong = pos1.mapNotNull { it["current"]["longName"].string ?: it["current"]["displayName"].string }
                     .filter { it.isNotEmpty() }
@@ -649,10 +659,22 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
                 val type = ge["type"].string ?: ""
                 val status = ge["status"].string ?: ""
+                val icons = ge["icons"].array.mapNotNull { it.string }.filter { it.isNotEmpty() }
+                // `texts` is the structured form of lessonInfo/lessonText/substitutionText and
+                // carries entries the flat fields sometimes don't. Reading both and preferring
+                // whichever is non-blank means a note is never lost to whichever shape this
+                // server happens to use.
+                fun text(kind: String) = ge["texts"].array
+                    .firstOrNull { it["type"].string == kind }?.get("text")?.string
+                    ?.takeIf { it.isNotBlank() }
+                val lessonInfo = text("LESSON_INFO") ?: ge["lessonInfo"].string?.takeIf { it.isNotBlank() }
+                val lessonText = text("LESSON_TEXT") ?: ge["lessonText"].string?.takeIf { it.isNotBlank() }
+                val substitutionText = text("SUBSTITUTION")
+                    ?: ge["substitutionText"].string?.takeIf { it.isNotBlank() }
                 val isExam = type == "EXAM"
                 val isCancelled = status == "CANCELLED"
                 val isChanged = status == "CHANGED"
-                val isSubstitution = isChanged && removedTeachers.isNotEmpty()
+                val isSubstitution = isChanged && (removedTeachers.isNotEmpty() || addedTeachers.isNotEmpty())
 
                 entries.add(
                     TimetableEntry(
@@ -671,8 +693,14 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                         originalTeacher = removedTeachers.joinToString(", "),
                         originalTeacherLong = removedTeachersLong.takeIf { it.isNotEmpty() }?.joinToString(", "),
                         originalRoom = removedRooms.joinToString(", "),
-                        note = ge["lessonInfo"].string ?: ge["lessonText"].string,
+                        note = lessonInfo ?: lessonText,
                         examDescription = ge["exam"]["description"].string,
+                        addedTeachers = addedTeachers,
+                        addedSubjects = addedSubjects,
+                        addedRooms = addedRooms,
+                        icons = icons,
+                        substitutionText = substitutionText,
+                        lessonText = lessonText,
                     ),
                 )
             }

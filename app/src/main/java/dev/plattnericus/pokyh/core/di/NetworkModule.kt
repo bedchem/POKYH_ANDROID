@@ -4,7 +4,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import okhttp3.Interceptor
+import dev.plattnericus.pokyh.core.status.ServiceHealthInterceptor
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
@@ -22,14 +22,14 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .addInterceptor(passthroughInterceptor)
-        .build()
-
-    // Reserved hook for future cross-cutting concerns (auth-refresh retry, etc.) — a
-    // deliberate no-op for now. No logging interceptor in release builds.
-    private val passthroughInterceptor = Interceptor { chain -> chain.proceed(chain.request()) }
+    fun provideOkHttpClient(healthInterceptor: ServiceHealthInterceptor): OkHttpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            // Every call to either host is a reachability observation, and putting that here
+            // rather than in the clients means no request can forget to make one. See
+            // [ServiceHealthInterceptor].
+            .addInterceptor(healthInterceptor)
+            .build()
 }

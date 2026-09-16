@@ -10,6 +10,7 @@ import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.data.storage.PreferencesStore
 import dev.plattnericus.pokyh.data.storage.SecureCredentialStore
+import dev.plattnericus.pokyh.data.sync.Outbox
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.theme.PokyhThemeMode
@@ -45,6 +46,7 @@ class ProfileViewModel @Inject constructor(
     private val backendClient: BackendClient,
     private val secureCredentialStore: SecureCredentialStore,
     private val prefsStore: PreferencesStore,
+    private val outbox: Outbox,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -70,8 +72,8 @@ class ProfileViewModel @Inject constructor(
     private val _switchError = MutableStateFlow<String?>(null)
     val switchError: StateFlow<String?> = _switchError.asStateFlow()
 
-    private val _clearing = MutableStateFlow(false)
-    val clearing: StateFlow<Boolean> = _clearing.asStateFlow()
+    private val _clearing = MutableStateFlow<ClearKind?>(null)
+    val clearing: StateFlow<ClearKind?> = _clearing.asStateFlow()
 
     /** Sorted like ProfileView.swift `sortedAccounts`: Standard-Konto zuerst, dann das aktive
      * Konto, danach alphabetisch — mit lokalen [refreshAccount]-Overrides eingemischt. */
@@ -186,28 +188,84 @@ class ProfileViewModel @Inject constructor(
     /** Section 6 "Cache & Daten löschen" — ProfileView.swift/Store.swift `clearAllData()`, per
      * öffentlicher [AppState]-API nachgebaut: jedes Konto einzeln entfernen räumt Sitzung +
      * Phase (→ Login) mit auf, sobald die Liste leer ist. */
-    fun clearAllData(onDone: () -> Unit) {
-        if (_clearing.value) return
+    fun clearAllData() {
+        if (_clearing.value != null) return
         viewModelScope.launch {
-            _clearing.value = true
+            _clearing.value = ClearKind.All
             runCatching { backendClient.clearCaches() }
-            appState.accounts.value.forEach { appState.removeAccount(it.username) }
             runCatching { secureCredentialStore.deleteAll() }
+            outbox.clear()
             runCatching { prefsStore.clearAll() }
             appState.setThemeMode(PokyhThemeMode.System)
             _accountOverrides.value = emptyMap()
-            clearDiskCaches()
-            _clearing.value = false
-            onDone()
+            clearDiskCaches(keepSignIn = false)
+            _clearing.value = null
+            // Last, so nothing above races a screen that is already gone: this swaps the root to
+            // Login, which is what actually signs the user out.
+            appState.resetAfterDataWipe()
         }
     }
 
-    private suspend fun clearDiskCaches() = withContext(Dispatchers.IO) {
+    /**
+     * "Cache leeren" — the stored copies of timetable, grades, menu and images go; accounts,
+     * passwords, settings and the session stay. Everything removed comes back on the next load.
+     */
+    fun clearCache() {
+        if (_clearing.value != null) return
+        viewModelScope.launch {
+            _clearing.value = ClearKind.Cache
+            runCatching { backendClient.clearCaches() }
+            clearDiskCaches(keepSignIn = true)
+            refreshCacheSize()
+            _clearing.value = null
+            _cacheCleared.value = true
+        }
+    }
+
+    enum class ClearKind { Cache, All }
+
+    private val _cacheSize = MutableStateFlow<Long?>(null)
+    /** Bytes the removable cache takes up, or null while it is being measured. */
+    val cacheSize: StateFlow<Long?> = _cacheSize.asStateFlow()
+
+    private val _cacheCleared = MutableStateFlow(false)
+    /** True right after "Cache leeren" finished, until the size is measured again. */
+    val cacheCleared: StateFlow<Boolean> = _cacheCleared.asStateFlow()
+
+    fun refreshCacheSize() {
+        _cacheCleared.value = false
+        viewModelScope.launch {
+            _cacheSize.value = withContext(Dispatchers.IO) {
+                cacheDirs().sumOf { dir -> dir.walkBottomUp().filter { it.isFile && !keepOnCacheClear(it) }.sumOf { it.length() } }
+            }
+        }
+    }
+
+    private fun cacheDirs(): List<File> =
+        listOf(File(context.filesDir, "offline"), File(context.filesDir, "images"), context.cacheDir)
+
+    /**
+     * What "Cache leeren" must leave alone: the per-account session snapshot is what lets a saved
+     * account sign in offline, the widget snapshots are what the home-screen widgets draw, and
+     * `images/` holds only profile pictures, which can only be re-fetched with a live session.
+     * The outbox holds Todos and Erinnerungen that were never sent.
+     * None of them is a cache in the reader's sense, and losing them looks like a bug.
+     */
+    private fun keepOnCacheClear(file: File): Boolean =
+        file.parentFile?.name == "images" ||
+            (file.parentFile?.name == "offline" && (file.name.startsWith("session_") || file.name.startsWith("widget_") || file.name.startsWith("outbox_")))
+
+    private suspend fun clearDiskCaches(keepSignIn: Boolean) = withContext(Dispatchers.IO) {
         // DiskCache/ImageDiskCache expose no purge-all of their own — their storage convention
         // (filesDir/"offline", filesDir/"images") is documented on those classes, so it's safe
         // to sweep the directories directly here rather than touching those files.
-        runCatching { File(context.filesDir, "offline").listFiles()?.forEach { it.delete() } }
-        runCatching { File(context.filesDir, "images").listFiles()?.forEach { it.delete() } }
+        for (dir in cacheDirs()) {
+            runCatching {
+                dir.walkBottomUp()
+                    .filter { it != dir && (it.isDirectory || !keepSignIn || !keepOnCacheClear(it)) }
+                    .forEach { it.delete() }
+            }
+        }
     }
 
     // ── Konto & Verbindung (ConnectionStatusScreen) ─────────────────────────
@@ -262,6 +320,7 @@ internal fun BackendStatus.uiLabel(): String = when (this) {
     is BackendStatus.NotStudent -> "Nur für Schülerkonten"
     is BackendStatus.NoClass -> "Keine Klasse gefunden"
     is BackendStatus.Failed -> "Nicht verbunden – $message"
+    is BackendStatus.Offline -> "Offline"
 }
 
 private fun BackendStatus.diagnosticLabel(): String = when (this) {
@@ -270,4 +329,5 @@ private fun BackendStatus.diagnosticLabel(): String = when (this) {
     is BackendStatus.NotStudent -> "notStudent"
     is BackendStatus.NoClass -> "noClass"
     is BackendStatus.Failed -> "failed($message)"
+    is BackendStatus.Offline -> "offline"
 }

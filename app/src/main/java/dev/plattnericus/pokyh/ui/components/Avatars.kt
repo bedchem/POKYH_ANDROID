@@ -5,7 +5,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -20,6 +23,13 @@ import coil3.compose.AsyncImage
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
+import coil3.request.allowHardware
+import coil3.toBitmap
+import android.graphics.Bitmap
+import dev.plattnericus.pokyh.data.storage.ImageDiskCache
+import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.data.network.Config
 import dev.plattnericus.pokyh.ui.theme.PokyhFontFamily
@@ -122,16 +132,52 @@ fun UntisAvatar(
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,
     color: Color = senderColor(name),
+    /**
+     * Where this person's picture is kept on the device ([avatarCacheKey]).
+     *
+     * The live request needs a WebUntis session, and an offline session has none — so without a
+     * stored copy the avatar fell back to the initial the moment the connection was gone. Every
+     * successful live load refreshes the copy; the copy is drawn underneath until then.
+     */
+    cacheKey: String? = null,
 ) {
     val context = LocalContext.current
     val resolved = remember(rawImageUrl) { resolveUntisImageUrl(rawImageUrl) }
+    val diskCache = remember { ImageDiskCache(context.applicationContext) }
+    val scope = rememberCoroutineScope()
+    val stored by produceState<ByteArray?>(initialValue = null, cacheKey) {
+        value = cacheKey?.let { diskCache.get(it) }
+    }
 
     Box(modifier = modifier.size(size).clip(PokyhShapes.pill)) {
         InitialAvatar(name = name, size = size, color = color)
+        stored?.let { bytes ->
+            AsyncImage(
+                model = ImageRequest.Builder(context).data(bytes).build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(size).clip(PokyhShapes.pill),
+            )
+        }
         if (resolved != null && auth != null) {
-            val request = remember(resolved, auth) {
+            val request = remember(resolved, auth, cacheKey) {
                 ImageRequest.Builder(context)
                     .data(resolved)
+                    // Software bitmap, so the success listener can re-encode it for the disk.
+                    .allowHardware(cacheKey == null)
+                    .listener(
+                        onSuccess = { _, result ->
+                            if (cacheKey != null) {
+                                val bitmap = result.image.toBitmap()
+                                scope.launch(Dispatchers.Default) {
+                                    val out = ByteArrayOutputStream()
+                                    if (bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                                        diskCache.put(cacheKey, out.toByteArray())
+                                    }
+                                }
+                            }
+                        },
+                    )
                     .httpHeaders(
                         NetworkHeaders.Builder()
                             .set("Cookie", "JSESSIONID=${auth.sessionId}; schoolname=\"${Config.schoolCookie}\"")
@@ -175,3 +221,7 @@ internal fun resolveUntisImageUrl(raw: String?): String? {
     val path = if (url.startsWith("/")) url else "/$url"
     return "$scheme://$authority$path"
 }
+
+/** The on-device key for a WebUntis account's profile picture — per account, not per URL, because
+ * an offline session often has no image URL at all. */
+fun avatarCacheKey(username: String): String = "avatar-${username.trim().lowercase()}"

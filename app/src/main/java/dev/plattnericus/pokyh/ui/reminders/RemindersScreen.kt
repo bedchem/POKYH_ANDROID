@@ -46,6 +46,7 @@ import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.IconTile
 import dev.plattnericus.pokyh.ui.components.ListSkeleton
+import dev.plattnericus.pokyh.ui.components.PendingSyncRow
 import dev.plattnericus.pokyh.ui.components.PokyhFab
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
@@ -103,26 +104,30 @@ fun RemindersScreen(
             )
         },
         floatingActionButton = {
-            if (hasBackend && hasClass) {
+            if ((hasBackend && hasClass) || ui.offline) {
                 PokyhFab(text = "Neu", icon = PokyhIcons.add, onClick = { showAdd = true })
             }
         },
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                !hasBackend -> BackendUnavailableView(feature = "Erinnerungen", status = backendStatus)
+                !hasBackend && !ui.offline && !ui.offlineCopy -> BackendUnavailableView(feature = "Erinnerungen", status = backendStatus)
                 ui.loading && ui.reminders.isEmpty() -> ListSkeleton()
-                ui.error != null && ui.reminders.isEmpty() ->
+                ui.error != null && ui.reminders.isEmpty() && ui.pending.isEmpty() ->
                     ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
-                !hasClass -> EmptyStateView(
+                !hasClass && !ui.offline && !ui.offlineCopy -> EmptyStateView(
                     icon = PokyhIcons.classMembers,
                     title = "Keine Klasse",
                     subtitle = "Du bist noch keiner Klasse beigetreten.",
                 )
-                visible.isEmpty() -> EmptyStateView(
+                visible.isEmpty() && ui.pending.isEmpty() -> EmptyStateView(
                     icon = PokyhIcons.reminders,
                     title = "Keine Erinnerungen",
-                    subtitle = "Lege eine Klassen-Erinnerung an, um sie hier zu sehen.",
+                    subtitle = if (ui.offline) {
+                        "Du bist offline. Neue Erinnerungen werden gesendet, sobald du wieder Internet hast."
+                    } else {
+                        "Lege eine Klassen-Erinnerung an, um sie hier zu sehen."
+                    },
                 )
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -133,6 +138,14 @@ fun RemindersScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
                 ) {
+                    items(ui.pending, key = { "pending-" + it.id }) { item ->
+                        PendingSyncRow(
+                            title = item.title,
+                            text = item.text,
+                            dateLabel = item.date?.let { parseRemindAt(it) }?.let { dueText(it) },
+                            onDelete = { viewModel.deletePending(item) },
+                        )
+                    }
                     items(visible, key = { it.id }) { reminder ->
                         ReminderSwipeRow(
                             reminder = reminder,

@@ -10,7 +10,9 @@ import dev.plattnericus.pokyh.core.util.toLocalDate
 import dev.plattnericus.pokyh.core.util.toYyyyMMdd
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.AppError
+import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
+import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
@@ -24,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
+import kotlinx.serialization.builtins.ListSerializer
 
 // ─── Abwesenheitsberechnung — 1:1 portiert aus AbsencesView.swift ───────────────────────────
 // Die Fehlstunden werden NICHT aus dem von WebUntis gelieferten `hours`-Feld gerechnet,
@@ -139,6 +142,7 @@ fun groupAbsencesByMonth(entries: List<AbsenceEntry>, minutesMap: Map<Int, Int>)
 class AbsencesViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
+    private val offlineStore: OfflineStore,
 ) : ViewModel() {
 
     /** Available school years for the picker menu, newest first — `SchoolDates.availableYears`. */
@@ -189,12 +193,17 @@ class AbsencesViewModel @Inject constructor(
             _error.value = null
             try {
                 val y = _year.value
-                val parsed = untisClient.absences(
-                    session,
-                    session.studentId,
-                    SchoolDates.yearStart(y).toString(),
-                    SchoolDates.yearEnd(y).toString(),
-                )
+                val parsed = offlineStore.load(
+                    key = "absences-${session.studentId}-$y",
+                    serializer = ListSerializer(AbsenceEntry.serializer()),
+                ) {
+                    untisClient.absences(
+                        session,
+                        session.studentId,
+                        SchoolDates.yearStart(y).toString(),
+                        SchoolDates.yearEnd(y).toString(),
+                    )
+                }.value
                 _absences.value = parsed
 
                 // Schuljahres-Zeitraum für das gewählte Jahr.
@@ -242,7 +251,11 @@ class AbsencesViewModel @Inject constructor(
         val deferred = weeks.map { w ->
             async {
                 try {
-                    untisClient.timetable(session, session.studentId, w)
+                    // The Stundenplan tab's per-week key — offline, stored weeks still count.
+                    offlineStore.load(
+                        key = "tt-${session.studentId}-$w",
+                        serializer = ListSerializer(TimetableEntry.serializer()),
+                    ) { untisClient.timetable(session, session.studentId, w) }.value
                 } catch (e: AppError) {
                     if (e.isSessionExpired) throw e else emptyList()
                 } catch (e: Exception) {

@@ -160,6 +160,7 @@ data class SubjectGrades(
 
 // ── Absences ─────────────────────────────────────────────────────────────
 
+@Serializable
 data class AbsenceEntry(
     var id: Int,
     var startDate: Int,
@@ -178,6 +179,7 @@ data class AbsenceEntry(
 
 // ── Messages ─────────────────────────────────────────────────────────────
 
+@Serializable
 data class MessagePreview(
     var id: Int,
     var subject: String,
@@ -259,6 +261,7 @@ data class Dish(
     var fat: Double? = null,
 )
 
+@Serializable
 data class DishRatingsData(
     var ratings: Map<String, Double>, // votes per entry
     var myRating: Int? = null,
@@ -274,6 +277,7 @@ data class DishRatingsData(
 
 // ── Classregister ────────────────────────────────────────────────────────
 
+@Serializable
 data class ClassregEvent(
     var id: Int,
     var subjectName: String,

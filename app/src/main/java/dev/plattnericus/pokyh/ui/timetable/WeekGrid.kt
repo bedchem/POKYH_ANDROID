@@ -22,9 +22,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
@@ -115,6 +120,7 @@ fun WeekGrid(
             }
         }
         val allEntries = remember(dayEntries) { dayEntries.flatten() }
+        val minute = rememberSchoolMinute()
         val minMins = remember(allEntries) {
             allEntries.minOfOrNull { Fmt.minutes(it.startTime) } ?: TIMETABLE_PERIODS.first().startMinute
         }
@@ -161,6 +167,7 @@ fun WeekGrid(
                 dayNums = dayNums,
                 weekNumber = weekNumber,
             )
+            Box {
             Row(
                 modifier = Modifier.height(totalHeight),
                 horizontalArrangement = Arrangement.spacedBy(colGap),
@@ -181,12 +188,90 @@ fun WeekGrid(
                         kind = dayKinds[d],
                         slots = daySlots[d],
                         isToday = dayNums.getOrNull(d) == todayNum,
+                        dayNum = dayNums.getOrNull(d) ?: 0,
+                        todayNum = todayNum,
+                        minute = minute,
                         onTap = onTap,
                     )
                 }
             }
+            val todayIndex = dayNums.indexOf(todayNum)
+            if (todayIndex in 0 until 6) {
+                NowIndicator(
+                    todayIndex = todayIndex,
+                    minute = minute,
+                    minMins = minMins,
+                    maxMins = maxMins,
+                    gutter = gutter,
+                    colW = colW,
+                    colGap = colGap,
+                )
+            }
+            }
         }
     }
+}
+
+/**
+ * Minutes since midnight on the school's clock (the zone the lesson times are in), re-read every
+ * 30 seconds — shared by the now-line and the greying-out of finished lessons so both move together.
+ */
+@Composable
+private fun rememberSchoolMinute(): Int {
+    fun nowMinute(): Int = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Europe/Rome"))
+        .let { it.get(java.util.Calendar.HOUR_OF_DAY) * 60 + it.get(java.util.Calendar.MINUTE) }
+
+    var minute by remember { mutableIntStateOf(nowMinute()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(30_000)
+            minute = nowMinute()
+        }
+    }
+    return minute
+}
+
+/**
+ * Where "now" is on this week's grid — the web timetable's current-time line, without its time
+ * label: a faint rule across the whole week, and a stronger one on today's column.
+ *
+ * Only drawn while the school day is on the grid (between the first lesson's start and the last
+ * one's end); before and after school there is no "where am I" to answer.
+ */
+@Composable
+private fun NowIndicator(
+    todayIndex: Int,
+    minute: Int,
+    minMins: Int,
+    maxMins: Int,
+    gutter: Dp,
+    colW: Dp,
+    colGap: Dp,
+) {
+    if (minute < minMins || minute > maxMins) return
+
+    val lineThickness = 1.5.dp
+    val y = ((minute - minMins) * PX_PER_MINUTE).dp
+    val gridStart = gutter + colGap
+    val columnStart = gridStart + (colW + colGap) * todayIndex
+
+    // Faint, across all six days.
+    Box(
+        Modifier
+            .padding(start = gridStart)
+            .offset(y = y - lineThickness / 2)
+            .fillMaxWidth()
+            .height(lineThickness)
+            .background(Brand.accent.copy(alpha = 0.35f)),
+    )
+    // Strong, on today's column only.
+    Box(
+        Modifier
+            .offset(x = columnStart, y = y - lineThickness / 2)
+            .width(colW)
+            .height(lineThickness)
+            .background(Brand.accent.copy(alpha = 0.9f)),
+    )
 }
 
 /** Breathing room at the very edge of the grid, so the first/last column isn't flush to the screen. */
@@ -519,6 +604,9 @@ private fun DayColumn(
     kind: DayKind,
     slots: List<MergedSlot>,
     isToday: Boolean,
+    dayNum: Int,
+    todayNum: Int,
+    minute: Int,
     onTap: (MergedSlot) -> Unit,
 ) {
     val colors = PokyhTheme.colors
@@ -563,12 +651,16 @@ private fun DayColumn(
                 val left = width * cell.start / PerMille + if (cell.start > 0) CellGap else 0.dp
                 val right = width * (cell.start + cell.width) / PerMille
                 val cellWidth = (right - left).coerceAtLeast(MinCellWidth)
+                // Finished lessons (earlier days, or today once their end has passed) step back so the
+                // rest of the day stands out — faded, still readable.
+                val past = dayNum < todayNum || (dayNum == todayNum && cell.endMinute <= minute)
                 Box(
                     modifier = Modifier
                         .width(cellWidth)
                         .height(h)
                         .offset(x = left, y = top)
-                        .padding(vertical = 1.dp),
+                        .padding(vertical = 1.dp)
+                        .alpha(if (past) PastLessonAlpha else 1f),
                 ) {
                     TappableCell(slot = cell.slot, onTap = onTap) { m ->
                         GridLessonCell(
@@ -585,6 +677,9 @@ private fun DayColumn(
         }
     }
 }
+
+/** How far a finished lesson fades — enough to read as "done", not so much it stops being legible. */
+private const val PastLessonAlpha = 0.7f
 
 /** Below this a cell can't hold even one line of text legibly, so it stops shrinking. */
 private val MinCellHeight = 26.dp

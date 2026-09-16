@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.plattnericus.pokyh.core.util.SchoolDates
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.ClassregEvent
+import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
@@ -13,12 +14,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
 
 /** Port of `ClassregEventsView`'s `@State`/`load()` (ClassregEventsView.swift). */
 @HiltViewModel
 class ClassregViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
+    private val offlineStore: OfflineStore,
 ) : ViewModel() {
 
     /** Available school years for the picker menu, newest first — `SchoolDates.availableYears`. */
@@ -55,7 +58,10 @@ class ClassregViewModel @Inject constructor(
             _loading.value = true
             _error.value = null
             try {
-                _events.value = untisClient.classregEvents(session, session.studentId, _year.value)
+                _events.value = offlineStore.load(
+                    key = "classreg-${session.studentId}-${_year.value}",
+                    serializer = ListSerializer(ClassregEvent.serializer()),
+                ) { untisClient.classregEvents(session, session.studentId, _year.value) }.value
             } catch (e: AppError) {
                 if (e.isSessionExpired) {
                     // Same handling as ClassregEventsView.swift's `app.handleSessionExpired()`.

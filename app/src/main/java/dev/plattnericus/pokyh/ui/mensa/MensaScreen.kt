@@ -139,6 +139,7 @@ fun MensaScreen(
                                     dish = dish,
                                     ratings = ui.ratings[dish.id],
                                     ratingsLoading = ui.ratingsLoading,
+                                    ratingsUnavailable = ui.ratingsUnavailable,
                                     onClick = { onDishClick(dish.id) },
                                 )
                             }
@@ -164,6 +165,7 @@ private fun DishCard(
     dish: Dish,
     ratings: DishRatingsData?,
     ratingsLoading: Boolean,
+    ratingsUnavailable: Boolean,
     onClick: () -> Unit,
 ) {
     val colors = PokyhTheme.colors
@@ -199,6 +201,7 @@ private fun DishCard(
                 loading = ratingsLoading && ratings == null,
                 average = ratings?.average ?: 0.0,
                 count = ratings?.count ?: 0,
+                unknown = ratingsUnavailable && ratings == null,
             )
         }
     }

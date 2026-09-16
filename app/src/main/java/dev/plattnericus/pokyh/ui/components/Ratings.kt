@@ -196,10 +196,17 @@ fun MiniStarsSlot(
     count: Int,
     modifier: Modifier = Modifier,
     height: Dp = 16.dp,
+    /** The ratings could not be fetched (offline) — "no rating" would be a guess. */
+    unknown: Boolean = false,
 ) {
     Box(modifier = modifier.height(height), contentAlignment = Alignment.CenterStart) {
         when {
             loading -> MiniStarsPlaceholder()
+            count <= 0 && unknown -> Text(
+                text = "Offline – Bewertung nicht geladen",
+                style = PokyhType.caption2,
+                color = PokyhTheme.colors.textTertiary,
+            )
             count > 0 -> MiniStars(average = average, count = count)
             else -> Text(
                 text = "Noch keine Bewertung",

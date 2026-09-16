@@ -10,6 +10,7 @@ import dev.plattnericus.pokyh.data.model.MessageFolder
 import dev.plattnericus.pokyh.data.model.MessagePreview
 import dev.plattnericus.pokyh.data.model.MessageRecipient
 import dev.plattnericus.pokyh.data.model.OutgoingAttachment
+import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
 
 /**
  * MessagesView.swift + MessageDetailScreen, ported. One view model backs both screens (each
@@ -29,6 +31,7 @@ import kotlinx.coroutines.launch
 class MessagesViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
+    private val offlineStore: OfflineStore,
 ) : ViewModel() {
 
     // ── Folder list (MessagesView) ──────────────────────────────────────────
@@ -71,7 +74,10 @@ class MessagesViewModel @Inject constructor(
         _list.update { it.copy(loadingFolders = it.loadingFolders + folder, error = null) }
         viewModelScope.launch {
             try {
-                val result = untisClient.messages(session, folder)
+                val result = offlineStore.load(
+                    key = "messages-${session.username.lowercase()}-${folder.rawValue}",
+                    serializer = ListSerializer(MessagePreview.serializer()),
+                ) { untisClient.messages(session, folder) }.value
                 _list.update { it.copy(cache = it.cache + (folder to result), loadingFolders = it.loadingFolders - folder) }
             } catch (e: AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()

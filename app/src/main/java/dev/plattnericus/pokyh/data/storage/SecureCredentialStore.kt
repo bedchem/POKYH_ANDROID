@@ -54,6 +54,62 @@ class SecureCredentialStore @Inject constructor(
         val key = normalize(username)
         val encrypted = encrypt(password.toByteArray(Charsets.UTF_8))
         prefs.edit().putString(key, Base64.encodeToString(encrypted, Base64.NO_WRAP)).apply()
+        saveOfflineVerifier(key, password)
+    }
+
+    // ── Offline-Passwortprüfung ─────────────────────────────────────────────
+
+    /**
+     * Ein Einweg-Hash (PBKDF2, gesalzen) des zuletzt erfolgreich verwendeten Passworts — nur, um
+     * offline prüfen zu können, ob das eingetippte Passwort stimmt.
+     *
+     * **Getrennt vom Passwort, weil „Abmelden" das Passwort löscht.** Ohne diesen Hash hatte ein
+     * abgemeldetes Konto offline nichts mehr, womit die Eingabe verglichen werden konnte, und die
+     * Anmeldung wurde abgelehnt, obwohl der Stundenplan noch auf dem Gerät lag. Er verschwindet
+     * erst mit dem Konto selbst ([deleteOfflineVerifier]) oder mit [deleteAll].
+     */
+    private val verifierPrefs = context.getSharedPreferences("pokyh_offline_verifiers", Context.MODE_PRIVATE)
+
+    private fun saveOfflineVerifier(key: String, password: String) {
+        val salt = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+        val hash = pbkdf2(password, salt)
+        verifierPrefs.edit()
+            .putString(key, Base64.encodeToString(salt, Base64.NO_WRAP) + ":" + Base64.encodeToString(hash, Base64.NO_WRAP))
+            .apply()
+    }
+
+    /** Stimmt [password] mit dem zuletzt online bestätigten Passwort für [username] überein? */
+    suspend fun verifyOfflinePassword(username: String, password: String): Boolean = withContext(Dispatchers.IO) {
+        val stored = verifierPrefs.getString(normalize(username), null) ?: return@withContext false
+        val parts = stored.split(":")
+        if (parts.size != 2) return@withContext false
+        try {
+            val salt = Base64.decode(parts[0], Base64.NO_WRAP)
+            val expected = Base64.decode(parts[1], Base64.NO_WRAP)
+            java.security.MessageDigest.isEqual(expected, pbkdf2(password, salt))
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Für eine Anmeldung, die das Passwort nicht neu speichert (stiller Re-Login): ein Konto aus
+     * der Zeit vor dem Hash bekommt ihn nachträglich — damit es auch nach dem Abmelden offline aufgeht. */
+    suspend fun ensureOfflineVerifier(username: String, password: String) = withContext(Dispatchers.IO) {
+        val key = normalize(username)
+        if (!verifierPrefs.contains(key)) saveOfflineVerifier(key, password)
+    }
+
+    suspend fun deleteOfflineVerifier(username: String) = withContext(Dispatchers.IO) {
+        verifierPrefs.edit().remove(normalize(username)).apply()
+    }
+
+    private fun pbkdf2(password: String, salt: ByteArray): ByteArray {
+        val spec = javax.crypto.spec.PBEKeySpec(password.toCharArray(), salt, 120_000, 256)
+        return try {
+            javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+        } finally {
+            spec.clearPassword()
+        }
     }
 
     /** Entschlüsseltes Passwort für `username`, als (normalisierter Benutzername, Passwort). */
@@ -85,6 +141,7 @@ class SecureCredentialStore @Inject constructor(
     /** Entfernt ALLE gespeicherten Zugangsdaten (alle Konten). Der Master-Key bleibt bestehen. */
     suspend fun deleteAll() = withContext(Dispatchers.IO) {
         prefs.edit().clear().apply()
+        verifierPrefs.edit().clear().apply()
     }
 
     // ── Verschlüsselung ─────────────────────────────────────────────────────

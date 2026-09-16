@@ -63,6 +63,12 @@ class OfflineStore @Inject constructor(
      * For painting a screen from its last known state *before* the request comes back, so a
      * cold start on a slow connection shows the timetable rather than a spinner.
      */
+    /** Store a value that arrived some other way than [load] — an SSE push, say — so the offline
+     * copy is as current as what was last on screen. */
+    suspend fun <T> save(key: String, value: T, serializer: KSerializer<T>) {
+        runCatching { diskCache.write(key, value, serializer) }
+    }
+
     suspend fun <T> peek(key: String, serializer: KSerializer<T>): CachedValue<T>? {
         val cached = diskCache.read(key, serializer) ?: return null
         return CachedValue(cached, diskCache.savedAt(key) ?: 0L, stale = true)

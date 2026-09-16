@@ -138,7 +138,7 @@ fun ClassScreen(
                 title = "Neue Klassenbuch Einträge",
                 subtitle = "Letzte 3 Monate",
                 onSeeAll = { onNavigate(PokyhDestinations.CLASSREG_EVENTS) },
-                emptyText = "Keine Einträge in den letzten 3 Monaten",
+                emptyText = if (overview.eventsUnknown) OFFLINE_NOT_STORED else "Keine Einträge in den letzten 3 Monaten",
                 items = overview.recentEvents,
                 modifier = Modifier.fadeIn(),
             ) { event -> ClassregEventRow(event) }
@@ -147,7 +147,7 @@ fun ClassScreen(
             OverviewSection(
                 title = "Offene Abwesenheiten",
                 onSeeAll = { onNavigate(PokyhDestinations.ABSENCES) },
-                emptyText = "Keine offenen Abwesenheiten",
+                emptyText = if (overview.absencesUnknown) OFFLINE_NOT_STORED else "Keine offenen Abwesenheiten",
                 items = overview.openAbsences.take(6),
                 footer = {
                     val extra = overview.openAbsences.size - 6
@@ -172,9 +172,13 @@ fun ClassScreen(
             // ── 4. Prüfungen ────────────────────────────────────────────────
             WeekSplitSection(
                 title = "Prüfungen",
-                thisWeekEmpty = "Keine Prüfungen diese Woche",
-                nextWeekEmpty = "Keine Prüfungen nächste Woche",
-                bothEmpty = "Keine Prüfungen in Zukunft",
+                thisWeekEmpty = if (overview.thisWeekUnknown) OFFLINE_NOT_STORED else "Keine Prüfungen diese Woche",
+                nextWeekEmpty = if (overview.nextWeekUnknown) OFFLINE_NOT_STORED else "Keine Prüfungen nächste Woche",
+                bothEmpty = when {
+                    overview.thisWeekUnknown && overview.nextWeekUnknown -> OFFLINE_NOT_STORED
+                    overview.thisWeekUnknown || overview.nextWeekUnknown -> "Offline – Prüfungen nur teilweise bekannt"
+                    else -> "Keine Prüfungen in Zukunft"
+                },
                 thisWeek = overview.examsThisWeek,
                 nextWeek = overview.examsNextWeek,
                 modifier = Modifier.fadeIn(120),
@@ -193,7 +197,7 @@ fun ClassScreen(
 
             // ── 6. Klasse & Mitglieder ──────────────────────────────────────
             when {
-                !hasBackend -> Box(Modifier.fillMaxWidth().height(240.dp)) {
+                !hasBackend && klass == null -> Box(Modifier.fillMaxWidth().height(240.dp)) {
                     BackendUnavailableView(feature = "Die Klassenliste", status = backendStatus)
                 }
                 error != null -> Box(Modifier.fillMaxWidth().height(240.dp)) {
@@ -568,3 +572,6 @@ private fun MemberDetail(label: String, value: String) {
         )
     }
 }
+
+/** Empty-line text for a section whose source failed offline with nothing stored. */
+private const val OFFLINE_NOT_STORED = "Offline – auf diesem Gerät nicht gespeichert"

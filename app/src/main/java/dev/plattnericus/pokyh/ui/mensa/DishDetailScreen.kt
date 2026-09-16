@@ -116,12 +116,20 @@ fun DishDetailScreen(
 
                     PokyhSection(title = "Bewertung", modifier = Modifier.fadeIn(delayMillis = 80)) {
                         PokyhCard {
-                            StarRating(
-                                average = ui.ratings.average,
-                                count = ui.ratings.count,
-                                myRating = ui.ratings.myRating,
-                                onRate = viewModel::rate,
-                            )
+                            if (ui.ratingsUnavailable) {
+                                Text(
+                                    text = "Du bist offline – die Bewertung wurde auf diesem Gerät noch nicht gespeichert.",
+                                    style = PokyhType.callout,
+                                    color = colors.textSecondary,
+                                )
+                            } else {
+                                StarRating(
+                                    average = ui.ratings.average,
+                                    count = ui.ratings.count,
+                                    myRating = ui.ratings.myRating,
+                                    onRate = if (ui.canInteract) viewModel::rate else null,
+                                )
+                            }
                         }
                     }
 

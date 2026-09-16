@@ -8,18 +8,24 @@ import dev.plattnericus.pokyh.core.util.SchoolDates
 import dev.plattnericus.pokyh.core.util.mondayOfWeek
 import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.backend.BackendClient
+import dev.plattnericus.pokyh.data.model.ApiReminder
+import dev.plattnericus.pokyh.data.model.ApiTodo
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.Dish
 import dev.plattnericus.pokyh.data.model.DishRatingsData
+import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.storage.PreferencesStore
+import dev.plattnericus.pokyh.data.sync.Outbox
+import dev.plattnericus.pokyh.data.sync.OutboxItem
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.navigation.AppTab
+import dev.plattnericus.pokyh.ui.reminders.visibleReminders
 import javax.inject.Inject
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -28,6 +34,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -50,6 +58,7 @@ class HomeViewModel @Inject constructor(
     private val preferencesStore: PreferencesStore,
     private val offlineStore: OfflineStore,
     private val imagePrefetcher: ImagePrefetcher,
+    private val outbox: Outbox,
 ) : ViewModel() {
 
     /** `HomeView.RecentGrade` — a flattened, most-recent-first grade entry for the "Zuletzt
@@ -63,8 +72,14 @@ class HomeViewModel @Inject constructor(
         /** When today's lessons were produced, and whether they came off the disk. */
         val todaySavedAt: Long = 0L,
         val todayStale: Boolean = false,
+        /** Today's lessons could not be loaded at all — "kein Unterricht" would be a guess. */
+        val todayUnavailable: Boolean = false,
         val loadingGrades: Boolean = true,
         val recentGrades: List<RecentGrade> = emptyList(),
+        /** The grades could not be loaded at all — "noch keine Noten" would be a guess. */
+        val gradesUnavailable: Boolean = false,
+        /** At least one of the sampled weeks could not be loaded, so "no exams" is unknown. */
+        val examsUnknown: Boolean = false,
         val loadingMensa: Boolean = true,
         val mensaWeek: List<MensaWeekDay> = emptyList(),
         val mensaWeekLabel: String = "",
@@ -81,6 +96,28 @@ class HomeViewModel @Inject constructor(
          * shimmering forever in the second case.
          */
         val loadingDishRatings: Boolean = true,
+        /** Ratings could not be fetched — a dish without one is unknown, not unrated. */
+        val dishRatingsUnavailable: Boolean = false,
+        /** Today's raw entries, for "Jetzt & gleich" (which needs start/end, not merged slots). */
+        val todayEntries: List<TimetableEntry> = emptyList(),
+        /** Cancellations, substitutions and room/teacher changes for today and the next school day. */
+        val changes: List<TimetableEntry> = emptyList(),
+        val changesLoaded: Boolean = false,
+        val changesUnknown: Boolean = false,
+        val gradeAverage: Double? = null,
+        val gradeCount: Int = 0,
+        val weakestSubject: Pair<String, Double>? = null,
+        val averageLoaded: Boolean = false,
+        val openTodos: List<ApiTodo> = emptyList(),
+        val todosLoaded: Boolean = false,
+        /** Nothing loaded and nothing stored — the widget says so instead of "keine Todos". */
+        val todosUnavailable: Boolean = false,
+        val upcomingReminders: List<ApiReminder> = emptyList(),
+        val remindersLoaded: Boolean = false,
+        val remindersUnavailable: Boolean = false,
+        /** Created offline, waiting in the outbox. */
+        val pendingTodos: Int = 0,
+        val pendingReminders: Int = 0,
         val examsLoaded: Boolean = false,
         val nextExam: TimetableEntry? = null,
         val error: String? = null,
@@ -111,14 +148,6 @@ class HomeViewModel @Inject constructor(
     fun setEditing(value: Boolean) { _editing.value = value }
 
     /**
-     * Reorder, by index into [HomeLayout.sanitized].
-     *
-     * Writes on every swap as the drag passes over a neighbour, not once when the finger lifts.
-     * DataStore coalesces the writes, and it means an edit survives the app being killed
-     * mid-gesture — which, on a screen whose whole job is arranging things, is the one moment
-     * losing state would be most annoying.
-     */
-    /**
      * Persist an arrangement, once.
      *
      * **Called when the card is set down, not while it moves.** Every swap used to write
@@ -128,9 +157,23 @@ class HomeViewModel @Inject constructor(
      * and hands it over at the end — one write per drag instead of one per swap.
      */
     fun setOrder(sections: List<HomeSection>) {
-        val next = HomeLayout(order = sections.map { it.name })
-        if (next.order == layout.value.sanitized.map { it.name }) return
+        val next = layout.value.withOrder(sections)
+        if (next.order == layout.value.visible.map { it.name }) return
         viewModelScope.launch { preferencesStore.setHomeLayout(next) }
+    }
+
+    /** Arrange mode's remove badge — the widget moves to "Widgets hinzufügen". */
+    fun removeSection(section: HomeSection) {
+        viewModelScope.launch { preferencesStore.setHomeLayout(layout.value.removed(section)) }
+    }
+
+    /** "Widgets hinzufügen" — the widget goes back on Home, at the bottom. */
+    fun addSection(section: HomeSection) {
+        viewModelScope.launch { preferencesStore.setHomeLayout(layout.value.added(section)) }
+    }
+
+    fun resetLayout() {
+        viewModelScope.launch { preferencesStore.setHomeLayout(HomeLayout()) }
     }
 
     init {
@@ -148,6 +191,73 @@ class HomeViewModel @Inject constructor(
                 }
             }
         }
+        // A vote cast on a dish page (or taken back) shows on the Home menu strip right away.
+        viewModelScope.launch {
+            backendClient.ratingUpdates.collect { updates ->
+                if (updates.isNotEmpty()) _state.update { it.copy(dishRatings = it.dishRatings + updates) }
+            }
+        }
+        // An offline session that just got its token back: the POKYH widgets can load for real.
+        viewModelScope.launch {
+            appState.session.map { it?.apiToken != null }.distinctUntilChanged().collect { hasToken ->
+                if (hasToken) loadBackendWidgets()
+            }
+        }
+        // Queued Todos/Erinnerungen: count them, and reload once one has gone out.
+        viewModelScope.launch {
+            outbox.pending.collect { items ->
+                val user = appState.session.value?.username?.trim()?.lowercase()
+                val mine = items.filter { it.username == user }
+                val todos = mine.count { it.kind == OutboxItem.Kind.Todo }
+                val reminders = mine.count { it.kind == OutboxItem.Kind.Reminder }
+                val sent = todos < _state.value.pendingTodos || reminders < _state.value.pendingReminders
+                _state.update { it.copy(pendingTodos = todos, pendingReminders = reminders) }
+                if (sent) loadBackendWidgets()
+            }
+        }
+    }
+
+    /**
+     * "Offene Todos" and "Anstehende Erinnerungen" — from the server when there is a token,
+     * otherwise from the copy the Todos/Erinnerungen screens stored (same disk keys).
+     */
+    private suspend fun loadBackendWidgets() {
+        val session = appState.session.value ?: return
+        val user = session.username.lowercase()
+        val token = session.apiToken
+        val todoKey = "todos-$user"
+        val reminderKey = "reminders-$user"
+        val todoSerializer = ListSerializer(ApiTodo.serializer())
+        val reminderSerializer = ListSerializer(ApiReminder.serializer())
+
+        val todos: List<ApiTodo>? = if (token != null) {
+            runCatching { offlineStore.load(todoKey, todoSerializer) { backendClient.todos(session.username, token) }.value }.getOrNull()
+        } else {
+            offlineStore.peek(todoKey, todoSerializer)?.value
+        }
+        _state.update {
+            it.copy(
+                openTodos = todos.orEmpty().filter { t -> !t.done },
+                todosLoaded = true,
+                todosUnavailable = todos == null,
+            )
+        }
+
+        val classId = session.classId
+        val reminders: List<ApiReminder>? = if (token != null && classId != null) {
+            runCatching {
+                offlineStore.load(reminderKey, reminderSerializer) { backendClient.reminders(classId, token) }.value
+            }.getOrNull()
+        } else {
+            offlineStore.peek(reminderKey, reminderSerializer)?.value
+        }
+        _state.update {
+            it.copy(
+                upcomingReminders = reminders?.let { list -> visibleReminders(list) }.orEmpty(),
+                remindersLoaded = true,
+                remindersUnavailable = reminders == null,
+            )
+        }
     }
 
     /** Bound to [dev.plattnericus.pokyh.ui.components.ErrorStateView]'s retry action. */
@@ -161,6 +271,9 @@ class HomeViewModel @Inject constructor(
     /** Mensa block tap — switches to the Mensa tab instead of pushing a route. */
     fun selectMensaTab() = appState.selectTab(AppTab.Mensa)
 
+    /** "Jetzt & gleich" / "Vertretungen" taps — straight to the Stundenplan tab. */
+    fun selectTimetableTab() = appState.selectTab(AppTab.Timetable)
+
     private suspend fun loadAll() {
         _state.update { it.copy(error = null) }
         val session = appState.session.value
@@ -169,6 +282,7 @@ class HomeViewModel @Inject constructor(
                 // Mensa kommt aus dem Backend -> immer; Stundenplan/Noten/Prüfungen nur mit
                 // verknüpftem WebUntis-Konto.
                 val mensaJob = async { loadMensa() }
+                val backendJob = async { loadBackendWidgets() }
                 if (session?.hasUntis == true) {
                     val todayJob = async { loadToday(session) }
                     val gradesJob = async { loadGrades(session) }
@@ -180,6 +294,7 @@ class HomeViewModel @Inject constructor(
                     _state.update { it.copy(loadingToday = false, loadingGrades = false, examsLoaded = true) }
                 }
                 mensaJob.await()
+                backendJob.await()
             }
         } catch (e: Exception) {
             _state.update { it.copy(error = e.message ?: "Unbekannter Fehler.") }
@@ -191,7 +306,7 @@ class HomeViewModel @Inject constructor(
         try {
             val monday = SchoolDates.mondayIso()
             val result = offlineStore.load(
-                key = "home-week-${session.studentId}-$monday",
+                key = "tt-${session.studentId}-$monday",
                 serializer = ListSerializer(TimetableEntry.serializer()),
             ) { untisClient.timetable(session, session.studentId, monday) }
             val all = result.value
@@ -199,32 +314,54 @@ class HomeViewModel @Inject constructor(
             val slots = TimetableSlots.buildSlots(all.filter { it.date == today })
             _state.update {
                 it.copy(
+                    todayEntries = all.filter { e -> e.date == today },
                     todaySlots = slots,
                     loadingToday = false,
                     todaySavedAt = result.savedAt,
                     todayStale = result.stale,
+                    // A restored week with nothing in it proves nothing about today.
+                    todayUnavailable = result.stale && all.isEmpty(),
                 )
             }
             prefetchSubjectImages(all.filter { it.date >= today })
         } catch (e: AppError) {
             if (e.isSessionExpired) appState.handleSessionExpired()
-            _state.update { it.copy(loadingToday = false) }
+            _state.update { it.copy(loadingToday = false, todaySlots = emptyList(), todayUnavailable = true) }
         } catch (e: Exception) {
-            _state.update { it.copy(loadingToday = false) }
+            _state.update { it.copy(loadingToday = false, todaySlots = emptyList(), todayUnavailable = true) }
         }
     }
 
     private suspend fun loadGrades(session: UserSession) {
         _state.update { it.copy(loadingGrades = true) }
         try {
-            val subjects = untisClient.grades(session, session.studentId, null)
+            // Same key as the Noten tab, so either screen having loaded online is enough.
+            val subjects = offlineStore.load(
+                key = "grades-${session.studentId}-${SchoolDates.currentSchoolYear}",
+                serializer = ListSerializer(SubjectGrades.serializer()),
+            ) { untisClient.grades(session, session.studentId, null) }.value
             val items = subjects.flatMap { subj ->
                 subj.grades.filter { it.markDisplayValue > 0 }
                     .map { g -> RecentGrade(id = g.id, subject = subj.subjectName, value = g.markDisplayValue, date = g.date) }
             }.sortedByDescending { it.id }.take(3)
-            _state.update { it.copy(recentGrades = items, loadingGrades = false) }
+            val values = subjects.flatMap { s -> s.grades.map { g -> g.markDisplayValue } }.filter { v -> v > 0 }
+            val weakest = subjects
+                .mapNotNull { s ->
+                    val v = s.grades.map { g -> g.markDisplayValue }.filter { x -> x > 0 }
+                    if (v.isEmpty()) null else s.subjectName to v.average()
+                }
+                .minByOrNull { it.second }
+            _state.update {
+                it.copy(
+                    gradeAverage = if (values.isEmpty()) null else values.average(),
+                    gradeCount = values.size,
+                    weakestSubject = weakest,
+                    averageLoaded = true,
+                )
+            }
+            _state.update { it.copy(recentGrades = items, loadingGrades = false, gradesUnavailable = false) }
         } catch (e: Exception) {
-            _state.update { it.copy(loadingGrades = false) }
+            _state.update { it.copy(loadingGrades = false, gradesUnavailable = it.recentGrades.isEmpty(), averageLoaded = true) }
         }
     }
 
@@ -236,21 +373,43 @@ class HomeViewModel @Inject constructor(
             val today = SchoolDates.todayNum()
             val startMonday = mondayOfWeek(todayLocalDate())
             val weekStarts = (0..5).map { startMonday.plus(it * 7, DateTimeUnit.DAY) }
-            val entries = coroutineScope {
+            val weeks = coroutineScope {
                 weekStarts.map { monday ->
                     async {
-                        runCatching { untisClient.timetable(session, session.studentId, monday.toString()) }
-                            .getOrDefault(emptyList())
+                        // Shares the Stundenplan tab's per-week cache key, so offline this sees
+                        // every week that was ever opened there.
+                        runCatching {
+                            offlineStore.load(
+                                key = "tt-${session.studentId}-$monday",
+                                serializer = ListSerializer(TimetableEntry.serializer()),
+                            ) { untisClient.timetable(session, session.studentId, monday.toString()) }
+                        }.getOrNull()
                     }
                 }.awaitAll()
-            }.flatten()
-            val next = entries
+            }
+            val next = weeks.filterNotNull().flatMap { it.value }
                 .filter { it.isExam && it.date >= today }
                 .sortedWith(compareBy({ it.date }, { it.startTime }))
                 .firstOrNull()
-            _state.update { it.copy(nextExam = next, examsLoaded = true) }
+            val unknown = weeks.any { it == null || (it.stale && it.value.isEmpty()) }
+            val all = weeks.filterNotNull().flatMap { it.value }
+            val nextDay = all.map { it.date }.filter { it > today }.minOrNull()
+            val changeDays = listOfNotNull(today, nextDay)
+            val changes = all
+                .filter { it.date in changeDays && it.isChange() }
+                .sortedWith(compareBy({ it.date }, { it.startTime }))
+            _state.update {
+                it.copy(
+                    nextExam = next,
+                    examsLoaded = true,
+                    examsUnknown = unknown,
+                    changes = changes,
+                    changesLoaded = true,
+                    changesUnknown = weeks.firstOrNull() == null,
+                )
+            }
         } catch (e: Exception) {
-            _state.update { it.copy(examsLoaded = true) }
+            _state.update { it.copy(examsLoaded = true, examsUnknown = true, changesLoaded = true, changesUnknown = true) }
         }
     }
 
@@ -310,8 +469,13 @@ class HomeViewModel @Inject constructor(
         val token = appState.session.value?.apiToken
         if (unique.isEmpty() || token == null) {
             // Nothing to fetch, or no backend token to fetch it with — either way the stars are
-            // as resolved as they are going to get, so stop the placeholder.
-            _state.update { it.copy(loadingDishRatings = false) }
+            // as resolved as they are going to get, so stop the placeholder. Offline, show the
+            // stars stored last time and mark the rest unknown rather than unrated.
+            val offline = token == null && appState.isOffline.value
+            val stored = if (offline) backendClient.storedRatings(unique) else emptyMap()
+            _state.update {
+                it.copy(dishRatings = stored + it.dishRatings, loadingDishRatings = false, dishRatingsUnavailable = offline)
+            }
             return
         }
         // Whatever the shared cache already knows, immediately — the Mensa tab and Home look at
@@ -322,9 +486,16 @@ class HomeViewModel @Inject constructor(
         }
         runCatching { backendClient.dishRatingsBatch(unique, token) }
             .onSuccess { batch ->
-                _state.update { it.copy(dishRatings = it.dishRatings + batch, loadingDishRatings = false) }
+                _state.update {
+                    it.copy(dishRatings = it.dishRatings + batch, loadingDishRatings = false, dishRatingsUnavailable = false)
+                }
             }
-            .onFailure { _state.update { it.copy(loadingDishRatings = false) } }
+            .onFailure {
+                val stored = backendClient.storedRatings(unique)
+                _state.update {
+                    it.copy(dishRatings = stored + it.dishRatings, loadingDishRatings = false, dishRatingsUnavailable = true)
+                }
+            }
     }
 
     // ── Mensa-Wochenlogik ────────────────────────────────────────────────────
@@ -373,3 +544,8 @@ class HomeViewModel @Inject constructor(
 
     private val weekdayNamesDe = listOf("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
 }
+
+/** Is this lesson not happening as timetabled — cancelled, substituted, added, or moved? */
+internal fun TimetableEntry.isChange(): Boolean =
+    isCancelled || isSubstitution || isAdditional ||
+        addedTeachers.isNotEmpty() || addedRooms.isNotEmpty() || addedSubjects.isNotEmpty()

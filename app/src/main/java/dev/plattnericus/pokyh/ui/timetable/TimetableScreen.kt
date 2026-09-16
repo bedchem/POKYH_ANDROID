@@ -62,6 +62,7 @@ import dev.plattnericus.pokyh.data.untis.TimetableSlots
 import dev.plattnericus.pokyh.data.untis.changes
 import dev.plattnericus.pokyh.ui.components.AsOfLabel
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
+import dev.plattnericus.pokyh.ui.components.OfflineStateView
 import dev.plattnericus.pokyh.ui.components.PokyhDayPills
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhInlineNotice
@@ -306,7 +307,10 @@ private fun WeekPageContent(
         is WeekPageState.Loading -> WeekGridSkeleton(Modifier.fillMaxSize())
         is WeekPageState.Error -> ErrorStateView(message = state.message, onRetry = onRetry)
         is WeekPageState.Data -> {
-            if (state.entries.isEmpty()) {
+            if (state.entries.isEmpty() && state.stale) {
+                // An empty week off the disk is not proof of holidays — only a live answer is.
+                OfflineStateView(title = "Stundenplan unbekannt", message = OFFLINE_WEEK_UNKNOWN, onRetry = onRetry)
+            } else if (state.entries.isEmpty()) {
                 Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                     // SpecialDayCard(compact = false) sizes itself — see its own file.
                     SpecialDayCard(
@@ -374,6 +378,8 @@ private fun DayModeContent(viewModel: TimetableViewModel, ui: TimetableUiState, 
                         .padding(horizontal = PokyhSpacing.screenH),
                 )
                 is WeekPageState.Error -> ErrorStateView(message = pageState.message, onRetry = { viewModel.retryWeek(ui.weekOffset) })
+                is WeekPageState.Data if pageState.entries.isEmpty() && pageState.stale ->
+                    OfflineStateView(title = "Stundenplan unbekannt", message = OFFLINE_WEEK_UNKNOWN, onRetry = { viewModel.retryWeek(ui.weekOffset) })
                 is WeekPageState.Data -> {
                     val dayNum = viewModel.dateNumOf(ui.weekOffset, ui.selectedDay)
                     val dayEntries = pageState.entries.filter { it.date == dayNum }
@@ -560,3 +566,9 @@ private fun slotBadge(slot: MergedSlot) {
         else -> {}
     }
 }
+
+/** Shown for a week that is empty on the disk while offline — it could be holidays, or it could
+ * be a week that was simply never loaded, and saying "Ferien" would be a guess. */
+private const val OFFLINE_WEEK_UNKNOWN =
+    "Du bist offline und für diese Woche ist kein Stundenplan gespeichert. Ob Unterricht ist, " +
+        "lässt sich erst sagen, wenn du wieder Internet hast."

@@ -98,7 +98,7 @@ fun SchoolHubScreen(
             if (!state.isParent) {
                 add(
                     HubItem(
-                        title = "Klassen-Erinnerungen",
+                        title = "Erinnerungen",
                         subtitle = "Hausaufgaben & Termine der Klasse",
                         glyph = PokyhIcons.decorReminders,
                         route = PokyhDestinations.REMINDERS,
@@ -157,7 +157,7 @@ fun SchoolHubScreen(
                             onClick = {
                                 if (item.route != null) onNavigate(item.route) else viewModel.selectGradesTab()
                             },
-                            minHeight = 164.dp,
+                            height = 168.dp,
                             modifier = Modifier.weight(1f),
                         )
                     }

@@ -19,10 +19,15 @@ import dev.plattnericus.pokyh.data.network.Config
 import dev.plattnericus.pokyh.core.status.PokyhService
 import dev.plattnericus.pokyh.core.status.ServiceHealth
 import dev.plattnericus.pokyh.data.storage.DiskCache
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -264,6 +269,7 @@ class BackendClient @Inject constructor(
     fun clearCaches() {
         dishCache.removeAll()
         ratingsCache.removeAll()
+        _ratingUpdates.value = emptyMap()
         subjectImageCache.removeAll()
     }
 
@@ -478,7 +484,31 @@ class BackendClient @Inject constructor(
     suspend fun dishRatings(dishId: String, token: String, force: Boolean = false): DishRatingsData {
         if (!force) ratingsCache.get(dishId)?.let { return it }
         val dto = decode<DishRatingsResponse>(request(Config.Routes.dishRatings + "/" + dishId.urlEncoded(), token = token))
-        return DishRatingsData(ratings = dto.ratings, myRating = dto.myRating).also { ratingsCache.set(dishId, it) }
+        return DishRatingsData(ratings = dto.ratings, myRating = dto.myRating).also {
+            putRating(dishId, it)
+            storeRatings(mapOf(dishId to it))
+        }
+    }
+
+    private val ratingsDiskKey = "dish-ratings-v1"
+    private val ratingsDiskSerializer = MapSerializer(String.serializer(), DishRatingsData.serializer())
+
+    /**
+     * Ratings as they were last fetched on this device, without the network — what an offline
+     * session shows instead of "Noch keine Bewertung" for dishes that do have ratings.
+     *
+     * `myRating` is dropped on the way to disk: the file is not per account, and the average and
+     * count are the same for everyone while your own vote is not.
+     */
+    suspend fun storedRatings(ids: List<String>): Map<String, DishRatingsData> {
+        val stored = diskCache.read(ratingsDiskKey, ratingsDiskSerializer) ?: return emptyMap()
+        return ids.mapNotNull { id -> stored[id]?.let { id to it } }.toMap()
+    }
+
+    private suspend fun storeRatings(fresh: Map<String, DishRatingsData>) {
+        if (fresh.isEmpty()) return
+        val stored = diskCache.read(ratingsDiskKey, ratingsDiskSerializer).orEmpty()
+        diskCache.write(ratingsDiskKey, stored + fresh.mapValues { it.value.copy(myRating = null) }, ratingsDiskSerializer)
     }
 
     /**
@@ -498,7 +528,10 @@ class BackendClient @Inject constructor(
         )
         val map = decode<Map<String, DishRatingsResponse>>(text)
         return map.mapValues { (_, dto) -> DishRatingsData(ratings = dto.ratings, myRating = dto.myRating) }
-            .also { fresh -> fresh.forEach { (id, data) -> ratingsCache.set(id, data) } }
+            .also { fresh ->
+                fresh.forEach { (id, data) -> putRating(id, data) }
+                storeRatings(fresh)
+            }
     }
 
     suspend fun rateDish(dishId: String, stars: Int, token: String) {
@@ -512,21 +545,31 @@ class BackendClient @Inject constructor(
     }
 
     /**
-     * Schreibt eine gerade abgegebene Bewertung in den Cache, damit jeder andere Screen sie
-     * sofort sieht.
+     * Schreibt eine Bewertung in den Cache und in [ratingUpdates] — auch eine gerade getippte, noch
+     * unbestätigte, oder deren Rücknahme —, damit jeder andere Screen sie sofort sieht.
      *
      * Ohne das zeigte die Mensa-Liste nach einer Bewertung im Detail so lange den alten
      * Schnitt, bis die TTL ablief — die UI war optimistisch, der Cache nicht.
      */
-    fun applyLocalRating(dishId: String, stars: Int, userKey: String) {
-        val current = ratingsCache.stale(dishId) ?: DishRatingsData(emptyMap(), null)
-        ratingsCache.set(
-            dishId,
-            current.copy(
-                ratings = current.ratings + (userKey to stars.toDouble()),
-                myRating = stars,
-            ),
-        )
+    fun publishRating(dishId: String, data: DishRatingsData) {
+        putRating(dishId, data)
+    }
+
+    private val _ratingUpdates = MutableStateFlow<Map<String, DishRatingsData>>(emptyMap())
+
+    /**
+     * Every rating this client learns or is told about, as it happens — an optimistic vote, a
+     * rollback, a fresh server answer.
+     *
+     * The Mensa list and Home read their stars once when they load, so a vote cast on the detail
+     * page never reached them: going back showed the old count until the next reload. They
+     * collect this instead and stay in step with the detail page.
+     */
+    val ratingUpdates: StateFlow<Map<String, DishRatingsData>> = _ratingUpdates.asStateFlow()
+
+    private fun putRating(dishId: String, data: DishRatingsData) {
+        ratingsCache.set(dishId, data)
+        _ratingUpdates.update { it + (dishId to data) }
     }
 
     // ── Authentifizierte Requests ───────────────────────────────────────────
@@ -557,7 +600,7 @@ class BackendClient @Inject constructor(
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
                 val message = runCatching { json.decodeFromString<ApiErrorBody>(text).error }.getOrNull()
-                throw AppError(message ?: "HTTP ${resp.code}")
+                throw AppError(message ?: "HTTP ${resp.code}", httpCode = resp.code)
             }
             text
         }

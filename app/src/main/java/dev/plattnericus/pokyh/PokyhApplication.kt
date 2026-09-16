@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import dagger.hilt.android.HiltAndroidApp
 import dev.plattnericus.pokyh.core.notifications.NotificationSyncWorker
 import dev.plattnericus.pokyh.core.notifications.PokyhNotifications
+import dev.plattnericus.pokyh.data.sync.Outbox
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
@@ -29,6 +30,7 @@ class PokyhApplication : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var pokyhNotifications: PokyhNotifications
+    @Inject lateinit var outbox: Outbox
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -36,6 +38,8 @@ class PokyhApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         pokyhNotifications.ensureChannel()
+        // Queued Todos/Erinnerungen go out as soon as there is a connection — app-wide, not per screen.
+        outbox.start()
 
         // The manifest's WorkManagerInitializer removal (see AndroidManifest.xml) means nothing
         // else initializes WorkManager — do it here, explicitly, with the Hilt-aware config, so

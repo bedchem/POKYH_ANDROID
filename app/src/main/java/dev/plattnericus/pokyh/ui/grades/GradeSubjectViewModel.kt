@@ -10,6 +10,7 @@ import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.data.storage.GradeDraftEntry
 import dev.plattnericus.pokyh.data.storage.PreferencesStore
+import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
 
 /**
  * Fach-Detail mit Notenrechner + Zielnote-Rechner — port of `GradeSubjectView`'s state.
@@ -32,6 +34,7 @@ class GradeSubjectViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val appState: AppState,
     private val untisClient: UntisClient,
+    private val offlineStore: OfflineStore,
     private val prefsStore: PreferencesStore,
 ) : ViewModel() {
 
@@ -68,7 +71,11 @@ class GradeSubjectViewModel @Inject constructor(
             _loading.value = true
             _error.value = null
             try {
-                val all = untisClient.grades(session, session.studentId, year)
+                // Same key as the Noten tab, so a subject opened offline reads the stored year.
+                val all = offlineStore.load(
+                    key = "grades-${session.studentId}-$year",
+                    serializer = ListSerializer(SubjectGrades.serializer()),
+                ) { untisClient.grades(session, session.studentId, year) }.value
                 _subject.value = all.firstOrNull { it.lessonId == subjectId }
             } catch (e: AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()

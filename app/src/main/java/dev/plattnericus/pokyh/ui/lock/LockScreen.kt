@@ -56,7 +56,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.core.biometric.BiometricAuthenticator
 import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.ui.components.MiniBadge
-import dev.plattnericus.pokyh.ui.components.InitialAvatar
+import dev.plattnericus.pokyh.ui.components.UntisAvatar
+import dev.plattnericus.pokyh.ui.components.avatarCacheKey
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhListCard
 import dev.plattnericus.pokyh.ui.components.PokyhMark
@@ -361,9 +362,17 @@ private fun AccountChooser(
                 title = acc.username,
                 subtitle = acc.displayName,
                 onClick = { onSelect(acc.username) },
-                // No session exists yet on the Lock screen, so there are no headers to authorize a
-                // WebUntis image with — a saved account always shows its initial here.
-                leading = { InitialAvatar(name = acc.username, size = 36.dp) },
+                // No session exists yet on the Lock screen, so nothing can load live — the picture
+                // stored the last time this account was signed in shows, or its initial.
+                leading = {
+                    UntisAvatar(
+                        rawImageUrl = null,
+                        name = acc.username,
+                        auth = null,
+                        cacheKey = avatarCacheKey(acc.username),
+                        size = 36.dp,
+                    )
+                },
                 trailing = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

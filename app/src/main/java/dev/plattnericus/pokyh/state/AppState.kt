@@ -25,6 +25,7 @@ import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -194,6 +195,9 @@ class AppState @Inject constructor(
             _phase.value = if (first.isEmpty()) Phase.Login else Phase.Lock
             _isReady.value = true
         }
+        // Back online while signed in on the stored session → sign in for real in the background,
+        // so the POKYH token (and with it the outbox) comes back without the user doing anything.
+        scope.launch { networkMonitor.online.collect { online -> if (online) retryOfflineLogin() } }
     }
 
     // ── Login ─────────────────────────────────────────────────────────────────
@@ -212,7 +216,9 @@ class AppState @Inject constructor(
      */
     suspend fun login(username: String, password: String, save: Boolean = true) {
         val stored = credentialStore.getCredentials(username)?.second
-        performLogin(username, password, save, allowOffline = stored != null && stored == password)
+        // The verifier covers a signed-out account: its password is gone, the hash is not.
+        val known = (stored != null && stored == password) || credentialStore.verifyOfflinePassword(username, password)
+        performLogin(username, password, save, allowOffline = known)
     }
 
     /** Re-login for an already-saved account (Face-ID unlock, silent relaunch) — races
@@ -282,7 +288,8 @@ class AppState @Inject constructor(
             // Timed out → offline snapshot now; the real login keeps running in [backgroundScope]
             // and silently upgrades the session if/when it eventually succeeds.
             enterOffline(snap, viaSheet)
-            backgroundScope.launch {
+            offlineLogin = OfflineLogin(snap.username, password, save)
+            reconnectJob = backgroundScope.launch {
                 runCatching { loginDeferred.await() }.getOrNull()?.let { upgradeFromBackground(it, save, password) }
             }
             return
@@ -291,7 +298,12 @@ class AppState @Inject constructor(
             onSuccess = { s -> finalize(s, save, password, viaSheet) },
             onFailure = { e ->
                 // Fast network failure (e.g. airplane mode) + cache → also go offline.
-                if (e.isNetworkError()) enterOffline(snap, viaSheet) else _error.value = errorMessage(e)
+                if (e.isNetworkError()) {
+                    enterOffline(snap, viaSheet)
+                    offlineLogin = OfflineLogin(snap.username, password, save)
+                } else {
+                    _error.value = errorMessage(e)
+                }
             },
         )
         _busy.value = false
@@ -360,6 +372,7 @@ class AppState @Inject constructor(
             // Silent re-login: still backfill the profile image so the account list / lock
             // screen show the cached picture even when the password wasn't re-saved.
             updateAccountImage(s.username, s.imageUrl)
+            credentialStore.ensureOfflineVerifier(s.username, password)
         }
         prefsStore.setLastActive(s.username)
         if (s.hasUntis) diskCache.write(sessionKey(s.username), offlineSnapshot(s), UserSession.serializer())
@@ -435,6 +448,7 @@ class AppState @Inject constructor(
      * Login (none saved). Store.swift `handleSessionExpired()`, called from every screen's
      * WebUntis load catch block the same way. */
     fun handleSessionExpired() {
+        offlineLogin = null
         _session.value = null
         _isOffline.value = false
         _phase.value = if (_accounts.value.isEmpty()) Phase.Login else Phase.Lock
@@ -448,6 +462,9 @@ class AppState @Inject constructor(
         _session.value = snap
         _phase.value = Phase.Authed
         _isOffline.value = true
+        // The snapshot carries no backend token, so without this every POKYH feature fell through
+        // to "benötigt ein POKYH-Konto" — true of no account that has ever signed in online.
+        _backendStatus.value = if (snap.isStudent || snap.isParent) BackendStatus.Offline else BackendStatus.NotStudent
         // Reaching this line *means* WebUntis did not answer the login — either it failed or it
         // ran past the offline timeout. Say so straight away instead of waiting for the
         // interceptor's second strike, which offline may never arrive: the banner explaining why
@@ -456,10 +473,37 @@ class AppState @Inject constructor(
         scope.launch { prefsStore.setLastActive(snap.username) }
     }
 
+    /** What an offline session was opened with — kept **in memory only**, so a reconnect can sign
+     * in for real without asking again. Never written anywhere; gone with the process. */
+    private data class OfflineLogin(val username: String, val password: String, val save: Boolean)
+
+    private var offlineLogin: OfflineLogin? = null
+    private var reconnectJob: Job? = null
+
+    /**
+     * Try the real sign-in again for the offline session.
+     *
+     * Before this, the only upgrade path was the one login that lost the offline race — and in
+     * flight mode that one fails at once, so the session stayed offline (no POKYH token, nothing
+     * syncing) until the user signed in again by hand. Called whenever the network comes back
+     * and when the app returns to the foreground.
+     */
+    fun retryOfflineLogin() {
+        if (!_isOffline.value) return
+        val login = offlineLogin ?: return
+        if (_session.value?.username != login.username) return
+        if (reconnectJob?.isActive == true) return
+        reconnectJob = backgroundScope.launch {
+            runCatching { buildSession(login.username, login.password) }.getOrNull()
+                ?.let { upgradeFromBackground(it, login.save, login.password) }
+        }
+    }
+
     /** The background login that lost the offline race finally came back — upgrade silently,
      * without disrupting whatever the user is currently doing. */
     private suspend fun upgradeFromBackground(s: UserSession, save: Boolean, password: String) {
         if (_session.value?.username != s.username) return // Account switched away meanwhile?
+        offlineLogin = null
         if (save) {
             credentialStore.saveCredentials(s.username, password)
             upsertAccount(SavedAccount(username = s.username, displayName = s.klasseName.ifEmpty { s.username }, nickname = null, imageUrl = s.imageUrl))
@@ -614,6 +658,7 @@ class AppState @Inject constructor(
         scope.launch { credentialStore.deleteCredentials(username) }
         _accountsWithPassword.value = _accountsWithPassword.value - username
         if (_session.value?.username == username) {
+            offlineLogin = null
             _session.value = null
             _isOffline.value = false
             // The next account gets a clean slate: this one's outage is not theirs, and an
@@ -627,6 +672,7 @@ class AppState @Inject constructor(
     fun removeAccount(username: String) {
         scope.launch {
             credentialStore.deleteCredentials(username)
+            credentialStore.deleteOfflineVerifier(username)
             prefsStore.setAccounts(_accounts.value.filterNot { it.username == username })
         }
         if (_session.value?.username == username) {
@@ -634,6 +680,29 @@ class AppState @Inject constructor(
             _isOffline.value = false
             serviceHealth.reset()
         }
+    }
+
+    /**
+     * Everything was just wiped from the device — drop every trace of the signed-in state and go
+     * to Login.
+     *
+     * [removeAccount] alone was not enough: it nulls the session but leaves [phase] at Authed,
+     * so "Alle Daten löschen" left the user inside the app with no session behind it.
+     */
+    fun resetAfterDataWipe() {
+        offlineLogin = null
+        _session.value = null
+        _isOffline.value = false
+        _backendStatus.value = BackendStatus.Unknown
+        _accounts.value = emptyList()
+        _accountsWithPassword.value = emptySet()
+        _defaultUsername.value = null
+        _unreadMessages.value = 0
+        _showAddAccount.value = false
+        _error.value = null
+        _selectedTab.value = AppTab.Home
+        serviceHealth.reset()
+        _phase.value = Phase.Login
     }
 
     /** Widgets/notifications use the default account's data; `null` clears it (single-user case
@@ -697,6 +766,7 @@ class AppState @Inject constructor(
             _phase.value = Phase.Lock
         } else {
             _resumeSignal.value += 1
+            retryOfflineLogin()
         }
     }
 

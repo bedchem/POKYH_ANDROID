@@ -44,6 +44,7 @@ import dev.plattnericus.pokyh.ui.components.BackendUnavailableView
 import dev.plattnericus.pokyh.ui.components.EmptyStateView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
 import dev.plattnericus.pokyh.ui.components.ListSkeleton
+import dev.plattnericus.pokyh.ui.components.PendingSyncRow
 import dev.plattnericus.pokyh.ui.components.PokyhFab
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
@@ -96,27 +97,35 @@ fun TodosScreen(onNavigateBack: () -> Unit = {}, viewModel: TodosViewModel = hil
             )
         },
         floatingActionButton = {
-            if (hasBackend) {
+            if (hasBackend || ui.offline) {
                 PokyhFab(text = "Neu", icon = PokyhIcons.add, onClick = { showAdd = true })
             }
         },
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                !hasBackend -> BackendUnavailableView(feature = "Todos", status = backendStatus)
+                !hasBackend && !ui.offline && !ui.offlineCopy -> BackendUnavailableView(feature = "Todos", status = backendStatus)
                 ui.loading && ui.todos.isEmpty() -> ListSkeleton()
-                ui.error != null && ui.todos.isEmpty() ->
+                ui.error != null && ui.todos.isEmpty() && ui.pending.isEmpty() ->
                     ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
-                ui.todos.isEmpty() -> EmptyStateView(
+                ui.todos.isEmpty() && ui.pending.isEmpty() -> EmptyStateView(
                     icon = PokyhIcons.todos,
                     title = "Keine Todos",
-                    subtitle = "Lege eine Aufgabe an, um sie hier zu sehen.",
-                    action = {
-                        PokyhSecondaryButton(
-                            text = "Aufgabe anlegen",
-                            icon = PokyhIcons.add,
-                            onClick = { showAdd = true },
-                        )
+                    subtitle = if (hasBackend) {
+                        "Lege eine Aufgabe an, um sie hier zu sehen."
+                    } else {
+                        "Du bist offline. Neue Aufgaben werden gesendet, sobald du wieder Internet hast."
+                    },
+                    action = if (hasBackend || ui.offline) {
+                        {
+                            PokyhSecondaryButton(
+                                text = "Aufgabe anlegen",
+                                icon = PokyhIcons.add,
+                                onClick = { showAdd = true },
+                            )
+                        }
+                    } else {
+                        null
                     },
                 )
                 else -> LazyColumn(
@@ -128,6 +137,14 @@ fun TodosScreen(onNavigateBack: () -> Unit = {}, viewModel: TodosViewModel = hil
                     ),
                     verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
                 ) {
+                    items(ui.pending, key = { "pending-" + it.id }) { item ->
+                        PendingSyncRow(
+                            title = item.title,
+                            text = item.text,
+                            dateLabel = item.date?.let { parseDueDate(it) }?.format(DueDateFormatter),
+                            onDelete = { viewModel.deletePending(item) },
+                        )
+                    }
                     items(ui.todos, key = { it.id }) { todo ->
                         TodoSwipeRow(
                             todo = todo,

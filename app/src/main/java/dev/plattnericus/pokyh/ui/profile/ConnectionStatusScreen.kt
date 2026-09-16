@@ -172,6 +172,7 @@ private fun statusIcon(status: BackendStatus): ImageVector = when (status) {
     is BackendStatus.NoClass -> PokyhIcons.noClass
     is BackendStatus.Failed -> PokyhIcons.serverUnreachable
     is BackendStatus.Unknown -> PokyhIcons.unknown
+    is BackendStatus.Offline -> PokyhIcons.offline
 }
 
 private fun statusExplanation(status: BackendStatus): String = when (status) {
@@ -182,6 +183,7 @@ private fun statusExplanation(status: BackendStatus): String = when (status) {
             "gesperrt. Tippe auf Erneut prüfen; hilft das nicht, sende die technischen Details an den Support."
     is BackendStatus.Failed -> "Verbindung zum POKYH-Server fehlgeschlagen: ${status.message}"
     is BackendStatus.Unknown -> "Status noch nicht ermittelt."
+    is BackendStatus.Offline -> "Du bist offline angemeldet. Todos, Erinnerungen und Klasse zeigen den zuletzt gespeicherten Stand."
 }
 
 // ── Dein Konto ──────────────────────────────────────────────────────────────

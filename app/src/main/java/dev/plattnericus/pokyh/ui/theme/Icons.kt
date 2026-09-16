@@ -112,6 +112,8 @@ object PokyhIcons {
     val password = Ph.Key
     val signOut = Ph.SignOut
     val delete = Ph.Trash
+    val clearCache = Ph.ArrowsCounterClockwise
+    val pendingSync = Ph.ClockCounterClockwise
     val edit = Ph.PencilSimple
     val privacy = Ph.HandPalm
     val security = Ph.ShieldCheck

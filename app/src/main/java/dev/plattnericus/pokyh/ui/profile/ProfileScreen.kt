@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +57,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhRow
 import dev.plattnericus.pokyh.ui.components.PokyhRowMenuCaret
 import dev.plattnericus.pokyh.ui.components.PokyhRowSeparator
 import dev.plattnericus.pokyh.ui.components.PokyhSection
+import dev.plattnericus.pokyh.ui.components.IconTile
 import dev.plattnericus.pokyh.ui.components.PokyhSectionHeader
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextField
@@ -65,6 +67,7 @@ import dev.plattnericus.pokyh.ui.components.StatusLabel
 import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.components.UntisAvatar
 import dev.plattnericus.pokyh.ui.components.UntisImageAuth
+import dev.plattnericus.pokyh.ui.components.avatarCacheKey
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
@@ -106,6 +109,9 @@ fun ProfileScreen(
     val refreshingUsername by viewModel.refreshingUsername.collectAsStateWithLifecycle()
     val switchError by viewModel.switchError.collectAsStateWithLifecycle()
     val clearing by viewModel.clearing.collectAsStateWithLifecycle()
+    val cacheSize by viewModel.cacheSize.collectAsStateWithLifecycle()
+    val cacheCleared by viewModel.cacheCleared.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.refreshCacheSize() }
 
     var confirmLogout by remember { mutableStateOf(false) }
     var confirmClearData by remember { mutableStateOf(false) }
@@ -187,13 +193,21 @@ fun ProfileScreen(
                 }
             }
 
-            item(key = "danger") {
-                DangerSection(
+            item(key = "storage") {
+                StorageSection(
                     clearing = clearing,
-                    onLogout = { confirmLogout = true },
+                    cacheSize = cacheSize,
+                    cacheCleared = cacheCleared,
+                    onClearCache = viewModel::clearCache,
                     onClearData = { confirmClearData = true },
                     modifier = Modifier.fadeIn(delayMillis = 110),
                 )
+            }
+
+            if (session != null) {
+                item(key = "logout") {
+                    LogoutCard(onLogout = { confirmLogout = true }, modifier = Modifier.fadeIn(delayMillis = 115))
+                }
             }
 
             item(key = "about") {
@@ -269,13 +283,13 @@ fun ProfileScreen(
 
     if (confirmClearData) {
         PokyhDialog(
-            title = "Cache & alle Daten löschen?",
-            body = "Alle gespeicherten Konten, Anmeldedaten, der Offline-Stundenplan, der Noten-Cache und " +
-                "sämtliche App-Einstellungen werden entfernt. Du musst dich danach neu anmelden.",
+            title = "Alle Daten löschen?",
+            body = "Alle Konten, gespeicherten Passwörter, Einstellungen und Offline-Daten werden von " +
+                "diesem Gerät entfernt. Du wirst abgemeldet und musst dich neu anmelden.",
             onDismiss = { confirmClearData = false },
             confirmLabel = "Alles löschen",
             confirmColor = Brand.danger,
-            onConfirm = { confirmClearData = false; viewModel.clearAllData(onDone = onNavigateUp) },
+            onConfirm = { confirmClearData = false; viewModel.clearAllData() },
         )
     }
 
@@ -383,6 +397,7 @@ private fun HeaderSection(session: UserSession, modifier: Modifier = Modifier) {
             rawImageUrl = session.imageUrl,
             name = session.personName ?: session.username,
             auth = UntisImageAuth.of(session),
+            cacheKey = avatarCacheKey(session.username),
             size = 88.dp,
             modifier = Modifier
                 .clip(PokyhShapes.pill)
@@ -439,6 +454,7 @@ private fun AvatarViewerDialog(session: UserSession, onDismiss: () -> Unit) {
                     rawImageUrl = session.imageUrl,
                     name = session.personName ?: session.username,
                     auth = UntisImageAuth.of(session),
+                    cacheKey = avatarCacheKey(session.username),
                     size = 280.dp,
                 )
                 Text(
@@ -580,15 +596,74 @@ private fun PokyhThemeMode.icon(): ImageVector = when (this) {
     PokyhThemeMode.Dark -> PokyhIcons.themeDark
 }
 
-/** The two destructive actions in one card, with the explanation as the row's own subtitle
- * rather than as loose text under a card. */
+/**
+ * Two ways to free up the device, from mild to final — and the difference is the whole point.
+ *
+ * "Cache leeren" is harmless: stored copies go, they come back on the next load, and the user
+ * stays signed in, so it runs on tap and says "Geleert" in place. "Alle Daten löschen" signs out
+ * and cannot be undone, so it is red and asks first. Each row's subtitle names what it keeps or
+ * costs, so nobody has to open a dialog to find out which one they want.
+ */
 @Composable
-private fun DangerSection(
-    clearing: Boolean,
-    onLogout: () -> Unit,
+private fun StorageSection(
+    clearing: ProfileViewModel.ClearKind?,
+    cacheSize: Long?,
+    cacheCleared: Boolean,
+    onClearCache: () -> Unit,
     onClearData: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    PokyhSection(title = "Speicher & Daten", modifier = modifier) {
+        PokyhCard(padding = 0.dp) {
+            PokyhRow(
+                title = "Cache leeren",
+                subtitle = "Offline-Kopien und Bilder · du bleibst angemeldet",
+                leading = { IconTile(icon = PokyhIcons.clearCache, color = Brand.accent, size = 38.dp) },
+                trailing = {
+                    when {
+                        clearing == ProfileViewModel.ClearKind.Cache -> CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Brand.accent,
+                        )
+                        cacheCleared -> StatusLabel(text = "Geleert", color = Brand.success, icon = PokyhIcons.ok)
+                        cacheSize != null -> Text(
+                            text = formatBytes(cacheSize),
+                            style = PokyhType.footnote,
+                            color = PokyhTheme.colors.textSecondary,
+                        )
+                    }
+                },
+                onClick = onClearCache,
+                enabled = clearing == null,
+                showChevron = false,
+            )
+            PokyhRowSeparator()
+            PokyhRow(
+                title = "Alle Daten löschen",
+                titleColor = Brand.danger,
+                subtitle = "Konten, Passwörter und Einstellungen · meldet dich ab",
+                leading = { IconTile(icon = PokyhIcons.delete, color = Brand.danger, size = 38.dp) },
+                trailing = {
+                    if (clearing == ProfileViewModel.ClearKind.All) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Brand.danger,
+                        )
+                    }
+                },
+                onClick = onClearData,
+                enabled = clearing == null,
+                showChevron = false,
+            )
+        }
+    }
+}
+
+/** Signing out on its own card: it is an everyday action, not a storage one. */
+@Composable
+private fun LogoutCard(onLogout: () -> Unit, modifier: Modifier = Modifier) {
     PokyhCard(modifier = modifier, padding = 0.dp) {
         PokyhRow(
             title = "Abmelden",
@@ -604,33 +679,14 @@ private fun DangerSection(
             onClick = onLogout,
             showChevron = false,
         )
-        PokyhRowSeparator()
-        PokyhRow(
-            title = "Cache & Daten löschen",
-            titleColor = Brand.danger,
-            subtitle = "Entfernt alle Konten, den Offline-Stundenplan, den Noten-Cache und alle App-Daten " +
-                "von diesem Gerät.",
-            leading = {
-                if (clearing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = Brand.danger,
-                    )
-                } else {
-                    Icon(
-                        imageVector = PokyhIcons.delete,
-                        contentDescription = null,
-                        tint = Brand.danger,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            },
-            onClick = onClearData,
-            enabled = !clearing,
-            showChevron = false,
-        )
     }
+}
+
+/** `0 KB`, `840 KB`, `12,4 MB` — German decimal comma, one decimal from MB on. */
+private fun formatBytes(bytes: Long): String {
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format(java.util.Locale.GERMAN, "%.0f KB", kb)
+    return String.format(java.util.Locale.GERMAN, "%.1f MB", kb / 1024.0)
 }
 
 // ── Accounts ────────────────────────────────────────────────────────────────
@@ -668,13 +724,14 @@ private fun AccountRow(
             if (isActive) {
                 Box(Modifier.size(44.dp).border(2.dp, Brand.accent, PokyhShapes.pill))
             }
-            // Only the *active* account's picture can load — the session headers belong to the
-            // signed-in user, so other rows fall back to their initial (which is what the web
-            // does too: it only ever proxies the logged-in user's image).
+            // Only the *active* account's picture can load live — the session headers belong to the
+            // signed-in user. Other rows show the copy stored the last time they were active, or their
+            // initial if there is none.
             UntisAvatar(
                 rawImageUrl = if (isActive) account.imageUrl else null,
                 name = account.title,
                 auth = activeAuth,
+                cacheKey = avatarCacheKey(account.username),
                 size = 36.dp,
             )
         }

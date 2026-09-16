@@ -113,6 +113,8 @@ class MensaViewModel @Inject constructor(
          * win — the cards are on screen while the stars are still coming.
          */
         val ratingsLoading: Boolean = true,
+        /** Ratings could not be fetched — a dish without one is unknown, not unrated. */
+        val ratingsUnavailable: Boolean = false,
     )
 
     private val _ui = MutableStateFlow(UiState())
@@ -142,6 +144,12 @@ class MensaViewModel @Inject constructor(
                     seen = signal
                     load()
                 }
+            }
+        }
+        // A vote cast on the detail page (or taken back) shows here the moment it happens.
+        viewModelScope.launch {
+            backendClient.ratingUpdates.collect { updates ->
+                if (updates.isNotEmpty()) _ui.update { it.copy(ratings = it.ratings + updates) }
             }
         }
         // Ratings need a backend token. On a cold start the session often resolves *after* the
@@ -174,6 +182,10 @@ class MensaViewModel @Inject constructor(
                             it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.")
                         }
                     }
+                    // The stored menu is on screen — give it its stored stars, or say they are
+                    // unknown, instead of leaving every dish at "Noch keine Bewertung".
+                    val ids = _ui.value.groups.flatMap { it.dishes }.map { it.id }
+                    if (ids.isNotEmpty()) loadRatings(ids)
                 }
         }
     }
@@ -203,14 +215,23 @@ class MensaViewModel @Inject constructor(
         seedRatingsFromCache(ids)
         val token = appState.session.value?.apiToken
         if (token == null) {
-            // No backend token: there will never be stars. Stop the placeholder rather than
-            // shimmering forever.
-            _ui.update { it.copy(ratingsLoading = false) }
+            // No backend token: stop the placeholder rather than shimmering forever. Offline,
+            // show the stars stored last time and mark the rest unknown rather than unrated.
+            val offline = appState.isOffline.value
+            val stored = if (offline) backendClient.storedRatings(ids) else emptyMap()
+            _ui.update {
+                it.copy(ratings = stored + it.ratings, ratingsLoading = false, ratingsUnavailable = offline)
+            }
             return
         }
         runCatching { backendClient.dishRatingsBatch(ids, token) }
-            .onSuccess { batch -> _ui.update { it.copy(ratings = it.ratings + batch, ratingsLoading = false) } }
-            .onFailure { _ui.update { it.copy(ratingsLoading = false) } }
+            .onSuccess { batch ->
+                _ui.update { it.copy(ratings = it.ratings + batch, ratingsLoading = false, ratingsUnavailable = false) }
+            }
+            .onFailure {
+                val stored = backendClient.storedRatings(ids)
+                _ui.update { it.copy(ratings = stored + it.ratings, ratingsLoading = false, ratingsUnavailable = true) }
+            }
     }
 
     /** Retry button / pull-to-refresh. */
@@ -235,6 +256,10 @@ class DishDetailViewModel @Inject constructor(
         val loading: Boolean = true,
         val dish: Dish? = null,
         val ratings: DishRatingsData = DishRatingsData(emptyMap(), null),
+        /** Offline and nothing stored for this dish — the rating is unknown, not zero. */
+        val ratingsUnavailable: Boolean = false,
+        /** Rating and commenting need the POKYH server. */
+        val canInteract: Boolean = true,
         val comments: List<CommentUiItem> = emptyList(),
         val error: String? = null,
     )
@@ -253,7 +278,22 @@ class DishDetailViewModel @Inject constructor(
         viewModelScope.launch {
             appState.session.collectLatest { s ->
                 liveJob?.cancel()
-                val token = s?.apiToken ?: return@collectLatest
+                val token = s?.apiToken
+                if (token == null) {
+                    // No server to ask: stored stars if this dish was ever rated-loaded here,
+                    // otherwise "unknown" — never a confident 0,0 (0).
+                    val offline = s != null && appState.isOffline.value
+                    val stored = if (offline) backendClient.storedRatings(listOf(dishId))[dishId] else null
+                    _ui.update {
+                        it.copy(
+                            ratings = stored ?: it.ratings,
+                            ratingsUnavailable = offline && stored == null,
+                            canInteract = false,
+                        )
+                    }
+                    return@collectLatest
+                }
+                _ui.update { it.copy(ratingsUnavailable = false, canInteract = true) }
                 liveJob = launch { runLive(token) }
             }
         }
@@ -265,7 +305,7 @@ class DishDetailViewModel @Inject constructor(
             launch {
                 sseClient.sseDishRatings(dishId, token)
                     .catch { /* stream dropped for good — last fetched state stays */ }
-                    .collect { dto -> _ui.update { it.copy(ratings = DishRatingsData(dto.ratings, dto.myRating)) } }
+                    .collect { dto -> applyServerRatings(DishRatingsData(dto.ratings, dto.myRating)) }
             }
             launch {
                 sseClient.sseDishComments(dishId, token)
@@ -287,7 +327,7 @@ class DishDetailViewModel @Inject constructor(
 
     private suspend fun loadRatingsAndComments(token: String) {
         runCatching { backendClient.dishRatings(dishId, token) }
-            .onSuccess { r -> _ui.update { it.copy(ratings = r) } }
+            .onSuccess { r -> applyServerRatings(r) }
         runCatching { backendClient.dishComments(dishId, token) }
             .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
     }
@@ -302,27 +342,68 @@ class DishDetailViewModel @Inject constructor(
      * ratings map fixes the average and the count too, and mirrors it into the shared cache so
      * the Mensa list and Home show the same thing without refetching.
      *
-     * The server stays the source of truth: the refetch below overwrites all of it, including
-     * the key this guesses for the current user.
+     * **Until the server has answered, the vote stays on screen.** A server answer that arrives
+     * in the meantime — the stream's push, the first load finishing late — was taken from before
+     * the vote and used to wipe it, which is why the count sometimes did not go up. While a vote
+     * is in flight, [applyServerRatings] lays it over whatever comes in. Once the request
+     * returns the server is the source of truth again: accepted, the refetch shows the real
+     * numbers; rejected, the vote is taken back.
      */
     fun rate(stars: Int) {
         val token = appState.session.value?.apiToken ?: return
-        val userKey = currentUserId.ifEmpty { LOCAL_VOTE_KEY }
-        _ui.update { state ->
-            state.copy(
-                ratings = state.ratings.copy(
-                    ratings = state.ratings.ratings + (userKey to stars.toDouble()),
-                    myRating = stars,
-                ),
-            )
-        }
-        backendClient.applyLocalRating(dishId, stars, userKey)
+        val seq = ++voteSeq
+        val before = _ui.value.ratings
+        pendingVote = stars
+        val optimistic = withVote(before, stars)
+        _ui.update { it.copy(ratings = optimistic) }
+        backendClient.publishRating(dishId, optimistic)
         viewModelScope.launch {
-            runCatching { backendClient.rateDish(dishId, stars, token) }
-            runCatching { backendClient.dishRatings(dishId, token, force = true) }
-                .onSuccess { fresh -> _ui.update { it.copy(ratings = fresh) } }
+            val sent = runCatching { backendClient.rateDish(dishId, stars, token) }.isSuccess
+            if (seq != voteSeq) return@launch // a newer tap owns the screen now
+            pendingVote = null
+            val fresh = runCatching { backendClient.dishRatings(dishId, token, force = true) }.getOrNull()
+            when {
+                fresh != null -> applyServerRatings(fresh)
+                // Not counted and no truth to show: back to how it was before the tap.
+                !sent -> {
+                    _ui.update { it.copy(ratings = before) }
+                    backendClient.publishRating(dishId, before)
+                }
+            }
         }
     }
+
+    /** The vote currently on its way to the server, if any — see [rate]. */
+    private var pendingVote: Int? = null
+    private var voteSeq = 0
+
+    private val userKey: String get() = currentUserId.ifEmpty { LOCAL_VOTE_KEY }
+
+    /** Server ratings, with an in-flight vote laid over them. Also published for the list screens. */
+    private fun applyServerRatings(server: DishRatingsData) {
+        val shown = pendingVote?.let { withVote(server, it) } ?: server
+        _ui.update { it.copy(ratings = shown) }
+        backendClient.publishRating(dishId, shown)
+    }
+
+    /**
+     * [data] with the current user's vote set to [stars].
+     *
+     * If the server already counts a vote from this user ([DishRatingsData.myRating] set), that
+     * vote is *replaced* — found by the user's key, or failing that by its value — so changing a
+     * rating moves the average without adding a phantom vote to the count.
+     */
+    private fun withVote(data: DishRatingsData, stars: Int): DishRatingsData {
+        val ratings = data.ratings.toMutableMap()
+        val existingKey = when {
+            userKey in ratings -> userKey
+            data.myRating != null -> ratings.entries.firstOrNull { it.value == data.myRating!!.toDouble() }?.key
+            else -> null
+        }
+        ratings[existingKey ?: userKey] = stars.toDouble()
+        return data.copy(ratings = ratings, myRating = stars)
+    }
+
 
     /**
      * Post a comment. It appears in the thread immediately, under the current user's name, and

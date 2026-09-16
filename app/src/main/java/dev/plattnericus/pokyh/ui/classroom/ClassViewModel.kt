@@ -12,6 +12,7 @@ import dev.plattnericus.pokyh.data.model.ApiClass
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.ClassregEvent
 import dev.plattnericus.pokyh.data.model.TimetableEntry
+import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.plus
+import kotlinx.serialization.builtins.ListSerializer
 
 /**
  * Klasse. Two independent halves, deliberately kept separate so one failing doesn't blank the
@@ -40,6 +42,7 @@ class ClassViewModel @Inject constructor(
     private val appState: AppState,
     private val backendClient: BackendClient,
     private val untisClient: UntisClient,
+    private val offlineStore: OfflineStore,
 ) : ViewModel() {
 
     /** `var hasBackend: Bool { app.session?.apiToken != nil }`. */
@@ -62,7 +65,7 @@ class ClassViewModel @Inject constructor(
     val schoolYear: Int get() = SchoolDates.currentSchoolYear
 
     init {
-        if (hasBackend) load()
+        if (hasBackend) load() else loadStoredClass()
         loadOverview()
     }
 
@@ -71,13 +74,30 @@ class ClassViewModel @Inject constructor(
         loadOverview()
     }
 
+    private fun classKey(username: String) = "class-${username.lowercase()}"
+
+    /** Offline session, no token: the class list as it was last loaded on this device. */
+    private fun loadStoredClass() {
+        val session = appState.session.value ?: return
+        if (!appState.isOffline.value) return
+        viewModelScope.launch {
+            _klass.value = offlineStore.peek(classKey(session.username), ApiClass.serializer())?.value
+            _loading.value = false
+        }
+    }
+
     private fun load() {
-        val token = appState.session.value?.apiToken ?: return
+        val session = appState.session.value ?: return
+        val token = session.apiToken ?: return
         viewModelScope.launch {
             _loading.value = true
             _error.value = null
             try {
-                _klass.value = backendClient.myClass(token)
+                // myClass answers null for both "no class" and a failed request, so only a real
+                // class is stored — a dropped connection must not erase the offline copy.
+                val fresh = backendClient.myClass(token)
+                if (fresh != null) offlineStore.save(classKey(session.username), fresh, ApiClass.serializer())
+                _klass.value = fresh
             } catch (e: AppError) {
                 _error.value = e.message
             } catch (e: Exception) {
@@ -106,37 +126,55 @@ class ClassViewModel @Inject constructor(
             // "Letzte 3 Monate", as a YYYYMMDD threshold.
             val threeMonthsAgo = today.plus(-3, DateTimeUnit.MONTH).toYyyyMMdd()
 
+            // Each source uses the same disk key as its own screen, so offline this shows whatever
+            // was last loaded there — and a null result means "unknown", never "nothing".
             val result = coroutineScope {
                 val eventsJob = async {
-                    runCatching { untisClient.classregEvents(session, studentId, schoolYear) }.getOrDefault(emptyList())
+                    runCatching {
+                        offlineStore.load(
+                            "classreg-$studentId-$schoolYear",
+                            ListSerializer(ClassregEvent.serializer()),
+                        ) { untisClient.classregEvents(session, studentId, schoolYear) }.value
+                    }.getOrNull()
                 }
                 val absencesJob = async {
                     runCatching {
-                        untisClient.absences(
-                            session,
-                            studentId,
-                            SchoolDates.yearStart(schoolYear).toString(),
-                            SchoolDates.yearEnd(schoolYear).toString(),
-                        )
-                    }.getOrDefault(emptyList())
+                        offlineStore.load(
+                            "absences-$studentId-$schoolYear",
+                            ListSerializer(AbsenceEntry.serializer()),
+                        ) {
+                            untisClient.absences(
+                                session,
+                                studentId,
+                                SchoolDates.yearStart(schoolYear).toString(),
+                                SchoolDates.yearEnd(schoolYear).toString(),
+                            )
+                        }.value
+                    }.getOrNull()
                 }
-                val thisWeekJob = async {
-                    runCatching { untisClient.timetable(session, studentId, thisMonday.toString()) }
-                        .getOrDefault(emptyList())
+                fun weekJob(monday: kotlinx.datetime.LocalDate) = async {
+                    runCatching {
+                        offlineStore.load(
+                            "tt-$studentId-$monday",
+                            ListSerializer(TimetableEntry.serializer()),
+                        ) { untisClient.timetable(session, studentId, monday.toString()) }
+                    }.getOrNull()?.takeUnless { it.stale && it.value.isEmpty() }?.value
                 }
-                val nextWeekJob = async {
-                    runCatching { untisClient.timetable(session, studentId, nextMonday.toString()) }
-                        .getOrDefault(emptyList())
-                }
+                val thisWeekJob = weekJob(thisMonday)
+                val nextWeekJob = weekJob(nextMonday)
 
-                val events = eventsJob.await()
+                val eventsResult = eventsJob.await()
+                val events = eventsResult.orEmpty()
                     .filter { it.createDate >= threeMonthsAgo }
                     .sortedByDescending { it.createDate }
                     .take(5)
 
-                val openAbsences = absencesJob.await()
+                val absencesResult = absencesJob.await()
+                val openAbsences = absencesResult.orEmpty()
                     .filter { !it.isExcused }
                     .sortedByDescending { it.startDate }
+                val thisWeek = thisWeekJob.await()
+                val nextWeek = nextWeekJob.await()
 
                 fun examsIn(entries: List<TimetableEntry>, fromInclusive: Int, toExclusive: Int) = entries
                     .filter { it.isExam && it.date >= fromInclusive && it.date < toExclusive }
@@ -147,8 +185,12 @@ class ClassViewModel @Inject constructor(
                     loading = false,
                     recentEvents = events,
                     openAbsences = openAbsences,
-                    examsThisWeek = examsIn(thisWeekJob.await(), thisMonday.toYyyyMMdd(), nextMonday.toYyyyMMdd()),
-                    examsNextWeek = examsIn(nextWeekJob.await(), nextMonday.toYyyyMMdd(), weekAfter.toYyyyMMdd()),
+                    examsThisWeek = examsIn(thisWeek.orEmpty(), thisMonday.toYyyyMMdd(), nextMonday.toYyyyMMdd()),
+                    examsNextWeek = examsIn(nextWeek.orEmpty(), nextMonday.toYyyyMMdd(), weekAfter.toYyyyMMdd()),
+                    eventsUnknown = eventsResult == null,
+                    absencesUnknown = absencesResult == null,
+                    thisWeekUnknown = thisWeek == null,
+                    nextWeekUnknown = nextWeek == null,
                 )
             }
             _overview.value = result
@@ -171,4 +213,9 @@ data class ClassOverview(
     val openAbsences: List<AbsenceEntry> = emptyList(),
     val examsThisWeek: List<TimetableEntry> = emptyList(),
     val examsNextWeek: List<TimetableEntry> = emptyList(),
+    /** The source could not be loaded and nothing is stored — an empty list here is unknown. */
+    val eventsUnknown: Boolean = false,
+    val absencesUnknown: Boolean = false,
+    val thisWeekUnknown: Boolean = false,
+    val nextWeekUnknown: Boolean = false,
 )

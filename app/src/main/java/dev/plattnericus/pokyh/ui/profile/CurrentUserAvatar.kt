@@ -15,6 +15,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.ui.components.TabRootAvatarSize
 import dev.plattnericus.pokyh.ui.components.UntisAvatar
 import dev.plattnericus.pokyh.ui.components.UntisImageAuth
+import dev.plattnericus.pokyh.ui.components.avatarCacheKey
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
@@ -71,6 +72,7 @@ fun CurrentUserAvatar(
         rawImageUrl = s.imageUrl,
         name = s.personName ?: s.username,
         auth = UntisImageAuth.of(s),
+        cacheKey = avatarCacheKey(s.username),
         modifier = modifier,
         size = size,
     )

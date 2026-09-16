@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
@@ -109,10 +110,41 @@ fun EmptyStateView(
 /** Something went wrong and retrying is the answer. */
 @Composable
 fun ErrorStateView(message: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
+    // Offline with nothing stored is not a failure — say that it is the connection, not the app.
+    if (message == AppError.OFFLINE_NOT_SAVED) {
+        OfflineStateView(message = message, modifier = modifier, onRetry = onRetry)
+        return
+    }
     StateLayout(
         icon = PokyhIcons.warningSign,
         tint = Brand.warning,
         title = "Da ist etwas schiefgelaufen",
+        message = message,
+        modifier = modifier,
+        action = onRetry?.let {
+            {
+                PokyhSecondaryButton(
+                    text = "Erneut versuchen",
+                    onClick = it,
+                    icon = PokyhIcons.refresh,
+                )
+            }
+        },
+    )
+}
+
+/** Signed in offline and this was never stored on the device — the connection, not a bug. */
+@Composable
+fun OfflineStateView(
+    message: String,
+    modifier: Modifier = Modifier,
+    title: String = "Offline nicht verfügbar",
+    onRetry: (() -> Unit)? = null,
+) {
+    StateLayout(
+        icon = PokyhIcons.offline,
+        tint = Brand.warning,
+        title = title,
         message = message,
         modifier = modifier,
         action = onRetry?.let {
@@ -154,12 +186,14 @@ fun BackendUnavailableView(feature: String, status: BackendStatus, modifier: Mod
         is BackendStatus.NotStudent -> PokyhIcons.notAStudent to Brand.warning
         is BackendStatus.NoClass -> PokyhIcons.noClass to Brand.warning
         is BackendStatus.Failed -> PokyhIcons.serverUnreachable to Brand.danger
+        is BackendStatus.Offline -> PokyhIcons.offline to Brand.warning
         else -> PokyhIcons.locked to Brand.warning
     }
     val title = when (status) {
         is BackendStatus.NotStudent -> "Nur für Schülerkonten"
         is BackendStatus.NoClass -> "Keine Klasse gefunden"
         is BackendStatus.Failed -> "Verbindungsfehler"
+        is BackendStatus.Offline -> "Offline nicht verfügbar"
         else -> "Nicht verfügbar"
     }
     val message = when (status) {
@@ -167,6 +201,9 @@ fun BackendUnavailableView(feature: String, status: BackendStatus, modifier: Mod
         is BackendStatus.NoClass ->
             "Für $feature wird deine WebUntis-Klasse benötigt — sie konnte für dein Konto nicht ermittelt werden."
         is BackendStatus.Failed -> "$feature konnte nicht geladen werden:\n${status.message}"
+        is BackendStatus.Offline ->
+            "Du bist offline, und $feature wurde auf diesem Gerät noch nicht gespeichert. " +
+                "Sobald du wieder Internet hast, wird es geladen."
         else -> "$feature benötigt ein POKYH-Konto."
     }
 

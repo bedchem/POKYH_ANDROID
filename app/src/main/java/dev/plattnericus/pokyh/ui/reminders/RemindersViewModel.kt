@@ -7,8 +7,12 @@ import dev.plattnericus.pokyh.core.notifications.PokyhNotifications
 import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.backend.SseClient
 import dev.plattnericus.pokyh.data.model.ApiReminder
+import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.UserSession
+import dev.plattnericus.pokyh.data.storage.OfflineStore
+import dev.plattnericus.pokyh.data.sync.Outbox
+import dev.plattnericus.pokyh.data.sync.OutboxItem
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -16,9 +20,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
 
 /**
  * RemindersView.swift, ported. Backend-only feature (empty-session/no-class states are handled
@@ -35,6 +41,8 @@ class RemindersViewModel @Inject constructor(
     private val backendClient: BackendClient,
     private val sseClient: SseClient,
     private val notifications: PokyhNotifications,
+    private val offlineStore: OfflineStore,
+    private val outbox: Outbox,
 ) : ViewModel() {
 
     data class UiState(
@@ -42,6 +50,12 @@ class RemindersViewModel @Inject constructor(
         val error: String? = null,
         val reminders: List<ApiReminder> = emptyList(),
         val submitting: Boolean = false,
+        /** Signed in offline and [reminders] is the copy stored on this device (read-only). */
+        val offlineCopy: Boolean = false,
+        /** Signed in offline: new Erinnerungen go to the outbox instead of the server. */
+        val offline: Boolean = false,
+        /** Created without a connection, not sent yet. */
+        val pending: List<OutboxItem> = emptyList(),
     )
 
     val session: StateFlow<UserSession?> = appState.session
@@ -59,12 +73,52 @@ class RemindersViewModel @Inject constructor(
                 val token = s?.apiToken
                 val classId = s?.classId
                 if (token == null || classId == null) {
-                    _ui.value = UiState(loading = false)
+                    // Offline session (no token, no class id in the snapshot): show what this
+                    // device stored last time, if anything.
+                    val stored = if (s != null && appState.isOffline.value) {
+                        offlineStore.peek(cacheKey(s.username), ListSerializer(ApiReminder.serializer()))
+                    } else {
+                        null
+                    }
+                    _ui.update {
+                        UiState(
+                            loading = false,
+                            reminders = stored?.value.orEmpty(),
+                            offlineCopy = stored != null,
+                            offline = s != null && token == null && appState.isOffline.value,
+                            pending = it.pending,
+                        )
+                    }
                     return@collectLatest
                 }
+                _ui.update { it.copy(offline = false) }
                 streamJob = launch { runFor(classId, token) }
             }
         }
+    }
+
+    init {
+        // Queued Erinnerungen for this account; when one leaves the queue it was sent, so reload to
+        // show the server's copy in its place.
+        viewModelScope.launch {
+            combine(outbox.pending, appState.session) { items, s ->
+                val user = s?.username?.trim()?.lowercase()
+                items.filter { it.kind == OutboxItem.Kind.Reminder && it.username == user }
+            }.collect { mine ->
+                val sentSome = mine.size < _ui.value.pending.size
+                _ui.update { it.copy(pending = mine) }
+                if (sentSome) refresh()
+            }
+        }
+    }
+
+    fun deletePending(item: OutboxItem) = outbox.remove(item.id)
+
+    private fun cacheKey(username: String) = "reminders-${username.lowercase()}"
+
+    private suspend fun store(list: List<ApiReminder>) {
+        val username = appState.session.value?.username ?: return
+        offlineStore.save(cacheKey(username), list, ListSerializer(ApiReminder.serializer()))
     }
 
     private suspend fun runFor(classId: String, token: String) {
@@ -72,8 +126,9 @@ class RemindersViewModel @Inject constructor(
         sseClient.sseReminders(classId, token)
             .catch { /* stream dropped for good — last loaded list stays, user can pull to refresh */ }
             .collect { list ->
-                _ui.update { it.copy(loading = false, error = null, reminders = list) }
+                _ui.update { it.copy(loading = false, error = null, reminders = list, offlineCopy = false) }
                 notifications.scheduleReminders(list)
+                store(list)
             }
     }
 
@@ -81,8 +136,9 @@ class RemindersViewModel @Inject constructor(
         _ui.update { it.copy(loading = it.reminders.isEmpty(), error = null) }
         runCatching { backendClient.reminders(classId, token) }
             .onSuccess { list ->
-                _ui.update { it.copy(loading = false, error = null, reminders = list) }
+                _ui.update { it.copy(loading = false, error = null, reminders = list, offlineCopy = false) }
                 notifications.scheduleReminders(list)
+                store(list)
             }
             .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.") } }
     }
@@ -97,12 +153,25 @@ class RemindersViewModel @Inject constructor(
 
     fun addReminder(title: String, body: String, remindAt: String, onDone: () -> Unit) {
         val s = session.value ?: return
-        val token = s.apiToken ?: return
-        val classId = s.classId ?: return
         if (title.isBlank()) return
+        val token = s.apiToken
+        if (token == null) {
+            // No server to send it to (offline session): queue it; the class id is taken from the
+            // real session when it goes out.
+            if (!appState.isOffline.value) return
+            outbox.enqueue(OutboxItem.Kind.Reminder, s.username, title, body, remindAt)
+            onDone()
+            return
+        }
+        val classId = s.classId ?: return
         viewModelScope.launch {
             _ui.update { it.copy(submitting = true) }
-            runCatching { backendClient.createReminder(classId, title, body, remindAt, token) }
+            val failure = runCatching { backendClient.createReminder(classId, title, body, remindAt, token) }
+                .exceptionOrNull()
+            // The connection dropped mid-request: don't lose what was typed.
+            if (failure is AppError && failure.isNetwork) {
+                outbox.enqueue(OutboxItem.Kind.Reminder, s.username, title, body, remindAt)
+            }
             _ui.update { it.copy(submitting = false) }
             onDone()
             load(classId, token)

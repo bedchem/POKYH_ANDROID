@@ -603,7 +603,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      * matching the frontend/iOS week window (Mon–Sat).
      */
     suspend fun timetable(session: UserSession, studentId: Int, weekStartYyyyMMdd: String): List<TimetableEntry> {
-        if (session.bearerToken.isEmpty()) return emptyList()
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val start = LocalDate.parse(weekStartYyyyMMdd)
         val end = start.plus(DatePeriod(days = 5)).toString()
         val url = "${Config.untisBase}${Config.Routes.timetable}?start=$weekStartYyyyMMdd&end=$end&format=1" +
@@ -712,7 +712,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
     /** `schoolYear` null = the current school year (resolved via getCurrentSchoolyear). */
     suspend fun grades(session: UserSession, studentId: Int, schoolYear: Int? = null): List<SubjectGrades> {
-        if (session.bearerToken.isEmpty()) return emptyList()
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val syId = schoolyearId(schoolYear, session) ?: throw AppError("Schuljahr nicht gefunden.")
         if (syId == -1) throw AppError.sessionExpired
 
@@ -784,7 +784,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     // ── Abwesenheiten / Absences ─────────────────────────────────────────────
 
     suspend fun absences(session: UserSession, studentId: Int, startDateYyyyMMdd: String, endDateYyyyMMdd: String): List<AbsenceEntry> {
-        if (session.bearerToken.isEmpty()) return emptyList()
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val pageSize = 100
         val baseUrl = "${Config.untisBase}${Config.Routes.absences}?studentId=$studentId&startDate=$startDateYyyyMMdd" +
             "&endDate=$endDateYyyyMMdd&excuseStatusId=-1&limit=$pageSize&pageSize=$pageSize"
@@ -857,7 +857,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     // ── Nachrichten / Messages ────────────────────────────────────────────────
 
     suspend fun messages(session: UserSession, folder: MessageFolder): List<MessagePreview> {
-        if (session.bearerToken.isEmpty()) return emptyList()
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val path = when (folder) {
             MessageFolder.Inbox -> Config.Routes.messages
             MessageFolder.Sent -> Config.Routes.messagesSent
@@ -1238,7 +1238,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
     /** `year` null = the current school year. */
     suspend fun classregEvents(session: UserSession, studentId: Int, year: Int? = null): List<ClassregEvent> {
-        if (session.bearerToken.isEmpty()) return emptyList()
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val y = year ?: currentSchoolYear()
         val url = "${Config.untisBase}${Config.Routes.classregEvents}?startDate=${y}0908&endDate=${y + 1}0612&studentId=$studentId"
         val (body, resp) = get(url, session)

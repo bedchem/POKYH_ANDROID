@@ -80,8 +80,10 @@ import dev.plattnericus.pokyh.ui.theme.fadeIn
 import dev.plattnericus.pokyh.ui.theme.popIn
 import dev.plattnericus.pokyh.ui.theme.pressable
 
-private const val PRIVACY_URL = "https://pokyh.com/datenschutz"
-private const val TERMS_URL = "https://pokyh.com/nutzungsbedingungen"
+private const val LEGAL_BASE_URL = "https://pokyh.com/legal?view="
+private const val IMPRESSUM_URL = "${LEGAL_BASE_URL}impressum"
+private const val PRIVACY_URL = "${LEGAL_BASE_URL}datenschutz"
+private const val LEARN_PRIVACY_URL = "${LEGAL_BASE_URL}learn"
 private const val SUPPORT_EMAIL = "contact@pokyh.com"
 
 /**
@@ -214,15 +216,21 @@ fun ProfileScreen(
                 PokyhSection(title = "Über & Rechtliches", modifier = Modifier.fadeIn(delayMillis = 120)) {
                     PokyhCard(padding = 0.dp) {
                         PokyhRow(
+                            title = "Impressum",
+                            leading = { RowGlyph(PokyhIcons.document) },
+                            onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(IMPRESSUM_URL))) },
+                        )
+                        PokyhRowSeparator()
+                        PokyhRow(
                             title = "Datenschutzerklärung",
                             leading = { RowGlyph(PokyhIcons.privacy) },
                             onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL))) },
                         )
                         PokyhRowSeparator()
                         PokyhRow(
-                            title = "Nutzungsbedingungen",
-                            leading = { RowGlyph(PokyhIcons.document) },
-                            onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TERMS_URL))) },
+                            title = "Pokyh Learn · Datenschutz",
+                            leading = { RowGlyph(PokyhIcons.privacy) },
+                            onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LEARN_PRIVACY_URL))) },
                         )
                         PokyhRowSeparator()
                         PokyhRow(

@@ -30,7 +30,7 @@ fun prop(key: String): String? = localProperties.getProperty(key) ?: System.gete
 // Release version. Bump it for every GitHub release and tag the release "v" + this (v2.0.1) —
 // the in-app updater compares that tag against it. versionCode is derived so it can't be
 // forgotten (2.0.1 -> 20001); it has to stay above the Flutter app's versionCode 1.
-val appVersionName = "2.0.0"
+val appVersionName = "2.0.1"
 val appVersionCode = appVersionName.split(".").map { it.toInt() }.let { (major, minor, patch) ->
     major * 10_000 + minor * 100 + patch
 }

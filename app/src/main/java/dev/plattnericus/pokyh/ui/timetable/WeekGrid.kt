@@ -80,9 +80,10 @@ import kotlinx.datetime.LocalDate
  * With nothing else drawing edges, an outline is free to mean something, and does:
  *
  *  - **danger** — cancelled. The text is struck through as well.
- *  - **accent** — the lesson itself was substituted (stand-in teacher, swapped subject). A
- *    *room* change is not outlined: the field that changed is drawn as a filled chip, and the
- *    chip already says it — see [ChangeableLine].
+ *  - **warning** — an exam.
+ *
+ * A substitution (stand-in teacher, swapped subject, different room) is not outlined: the field
+ * that changed is drawn as a filled chip, and the chip already says it — see [ChangeableLine].
  *
  * Whatever else WebUntis attaches to a period — homework, a note, an exam, a file — arrives as
  * its `icons` array and is drawn in the cell's corner by [LessonMarks].
@@ -746,16 +747,13 @@ private fun GridLessonCell(
     val changes = entry.changes()
     val tone = cellTone(entry = entry, kind = kind, isDark = isDark)
 
-    // **A cancelled lesson is ringed in red, a substituted one in blue — a moved one is not
-    // ringed at all.** A different room is the most common change by far, and ringing the cell
-    // for it put a border on half the week; the badge on the room is already the whole message,
-    // and it says *which* room in the bargain. The ring is kept for the changes that replace the
-    // lesson itself (a stand-in teacher, a swapped subject), where there is no single field the
-    // badge can carry. Both are drawn heavily enough to survive a quarter-width cell.
-    val substituted = changes.teacherChanged || changes.subjectChanged
+    // **A cancelled lesson is ringed in red, an exam in yellow — a changed one is not ringed at
+    // all.** A different room or a stand-in teacher already gets its badge on the field itself,
+    // which says *what* changed; a ring on top of that was noise. Both rings are drawn heavily
+    // enough to survive a quarter-width cell.
     val outline: Color? = when {
         cancelled -> Brand.danger.copy(alpha = if (isDark) 0.85f else 0.60f)
-        substituted -> Brand.accent.copy(alpha = if (isDark) 0.95f else 0.75f)
+        entry.isExam || kind == SlotKind.EXAM -> Brand.warning.copy(alpha = if (isDark) 0.95f else 0.80f)
         else -> null
     }
 

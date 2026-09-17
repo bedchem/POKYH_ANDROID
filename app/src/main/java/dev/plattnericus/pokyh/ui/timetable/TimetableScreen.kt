@@ -66,6 +66,7 @@ import dev.plattnericus.pokyh.ui.components.OfflineStateView
 import dev.plattnericus.pokyh.ui.components.PokyhDayPills
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhInlineNotice
+import dev.plattnericus.pokyh.ui.components.PokyhMenuButton
 import dev.plattnericus.pokyh.ui.components.PokyhSegmentedControl
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTileRow
@@ -109,6 +110,7 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
     val detail by viewModel.detail.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
+    var yearMenuExpanded by remember { mutableStateOf(false) }
 
     val pagerState = rememberPagerState(initialPage = TIMETABLE_PAGE_SPAN, pageCount = { TIMETABLE_PAGE_COUNT })
 
@@ -124,7 +126,13 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
     LaunchedEffect(ui.weekOffset, ui.mode) {
         if (ui.mode != TimetableMode.WEEK) return@LaunchedEffect
         val target = (ui.weekOffset + TIMETABLE_PAGE_SPAN).coerceIn(0, TIMETABLE_PAGE_COUNT - 1)
-        if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
+        // A year-picker jump spans hundreds of pages — animating that would load every week on
+        // the way, so only a step to a neighbouring week slides.
+        when {
+            pagerState.currentPage == target -> Unit
+            abs(pagerState.currentPage - target) > 2 -> pagerState.scrollToPage(target)
+            else -> pagerState.animateScrollToPage(target)
+        }
     }
 
     Scaffold(
@@ -135,6 +143,35 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
                 title = "Stundenplan",
                 nav = TopBarNav.None,
                 actions = {
+                    val shownYear = viewModel.schoolYearOf(ui.weekOffset)
+                    Box {
+                        PokyhMenuButton(
+                            label = "$shownYear/${(shownYear + 1) % 100}",
+                            expanded = yearMenuExpanded,
+                            onClick = { yearMenuExpanded = true },
+                        )
+                        DropdownMenu(expanded = yearMenuExpanded, onDismissRequest = { yearMenuExpanded = false }) {
+                            viewModel.availableSchoolYears.forEach { y ->
+                                DropdownMenuItem(
+                                    text = { Text("$y/${(y + 1) % 100}", style = PokyhType.body) },
+                                    trailingIcon = {
+                                        if (y == shownYear) {
+                                            Icon(
+                                                imageVector = PokyhIcons.check,
+                                                contentDescription = null,
+                                                tint = PokyhTheme.colors.accentText,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        yearMenuExpanded = false
+                                        viewModel.selectSchoolYear(y)
+                                    },
+                                )
+                            }
+                        }
+                    }
                     Box {
                         PokyhIconButton(
                             icon = PokyhIcons.share,

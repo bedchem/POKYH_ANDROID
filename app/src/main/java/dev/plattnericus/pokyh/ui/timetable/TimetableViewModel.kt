@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.plattnericus.pokyh.core.util.SchoolDates
+import dev.plattnericus.pokyh.core.util.mondayOfWeek
 import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
 import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.model.AppError
@@ -53,8 +55,9 @@ data class TimetableUiState(
     val exporting: Boolean = false,
 )
 
-/** Pager span, same "feels infinite" radius as iOS `pageSpan`. */
-const val TIMETABLE_PAGE_SPAN = 40
+/** Pager span in weeks. Wide enough that every school year in [SchoolDates.availableYears] is
+ * reachable from the year picker (four years back ≈ 210 weeks). Pages are lazy, so it costs nothing. */
+const val TIMETABLE_PAGE_SPAN = 220
 const val TIMETABLE_PAGE_COUNT = TIMETABLE_PAGE_SPAN * 2 + 1
 
 private val DAY_LABELS = listOf("Mo", "Di", "Mi", "Do", "Fr", "Sa")
@@ -157,6 +160,28 @@ class TimetableViewModel @Inject constructor(
         val yearStart = LocalDate(thursday.year, 1, 1)
         val dayOfYear = thursday.toEpochDays() - yearStart.toEpochDays() + 1
         return ((dayOfYear - 1) / 7 + 1).toInt()
+    }
+
+    /** The school year (starting 1 September) the week at [offset] belongs to — Thursday decides,
+     * like the ISO week number, so a week straddling 1 September counts toward the new year. */
+    fun schoolYearOf(offset: Int): Int {
+        val thursday = dateOf(offset, 3)
+        return if (thursday.monthNumber >= 9) thursday.year else thursday.year - 1
+    }
+
+    val availableSchoolYears: List<Int> get() = SchoolDates.availableYears
+
+    /** Year picker: the current school year goes back to today, any other one to its first week. */
+    fun selectSchoolYear(year: Int) {
+        if (year == SchoolDates.currentSchoolYear) {
+            goToday()
+            return
+        }
+        var start = LocalDate(year, 9, 1)
+        if (start.dayOfWeek.isoDayNumber >= 6) start = start.plus(DatePeriod(days = 8 - start.dayOfWeek.isoDayNumber))
+        val offset = ((mondayOfWeek(start).toEpochDays() - thisMonday.toEpochDays()) / 7).toInt()
+        _ui.update { it.copy(selectedDay = 0) }
+        setWeekOffset(offset.coerceIn(-TIMETABLE_PAGE_SPAN, TIMETABLE_PAGE_SPAN))
     }
 
     fun rangeText(offset: Int): String {

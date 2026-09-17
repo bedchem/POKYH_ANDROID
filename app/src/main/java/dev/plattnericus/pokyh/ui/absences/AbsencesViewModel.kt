@@ -186,6 +186,9 @@ class AbsencesViewModel @Inject constructor(
 
     fun retry() = load()
 
+    /** "Im Stundenplan ansehen": switch to the Stundenplan tab at the week of [dateNum]. */
+    fun openInTimetable(dateNum: Int) = appState.openTimetableAt(dateNum)
+
     private fun load() {
         val session = appState.session.value ?: return
         viewModelScope.launch {
@@ -193,6 +196,18 @@ class AbsencesViewModel @Inject constructor(
             _error.value = null
             try {
                 val y = _year.value
+                // On screen straight away from the last copy; the request replaces it when it lands.
+                runCatching {
+                    offlineStore.peek(
+                        key = "absences-${session.studentId}-$y",
+                        serializer = ListSerializer(AbsenceEntry.serializer()),
+                    )
+                }.getOrNull()?.let { cached ->
+                    if (cached.value.isNotEmpty()) {
+                        _absences.value = cached.value
+                        _loading.value = false
+                    }
+                }
                 val parsed = offlineStore.load(
                     key = "absences-${session.studentId}-$y",
                     serializer = ListSerializer(AbsenceEntry.serializer()),

@@ -152,24 +152,18 @@ object TimetableSlots {
     fun dayKind(dayEntries: List<TimetableEntry>, hasOtherDayEntries: Boolean, index: Int): DayKind =
         dayKind(dayEntries, buildSlots(dayEntries), hasOtherDayEntries, index)
 
-    /** Variant taking pre-computed slots (avoids a double `buildSlots` call). */
+    /**
+     * Variant taking pre-computed slots (avoids a double `buildSlots` call).
+     *
+     * A day of nothing but substitutions is **not** a special day: it is drawn lesson by lesson,
+     * each as the 75/25 pair of the lesson that happens and the one it replaced. The whole-day
+     * "Tag durchgehend ersetzt" card named no subject, teacher or room, so it said less than the
+     * cells it covered. [DayKind.ALL_REPLACEMENT] is therefore never produced any more.
+     */
+    @Suppress("UNUSED_PARAMETER")
     fun dayKind(dayEntries: List<TimetableEntry>, slots: List<MergedSlot>, hasOtherDayEntries: Boolean, index: Int): DayKind {
         if (index == 5 && dayEntries.isEmpty()) return DayKind.WEEKEND
-        val base = baseDayKind(dayEntries, hasOtherDayEntries)
-        // **Two slots at least.** "Tag durchgehend ersetzt" replaces the whole column with a
-        // card that names no subject, teacher or room, so it has to be earned: a day whose
-        // single slot happens to be a replacement is one substituted lesson, and drawing it as
-        // a cell tells the reader far more than a card saying the day was replaced.
-        if (base == DayKind.NORMAL && slots.size >= 2 && slots.all { it.kind == SlotKind.REPLACEMENT }) {
-            val first = slots[0].replacement
-            val same = slots.all {
-                it.replacement?.subjectName == first?.subjectName &&
-                    it.replacement?.note == first?.note &&
-                    it.replacement?.teacherName == first?.teacherName
-            }
-            if (same) return DayKind.ALL_REPLACEMENT
-        }
-        return base
+        return baseDayKind(dayEntries, hasOtherDayEntries)
     }
 
     private fun baseDayKind(dayEntries: List<TimetableEntry>, hasOtherDayEntries: Boolean): DayKind {

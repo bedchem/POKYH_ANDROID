@@ -39,7 +39,12 @@ import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import dev.plattnericus.pokyh.core.util.Fmt
+import dev.plattnericus.pokyh.core.util.SchoolDates
+import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.TimetableEntry
+import dev.plattnericus.pokyh.data.untis.AbsenceMark
+import dev.plattnericus.pokyh.data.untis.AbsenceMarks
+import dev.plattnericus.pokyh.data.untis.LessonAbsence
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.SlotKind
 import dev.plattnericus.pokyh.ui.components.PokyhBleedCard
@@ -85,6 +90,7 @@ fun LessonDetailSheet(
     imageUrl: String?,
     imageHeader: Pair<String, String>,
     onDismiss: () -> Unit,
+    absences: List<AbsenceEntry> = emptyList(),
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
@@ -100,7 +106,7 @@ fun LessonDetailSheet(
         shape = PokyhShapes.topXxl,
         dragHandle = { SheetHandle() },
     ) {
-        LessonDetailContent(slot = slot, imageUrl = imageUrl, imageHeader = imageHeader, onClose = ::dismiss)
+        LessonDetailContent(slot = slot, imageUrl = imageUrl, imageHeader = imageHeader, absences = absences, onClose = ::dismiss)
     }
 }
 
@@ -121,6 +127,7 @@ private fun LessonDetailContent(
     slot: MergedSlot,
     imageUrl: String?,
     imageHeader: Pair<String, String>,
+    absences: List<AbsenceEntry>,
     onClose: () -> Unit,
 ) {
     val colors = PokyhTheme.colors
@@ -165,7 +172,22 @@ private fun LessonDetailContent(
             }
         }
 
+        val absence = remember(slot.id, absences) {
+            if (d.isCancelled) {
+                null
+            } else {
+                AbsenceMarks.lessonAbsence(
+                    absences = absences,
+                    dateNum = d.date,
+                    startMinute = Fmt.minutes(d.startTime),
+                    endMinute = Fmt.minutes(d.endTime),
+                    nowDateNum = SchoolDates.todayNum(),
+                    nowMinute = SchoolDates.minuteNow(),
+                )
+            }
+        }
         DetailsCard(detailEntryFor(slot), tone)
+        absence?.let { AbsenceCard(it, tone) }
         slot.replacement?.let { InsteadCard(it) }
         // Every free-text field WebUntis can attach to a period, each under its own heading.
         // `note` and `lessonText` are different things and a server may send either or both;
@@ -364,6 +386,32 @@ private fun shortNameFor(slot: MergedSlot): String = slot.display.subjectName
 
 private fun detailEntryFor(slot: MergedSlot): TimetableEntry = slot.display
 
+/** "Abwesend" — the status (Vorentschuldigung / Entschuldigt / Unentschuldigt) and from when to when. */
+@Composable
+private fun AbsenceCard(absence: LessonAbsence, tone: SubjectTone) {
+    val statusColor = if (absence.mark == AbsenceMark.ABSENT) Brand.danger else Brand.success
+    val statusTone = SubjectTone(
+        fill = statusColor.copy(alpha = 0.16f),
+        ink = statusColor,
+        bar = statusColor,
+    )
+    val reasons = absence.covering.mapNotNull { it.reasonName?.takeIf { r -> r.isNotBlank() } }.distinct()
+    PokyhCard(padding = 0.dp) {
+        DetailRow("Abwesend", absence.mark.label, PokyhIcons.absences, statusTone, valueColor = statusColor)
+        PokyhRowSeparator(startInset = DetailTextInset)
+        DetailRow(
+            "Zeitraum",
+            absence.covering.joinToString("\n") { AbsenceMarks.rangeText(it) },
+            PokyhIcons.clock,
+            tone,
+        )
+        if (reasons.isNotEmpty()) {
+            PokyhRowSeparator(startInset = DetailTextInset)
+            DetailRow("Grund", reasons.joinToString(", "), PokyhIcons.document, tone)
+        }
+    }
+}
+
 @Composable
 private fun DetailsCard(d: TimetableEntry, tone: SubjectTone) {
     val teacher = d.teacherLongName ?: d.teacherName
@@ -411,7 +459,13 @@ private fun DetailTile(icon: ImageVector, tone: SubjectTone) {
 }
 
 @Composable
-private fun DetailRow(label: String, value: String, icon: ImageVector, tone: SubjectTone) {
+private fun DetailRow(
+    label: String,
+    value: String,
+    icon: ImageVector,
+    tone: SubjectTone,
+    valueColor: Color = PokyhTheme.colors.textPrimary,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -422,7 +476,7 @@ private fun DetailRow(label: String, value: String, icon: ImageVector, tone: Sub
         DetailTile(icon, tone)
         Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
             PokyhLabel(label)
-            Text(value, style = PokyhType.body, color = PokyhTheme.colors.textPrimary)
+            Text(value, style = PokyhType.body, color = valueColor)
         }
     }
 }

@@ -389,6 +389,61 @@ private fun Color.hueDegrees(): Float {
     return (h + 360f) % 360f
 }
 
+/**
+ * The subject palette: 18 hues, 20° apart, all at the same lightness — the whole colour wheel, red
+ * and yellow included. A subject block is a soft pastel and a status (Entfall, Prüfung) is told by
+ * its outline and its chip, so the warm end of the wheel is free for subjects to use.
+ *
+ * Colours are **computed from the set of subjects on screen alone**, never from the order the cells
+ * happen to compose in and never carried over from an earlier screen: sorted by name, each subject
+ * takes its preferred hue (its fixed colour, else one picked by its name) if that is still free,
+ * otherwise the free hue farthest from the ones already taken. The web timetable runs the identical
+ * routine over the identical set, so the same week is coloured the same way in both — a subject that
+ * was green here used to be orange there purely because the two had met their subjects in a
+ * different order.
+ */
+object SubjectHues {
+    private val hues = listOf(
+        10f, 30f, 50f, 70f, 90f, 110f, 130f, 150f, 170f, 190f, 210f, 230f, 250f, 270f, 290f, 310f, 330f, 350f,
+    )
+
+    /** The colours of the week last handed to [register]. */
+    @Volatile
+    private var assigned: Map<String, Float> = emptyMap()
+
+    private fun distance(a: Float, b: Float): Float {
+        val d = abs(a - b) % 360f
+        return minOf(d, 360f - d)
+    }
+
+    private fun preferredHue(name: String): Float {
+        val own = subjectColor(name).hueDegrees()
+        return hues.minByOrNull { distance(it, own) } ?: hues.first()
+    }
+
+    /** Hand out the colours for one week's subjects. */
+    @Synchronized
+    fun register(names: Iterable<String>) {
+        val subjects = names.filter { it.isNotEmpty() }.distinct().sorted()
+        val next = LinkedHashMap<String, Float>()
+        val used = mutableListOf<Float>()
+        for (name in subjects) {
+            val preferred = preferredHue(name)
+            var hue = preferred
+            if (preferred in used) {
+                val free = hues.filter { it !in used }
+                if (free.isNotEmpty()) hue = free.maxByOrNull { c -> used.minOf { distance(it, c) } } ?: free.first()
+            }
+            next[name] = hue
+            used += hue
+        }
+        assigned = next
+    }
+
+    /** A subject's hue: the one this week gave it, else the one its name asks for. */
+    fun hueFor(name: String): Float = assigned[name] ?: preferredHue(name)
+}
+
 /** HSL → RGB. The pastel ramp is built in HSL, not HSV — see [subjectTone]. */
 private fun hsl(hueDeg: Float, saturation: Float, lightness: Float): Color {
     val h = ((hueDeg % 360f) + 360f) % 360f
@@ -447,18 +502,20 @@ data class SubjectTone(val fill: Color, val ink: Color, val bar: Color)
  * and a dozen fully-saturated pastels is not a palette, it is confetti.
  */
 fun subjectTone(name: String, isDark: Boolean): SubjectTone {
-    val hue = subjectColor(name).hueDegrees()
+    val hue = SubjectHues.hueFor(name)
     return if (isDark) {
+        // Same values as the web timetable, and softer than [statusTone]: a subject is a quiet
+        // block of colour, the loud ones are reserved for what a colour *means*.
         SubjectTone(
-            fill = hsl(hue, 0.18f, 0.24f),
-            ink = hsl(hue, 0.62f, 0.88f),
-            bar = hsl(hue, 0.45f, 0.62f),
+            fill = hsl(hue, 0.42f, 0.25f),
+            ink = hsl(hue, 0.80f, 0.86f),
+            bar = hsl(hue, 0.58f, 0.62f),
         )
     } else {
         SubjectTone(
-            fill = hsl(hue, 0.62f, 0.93f),
-            ink = hsl(hue, 0.52f, 0.30f),
-            bar = hsl(hue, 0.50f, 0.58f),
+            fill = hsl(hue, 0.62f, 0.84f),
+            ink = hsl(hue, 0.54f, 0.26f),
+            bar = hsl(hue, 0.48f, 0.57f),
         )
     }
 }
@@ -472,9 +529,10 @@ fun subjectTone(name: String, isDark: Boolean): SubjectTone {
 fun statusTone(color: Color, isDark: Boolean): SubjectTone {
     val hue = color.hueDegrees()
     return if (isDark) {
-        SubjectTone(fill = hsl(hue, 0.22f, 0.25f), ink = hsl(hue, 0.68f, 0.86f), bar = color)
+        // Web parity, same as [subjectTone]'s dark pair.
+        SubjectTone(fill = hsl(hue, 0.58f, 0.29f), ink = hsl(hue, 0.92f, 0.88f), bar = color)
     } else {
-        SubjectTone(fill = hsl(hue, 0.70f, 0.94f), ink = hsl(hue, 0.55f, 0.32f), bar = color)
+        SubjectTone(fill = hsl(hue, 0.82f, 0.85f), ink = hsl(hue, 0.65f, 0.27f), bar = color)
     }
 }
 

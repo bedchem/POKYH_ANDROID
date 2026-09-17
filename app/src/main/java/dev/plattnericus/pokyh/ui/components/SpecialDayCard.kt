@@ -1,6 +1,7 @@
 package dev.plattnericus.pokyh.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
@@ -34,17 +36,34 @@ data class SpecialDaySpec(val icon: ImageVector, val color: Color, val title: St
  * giving it a real card's elevation would make an empty day look like the most important object
  * on the screen. It used to be a dashed outline, which was the only dashed border in the app.
  *
- * **No coloured plate, at either size.** A tinted panel behind it — even at 7% — turns "no
- * lessons here" into a warning: a stripe down one column of the week, or a wash across the whole
- * page when a full week is out. The colour survives where it identifies rather than fills: the
- * glyph disc. That is enough next to a label that already reads "Ferien".
+ * **No coloured plate by default.** A tinted panel behind it — even at 7% — turns "no lessons
+ * here" into a warning wherever it is only part of a screen. [plate] switches it on for the one
+ * place where the block *is* the whole day: a day in the week grid, or the day-mode card. There it
+ * fills its day in the day's own colour with a matching outline — red for Entfall, orange for
+ * Ferien — so the day reads as one block at a glance, like a cancelled lesson does.
  */
 @Composable
-fun SpecialDayCard(spec: SpecialDaySpec, modifier: Modifier = Modifier, compact: Boolean = false) {
+fun SpecialDayCard(
+    spec: SpecialDaySpec,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    plate: Boolean = false,
+) {
+    val isDark = PokyhTheme.colors.isDark
     Box(
         modifier = modifier
             .fillMaxWidth()
             .let { if (!compact) it.height(340.dp) else it }
+            .then(
+                if (plate) {
+                    Modifier
+                        .clip(PokyhShapes.sm)
+                        .background(spec.color.copy(alpha = if (isDark) 0.20f else 0.12f), PokyhShapes.sm)
+                        .border(1.5.dp, spec.color.copy(alpha = if (isDark) 0.60f else 0.45f), PokyhShapes.sm)
+                } else {
+                    Modifier
+                },
+            )
             .padding(if (compact) PokyhSpacing.xs else PokyhSpacing.card),
         contentAlignment = Alignment.Center,
     ) {

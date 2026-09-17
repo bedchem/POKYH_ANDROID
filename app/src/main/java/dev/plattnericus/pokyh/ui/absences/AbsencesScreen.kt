@@ -3,14 +3,17 @@
 package dev.plattnericus.pokyh.ui.absences
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -21,6 +24,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.background
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,6 +47,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhListCard
 import dev.plattnericus.pokyh.ui.components.PokyhMenuButton
 import dev.plattnericus.pokyh.ui.components.PokyhSection
 import dev.plattnericus.pokyh.ui.components.PokyhStat
+import dev.plattnericus.pokyh.ui.components.PokyhSecondaryButton
 import dev.plattnericus.pokyh.ui.components.PokyhToggleChip
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.StatusLabel
@@ -53,6 +58,7 @@ import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
+import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import dev.plattnericus.pokyh.ui.theme.insetSurface
@@ -198,7 +204,11 @@ fun AbsencesScreen(onNavigateBack: () -> Unit = {}, viewModel: AbsencesViewModel
                             modifier = Modifier.fadeIn(40 + idx * 30),
                         ) {
                             PokyhListCard(items = group.entries.sortedByDescending { it.startDate }) { a ->
-                                AbsenceRow(absence = a, label = fmt(getMin(a)))
+                                AbsenceRow(
+                                    absence = a,
+                                    label = fmt(getMin(a)),
+                                    onOpenInTimetable = { viewModel.openInTimetable(a.startDate) },
+                                )
                             }
                         }
                     }
@@ -220,68 +230,65 @@ private fun OverviewCard(
     val colors = PokyhTheme.colors
     PokyhCard(modifier = modifier) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xl),
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            FehlquoteRing(rate = rate, rateColor = rateColor, modifier = Modifier.size(96.dp))
             Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
                 PokyhLabel("Fehlstunden gesamt")
                 Text(totalLabel, style = PokyhType.statMedium, color = colors.textPrimary)
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xl)) {
+                PokyhStat(excusedLabel, "Entschuldigt", valueColor = Brand.success)
+                PokyhStat(unexcusedLabel, "Unentschuldigt", valueColor = Brand.danger)
+            }
         }
         Spacer(Modifier.size(PokyhSpacing.xl))
-        Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xxxl)) {
-            PokyhStat(excusedLabel, "Entschuldigt", valueColor = Brand.success)
-            PokyhStat(unexcusedLabel, "Unentschuldigt", valueColor = Brand.danger)
-        }
+        FehlquoteBar(rate = rate, rateColor = rateColor)
     }
 }
 
 /**
- * A segmented ring for the Fehlquote — short rounded ticks around a circle, filled clockwise
- * from the top. A ring rather than a bar because the number in the middle is the reading and the
- * ring is the context; a linear bar would need its own label to say what 100% means.
+ * The Fehlquote as a slim bar with its percentage above it — the same reading as the web app's
+ * Abwesenheiten page. A bar rather than the ring this used to draw: the ring spent a quarter of the
+ * card on one number, and next to the hours it looked like a second, competing figure.
  */
 @Composable
-private fun FehlquoteRing(rate: Double, rateColor: Color, modifier: Modifier = Modifier) {
-    val segments = 28
-    val filledFraction = (rate / 100.0).coerceIn(0.0, 1.0)
-    val filledCount = (filledFraction * segments).roundToInt().let { if (rate > 0.0) it.coerceAtLeast(1) else 0 }
-    val trackColor = PokyhTheme.colors.cardAlt
-
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val strokeWidth = 5.dp.toPx()
-            val tickLength = size.minDimension * 0.16f
-            val radius = size.minDimension / 2f - tickLength / 2f - strokeWidth / 2f
-            val center = Offset(size.width / 2f, size.height / 2f)
-            for (i in 0 until segments) {
-                val angle = (-90f + i * (360f / segments)) * (PI.toFloat() / 180f)
-                val dir = Offset(cos(angle), sin(angle))
-                val start = center + dir * (radius - tickLength / 2f)
-                val end = center + dir * (radius + tickLength / 2f)
-                drawLine(
-                    color = if (i < filledCount) rateColor else trackColor,
-                    start = start,
-                    end = end,
-                    strokeWidth = strokeWidth,
-                    cap = StrokeCap.Round,
-                )
-            }
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun FehlquoteBar(rate: Double, rateColor: Color, modifier: Modifier = Modifier) {
+    val colors = PokyhTheme.colors
+    val fraction = (rate / 100.0).coerceIn(0.0, 1.0).toFloat()
+    val animated by animateFloatAsState(targetValue = fraction, label = "fehlquote")
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Fehlquote", style = PokyhType.caption, color = colors.textSecondary)
             Text(
                 text = String.format(Locale.ROOT, "%.1f%%", rate),
-                style = PokyhType.statSmall,
+                style = PokyhType.caption.semibold(),
                 color = rateColor,
             )
-            Text("Quote", style = PokyhType.caption2, color = PokyhTheme.colors.textTertiary)
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(8.dp)
+                .background(colors.cardAlt, PokyhShapes.pill),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(animated)
+                    .background(rateColor, PokyhShapes.pill),
+            )
         }
     }
 }
 
 @Composable
-private fun AbsenceRow(absence: AbsenceEntry, label: String) {
+private fun AbsenceRow(absence: AbsenceEntry, label: String, onOpenInTimetable: () -> Unit) {
     val colors = PokyhTheme.colors
     Column(
         modifier = Modifier
@@ -308,6 +315,13 @@ private fun AbsenceRow(absence: AbsenceEntry, label: String) {
         }
         absence.reasonName?.takeIf { it.isNotEmpty() }?.let { InfoLine("Grund", it) }
         absence.note?.takeIf { it.isNotEmpty() }?.let { InfoLine("Text", it) }
+        PokyhSecondaryButton(
+            text = "Im Stundenplan ansehen",
+            icon = PokyhIcons.timetable,
+            onClick = onOpenInTimetable,
+            compact = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

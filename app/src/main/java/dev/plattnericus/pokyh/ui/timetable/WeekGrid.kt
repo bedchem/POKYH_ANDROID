@@ -31,12 +31,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.TimetableEntry
@@ -63,6 +70,7 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
+import dev.plattnericus.pokyh.ui.theme.SubjectHues
 import dev.plattnericus.pokyh.ui.theme.SubjectTone
 import dev.plattnericus.pokyh.ui.theme.lessonMarkIcon
 import dev.plattnericus.pokyh.ui.theme.pressable
@@ -128,6 +136,8 @@ fun WeekGrid(
             }
         }
         val allEntries = remember(dayEntries) { dayEntries.flatten() }
+        // Colours are handed out for the whole week before any cell asks for one.
+        remember(allEntries) { SubjectHues.register(allEntries.map { it.subjectName }) }
         val minute = rememberSchoolMinute()
         val minMins = remember(allEntries) {
             allEntries.minOfOrNull { Fmt.minutes(it.startTime) } ?: TIMETABLE_PERIODS.first().startMinute
@@ -657,6 +667,7 @@ private fun DayColumn(
                     .height(height - 4.dp)
                     .offset(y = 2.dp),
                 compact = true,
+                plate = true,
             )
         } else {
             cells.forEach { cell ->
@@ -679,7 +690,7 @@ private fun DayColumn(
                         .height(h)
                         .offset(x = left, y = top)
                         .padding(vertical = 1.dp)
-                        .alpha(if (past) PastLessonAlpha else 1f),
+                        .then(if (past) Modifier.pastLessonShade(isDark = colors.isDark) else Modifier),
                 ) {
                     TappableCell(slot = cell.slot, onTap = onTap) { m ->
                         GridLessonCell(
@@ -698,7 +709,7 @@ private fun DayColumn(
                     band = band,
                     width = width,
                     top = ((band.startMinute - minMins) * PX_PER_MINUTE).dp,
-                    height = maxOf(MinCellHeight, ((band.endMinute - band.startMinute) * PX_PER_MINUTE).dp),
+                    height = ((band.endMinute - band.startMinute) * PX_PER_MINUTE).dp,
                 )
             }
         }
@@ -706,48 +717,72 @@ private fun DayColumn(
 }
 
 /**
- * A wash over the lessons an absence covers, with its label in the middle — the way WebUntis marks
- * a Vorentschuldigung. Not clickable, so a tap still reaches the lesson underneath.
+ * ONE translucent grey block over the column, from exactly where the absence starts to where it
+ * ends, with its label in the middle — the way WebUntis marks a Vorentschuldigung. Only the text
+ * colour says which: pastel green for Vorentschuldigung and Entschuldigt, pastel red for Unentschuldigt. Not clickable, so a tap still reaches the
+ * lesson underneath.
  *
- * Vorentschuldigung and Entschuldigt are a neutral grey (nothing to do); Gefehlt is tinted red,
- * because an unexcused absence is the one that still needs something from you.
+ * The label is always a single line and never leaves the block. On a narrow column (a phone's week
+ * grid) the short label ("Vorentsch.") is used so the text can stay readable; it still shrinks if
+ * even that does not fit.
  */
 @Composable
 private fun AbsenceOverlay(band: AbsenceBand, width: Dp, top: Dp, height: Dp) {
-    val colors = PokyhTheme.colors
+    val isDark = PokyhTheme.colors.isDark
     val absent = band.mark == AbsenceMark.ABSENT
-    val wash = if (absent) {
-        Brand.danger.copy(alpha = if (colors.isDark) 0.28f else 0.18f)
-    } else {
-        colors.textSecondary.copy(alpha = if (colors.isDark) 0.32f else 0.26f)
+    val fill = if (isDark) Color(0xE014171D) else Color(0xE6CBD5E1)
+    val ink = when {
+        absent -> if (isDark) Color(0xFFEF4444) else Color(0xFFB91C1C)
+        else -> if (isDark) Color(0xFF22C55E) else Color(0xFF15803D)
     }
-    val labelColor = if (absent) Brand.danger else colors.textPrimary
     Box(
         modifier = Modifier
             .width(width)
             .height(height)
             .offset(y = top)
-            .padding(vertical = 1.dp)
             .clip(CellShape)
-            .background(wash, CellShape),
+            .background(fill, CellShape)
+            // A hairline of light along the edge: a dark outline on a dark block was invisible.
+            .border(
+                1.5.dp,
+                if (isDark) Color.White.copy(alpha = 0.24f) else Color(0xFF64748B).copy(alpha = 0.55f),
+                CellShape,
+            )
+            .padding(horizontal = 2.dp),
         contentAlignment = Alignment.Center,
     ) {
         PokyhFittedText(
-            text = band.mark.label,
-            style = PokyhType.gridCellSubject,
-            color = labelColor,
-            maxLines = 2,
-            minScale = 0.7f,
-            modifier = Modifier
-                .padding(horizontal = 2.dp)
-                .background(colors.card.copy(alpha = 0.85f), smoothCorner(4.dp))
-                .padding(horizontal = 3.dp, vertical = 1.5.dp),
+            text = if (width < 110.dp) band.mark.shortLabel else band.mark.label,
+            style = PokyhType.gridCellSubject.copy(fontSize = 13.sp, lineHeight = 15.sp, fontWeight = FontWeight.ExtraBold),
+            color = ink,
+            maxLines = 1,
+            minScale = 0.5f,
         )
     }
 }
 
-/** How far a finished lesson fades — enough to read as "done", not so much it stops being legible. */
-private const val PastLessonAlpha = 0.7f
+/**
+ * Finished lessons keep their subject colour with a darkening layer over the cell, so the rest of the
+ * day stands out — same as the web timetable. In light mode a cool grey is *multiplied* in: a plain
+ * overlay covered the pastels (black went muddy, grey washed them out), multiply darkens every colour
+ * but keeps its hue. Dark mode lays 50% black over the cell.
+ */
+private fun Modifier.pastLessonShade(isDark: Boolean): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val outline = CellShape.createOutline(size, layoutDirection, this)
+        // Take most of the colour out first: darkening alone left a reddish subject reading as a
+        // bright red block — close to what an Entfall looks like — while the same cell on the web
+        // reads as "done". `BlendMode.Color` keeps the cell's brightness and replaces its hue with
+        // the grey's, so at 70% only a hint of the subject's colour is left.
+        drawOutline(outline, Color(0xFF8A8F99), alpha = 0.35f, blendMode = BlendMode.Color)
+        if (isDark) {
+            drawOutline(outline, Color.Black.copy(alpha = 0.5f))
+        } else {
+            drawOutline(outline, Color(0xFFC4CAD4), blendMode = BlendMode.Multiply)
+        }
+    }
 
 /** Below this a cell can't hold even one line of text legibly, so it stops shrinking. */
 private val MinCellHeight = 26.dp

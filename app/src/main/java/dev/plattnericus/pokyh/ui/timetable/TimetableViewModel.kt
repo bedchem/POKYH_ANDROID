@@ -86,7 +86,7 @@ class TimetableViewModel @Inject constructor(
 
     /**
      * This student's Abwesenheiten per school year, for the Vorentschuldigung / Entschuldigt /
-     * Gefehlt overlay. Loaded here on its own — the Abwesenheiten tab never has to be opened
+     * Unentschuldigt overlay. Loaded here on its own — the Abwesenheiten tab never has to be opened
      * first — and shares that tab's offline key, so either screen refreshes the other's copy.
      */
     private val _absences = MutableStateFlow<Map<Int, List<AbsenceEntry>>>(emptyMap())
@@ -134,9 +134,19 @@ class TimetableViewModel @Inject constructor(
         ensureWeek(0)
         prefetchAdjacent(0)
         viewModelScope.launch { _subjectImageKeys.value = backendClient.subjectImageKeys() }
+        loadWeekAbsences(0)
         loadAbsences(SchoolDates.currentSchoolYear)
+        // "Im Stundenplan ansehen" from the Abwesenheiten screen: go to that date's week and day.
+        viewModelScope.launch {
+            appState.timetableJump.collect { dateNum ->
+                if (dateNum != null) {
+                    appState.consumeTimetableJump()
+                    goToDate(dateNum)
+                }
+            }
+        }
         // Coming back to the app re-reads them, so an absence excused in the meantime shows as
-        // "Entschuldigt" instead of "Gefehlt".
+        // "Entschuldigt" instead of "Unentschuldigt".
         viewModelScope.launch {
             var seen = appState.resumeSignal.value
             appState.resumeSignal.collect { signal ->
@@ -207,6 +217,15 @@ class TimetableViewModel @Inject constructor(
         setWeekOffset(offset.coerceIn(-TIMETABLE_PAGE_SPAN, TIMETABLE_PAGE_SPAN))
     }
 
+    /** Shows the week containing [dateNum] (yyyyMMdd) with that weekday selected for day mode. */
+    fun goToDate(dateNum: Int) {
+        val date = runCatching { LocalDate(dateNum / 10000, (dateNum / 100) % 100, dateNum % 100) }.getOrNull() ?: return
+        val offset = ((mondayOfWeek(date).toEpochDays() - thisMonday.toEpochDays()) / 7).toInt()
+            .coerceIn(-TIMETABLE_PAGE_SPAN, TIMETABLE_PAGE_SPAN)
+        _ui.update { it.copy(selectedDay = (date.dayOfWeek.isoDayNumber - 1).coerceIn(0, 5)) }
+        setWeekOffset(offset)
+    }
+
     fun rangeText(offset: Int): String {
         val start = mondayOf(offset)
         val end = dateOf(offset, 5)
@@ -228,6 +247,7 @@ class TimetableViewModel @Inject constructor(
     fun onWeekPageVisible(offset: Int) {
         _ui.update { it.copy(weekOffset = offset) }
         val year = schoolYearOf(offset)
+        loadWeekAbsences(offset)
         if (year !in _absences.value) loadAbsences(year)
         ensureWeek(offset)
         prefetchAdjacent(offset)
@@ -313,13 +333,48 @@ class TimetableViewModel @Inject constructor(
 
     fun retryWeek(offset: Int) = ensureWeek(offset, force = true)
 
+    /**
+     * The Abwesenheiten of one week, straight from WebUntis.
+     *
+     * A school year walks 100 entries per page and takes noticeably longer than the week of
+     * timetable it is drawn over, so the visible week is fetched on its own: one page, landing with
+     * the lessons. [loadAbsences] then fills in the rest of the year behind it.
+     */
+    private fun loadWeekAbsences(offset: Int) {
+        val session = appState.session.value ?: return
+        if (!session.hasUntis) return
+        val year = schoolYearOf(offset)
+        viewModelScope.launch {
+            val monday = mondayOf(offset)
+            val saturday = monday.plus(DatePeriod(days = 5))
+            val list = runCatching {
+                untisClient.absences(session, session.studentId, dateNumOf(monday).toString(), dateNumOf(saturday).toString())
+            }.getOrNull() ?: return@launch
+            _absences.update { current ->
+                val merged = LinkedHashMap<Int, AbsenceEntry>()
+                current[year].orEmpty().forEach { merged[it.id] = it }
+                list.forEach { merged[it.id] = it }
+                current + (year to merged.values.toList())
+            }
+        }
+    }
+
     private fun loadAbsences(year: Int) {
         val session = appState.session.value ?: return
         if (!session.hasUntis) return
+        val key = "absences-${session.studentId}-$year"
         viewModelScope.launch {
+            // The stored copy first: the Abwesenheiten request walks a whole school year page by
+            // page, so waiting for it would leave the grid without its overlay for a second or two
+            // every time. It is replaced by the fresh answer below as soon as that lands.
+            if (year !in _absences.value) {
+                runCatching { offlineStore.peek(key, ListSerializer(AbsenceEntry.serializer())) }
+                    .getOrNull()
+                    ?.let { cached -> _absences.update { it + (year to cached.value) } }
+            }
             try {
                 val list = offlineStore.load(
-                    key = "absences-${session.studentId}-$year",
+                    key = key,
                     serializer = ListSerializer(AbsenceEntry.serializer()),
                 ) {
                     untisClient.absences(

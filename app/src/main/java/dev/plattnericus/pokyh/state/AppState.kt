@@ -787,6 +787,24 @@ class AppState @Inject constructor(
         _selectedTab.value = tab
     }
 
+    private val _timetableJump = MutableStateFlow<Int?>(null)
+
+    /** A pending "show the timetable at this date" (yyyyMMdd), consumed by the timetable screen. */
+    val timetableJump: StateFlow<Int?> = _timetableJump.asStateFlow()
+
+    /**
+     * Switch to the Stundenplan tab showing the week (and, in day mode, the day) of [dateNum].
+     * Deliberately does not bump [timetableHomeSignal] — that would jump straight back to today.
+     */
+    fun openTimetableAt(dateNum: Int) {
+        _timetableJump.value = dateNum
+        _selectedTab.value = AppTab.Timetable
+    }
+
+    fun consumeTimetableJump() {
+        _timetableJump.value = null
+    }
+
     // ── Theme ─────────────────────────────────────────────────────────────────
 
     fun setThemeMode(mode: PokyhThemeMode) {

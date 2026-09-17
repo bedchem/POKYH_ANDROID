@@ -99,9 +99,11 @@ import dev.plattnericus.pokyh.ui.theme.appBackground
 
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 
+import dev.plattnericus.pokyh.ui.theme.SubjectHues
 import dev.plattnericus.pokyh.ui.theme.statusTone
 import dev.plattnericus.pokyh.ui.theme.subjectTone
 import kotlin.math.abs
+import kotlinx.coroutines.flow.drop
 import kotlinx.datetime.LocalDate
 
 /**
@@ -119,12 +121,20 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
     var menuExpanded by remember { mutableStateOf(false) }
     var yearMenuExpanded by remember { mutableStateOf(false) }
 
-    val pagerState = rememberPagerState(initialPage = TIMETABLE_PAGE_SPAN, pageCount = { TIMETABLE_PAGE_COUNT })
+    // Opens on the ViewModel's week, which is not always this week — "Im Stundenplan ansehen"
+    // from the Abwesenheiten screen sets it before the screen is shown.
+    val pagerState = rememberPagerState(
+        initialPage = (ui.weekOffset + TIMETABLE_PAGE_SPAN).coerceIn(0, TIMETABLE_PAGE_COUNT - 1),
+        pageCount = { TIMETABLE_PAGE_COUNT },
+    )
 
     // Pager settles on a page (swipe OR a programmatic animateScrollToPage below) -> tell the
     // ViewModel, which updates the header + (re)loads/prefetches that week.
+    // The first emission is skipped: it is only the page the pager was restored at, and reporting
+    // it would overwrite a week the ViewModel was sent to while this screen was not shown. The
+    // effect below scrolls the pager to the ViewModel's week instead.
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }.collect { page ->
+        snapshotFlow { pagerState.settledPage }.drop(1).collect { page ->
             viewModel.onWeekPageVisible(page - TIMETABLE_PAGE_SPAN)
         }
     }
@@ -257,11 +267,14 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
         val imageUrl = remember(slot.id, subjectImageKeys) {
             viewModel.subjectImageUrl(slot.display.subjectLong, slot.display.subjectName)
         }
+        val date = slot.display.date
+        val schoolYear = if ((date / 100) % 100 >= 9) date / 10000 else date / 10000 - 1
         LessonDetailSheet(
             slot = slot,
             imageUrl = imageUrl,
             imageHeader = viewModel.subjectImageHeaders(),
             onDismiss = viewModel::dismissDetail,
+            absences = absences[schoolYear].orEmpty(),
         )
     }
 }
@@ -459,9 +472,11 @@ private fun DayModeContent(
                             SpecialDayCard(
                                 spec = specialDaySpecFor(kind),
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.screenH),
+                                plate = true,
                             )
                         }
                     } else {
+                        remember(pageState.entries) { SubjectHues.register(pageState.entries.map { it.subjectName }) }
                         val slots = TimetableSlots.buildSlots(dayEntries)
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),

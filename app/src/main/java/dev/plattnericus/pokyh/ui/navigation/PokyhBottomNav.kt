@@ -43,11 +43,11 @@ data class PokyhNavItem(val tab: AppTab, val icon: ImageVector, val label: Strin
 /**
  * The bottom navigation.
  *
- * It's the same [PokyhColors.card] fill as every card in the app, anchored to the bottom edge
- * with only its top corners rounded ([PokyhShapes.topXxl]) and lifted at
- * [PokyhElevation.level3] — so it reads as a surface the page slides *under*, which is exactly
- * what it is. Card-colored rather than a separate tone is the point: it belongs to the same
- * family as the content, and the warm canvas behind the content is what separates them.
+ * Its own [PokyhColors.nav] fill, anchored to the bottom edge with only its top corners rounded
+ * ([PokyhShapes.topXxl]) and lifted at [PokyhElevation.level3] — so it reads as a surface the
+ * page slides *under*, which is exactly what it is. It used to share the card fill, and a card
+ * ending right above it merged with it into one shape; the separate tone keeps them apart
+ * without a border.
  *
  * Selection is shown three ways at once, which is deliberate — a tab bar is the one control in
  * the app where "where am I" must be readable at a glance and without color vision:
@@ -70,7 +70,7 @@ fun PokyhBottomNav(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .floatingSurface(shape = PokyhShapes.topXxl)
+            .floatingSurface(shape = PokyhShapes.topXxl, color = PokyhTheme.colors.nav)
             .clip(PokyhShapes.topXxl)
             .navigationBarsPadding()
             .padding(horizontal = PokyhSpacing.sm, vertical = PokyhSpacing.md),

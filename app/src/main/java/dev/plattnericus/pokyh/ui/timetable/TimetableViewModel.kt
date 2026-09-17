@@ -8,6 +8,7 @@ import dev.plattnericus.pokyh.core.util.SchoolDates
 import dev.plattnericus.pokyh.core.util.mondayOfWeek
 import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
 import dev.plattnericus.pokyh.data.backend.BackendClient
+import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.storage.OfflineStore
@@ -83,6 +84,14 @@ class TimetableViewModel @Inject constructor(
     private val _pages = MutableStateFlow<Map<Int, WeekPageState>>(emptyMap())
     val pages: StateFlow<Map<Int, WeekPageState>> = _pages.asStateFlow()
 
+    /**
+     * This student's Abwesenheiten per school year, for the Vorentschuldigung / Entschuldigt /
+     * Gefehlt overlay. Loaded here on its own — the Abwesenheiten tab never has to be opened
+     * first — and shares that tab's offline key, so either screen refreshes the other's copy.
+     */
+    private val _absences = MutableStateFlow<Map<Int, List<AbsenceEntry>>>(emptyMap())
+    val absences: StateFlow<Map<Int, List<AbsenceEntry>>> = _absences.asStateFlow()
+
     private val _detail = MutableStateFlow<MergedSlot?>(null)
     val detail: StateFlow<MergedSlot?> = _detail.asStateFlow()
 
@@ -125,6 +134,18 @@ class TimetableViewModel @Inject constructor(
         ensureWeek(0)
         prefetchAdjacent(0)
         viewModelScope.launch { _subjectImageKeys.value = backendClient.subjectImageKeys() }
+        loadAbsences(SchoolDates.currentSchoolYear)
+        // Coming back to the app re-reads them, so an absence excused in the meantime shows as
+        // "Entschuldigt" instead of "Gefehlt".
+        viewModelScope.launch {
+            var seen = appState.resumeSignal.value
+            appState.resumeSignal.collect { signal ->
+                if (signal != seen) {
+                    seen = signal
+                    loadAbsences(schoolYearOf(_ui.value.weekOffset))
+                }
+            }
+        }
         // `timetableHomeSignal` is bumped on every Timetable-tab (re-)selection (AppState.selectTab)
         // — jump back to "today", mirroring `.onChange(of: app.timetableHomeSignal)`.
         viewModelScope.launch {
@@ -133,6 +154,8 @@ class TimetableViewModel @Inject constructor(
                 if (signal != seen) {
                     seen = signal
                     goToday()
+                    // Back on the tab, e.g. after excusing an absence in the Abwesenheiten screen.
+                    loadAbsences(SchoolDates.currentSchoolYear)
                 }
             }
         }
@@ -204,6 +227,8 @@ class TimetableViewModel @Inject constructor(
      * cached yet) and refreshes the header's [TimetableUiState.weekOffset]. */
     fun onWeekPageVisible(offset: Int) {
         _ui.update { it.copy(weekOffset = offset) }
+        val year = schoolYearOf(offset)
+        if (year !in _absences.value) loadAbsences(year)
         ensureWeek(offset)
         prefetchAdjacent(offset)
     }
@@ -287,6 +312,29 @@ class TimetableViewModel @Inject constructor(
     }
 
     fun retryWeek(offset: Int) = ensureWeek(offset, force = true)
+
+    private fun loadAbsences(year: Int) {
+        val session = appState.session.value ?: return
+        if (!session.hasUntis) return
+        viewModelScope.launch {
+            try {
+                val list = offlineStore.load(
+                    key = "absences-${session.studentId}-$year",
+                    serializer = ListSerializer(AbsenceEntry.serializer()),
+                ) {
+                    untisClient.absences(
+                        session,
+                        session.studentId,
+                        SchoolDates.yearStart(year).toString(),
+                        SchoolDates.yearEnd(year).toString(),
+                    )
+                }.value
+                _absences.update { it + (year to list) }
+            } catch (_: Exception) {
+                // No overlay rather than a wrong one; the timetable itself reports a session expiry.
+            }
+        }
+    }
 
     // ── Mode / navigation ────────────────────────────────────────────────────
 

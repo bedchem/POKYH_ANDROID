@@ -643,6 +643,12 @@ internal fun RecentStatCard(
                     )
                 }
             }
+            // Fewer than three entries still take one band each from the top: the empty bands
+            // stay reserved, so a single grade sits in the first row instead of being stretched
+            // across the whole tile and landing vertically centered.
+            if (compact && shown.size < RecentCount) {
+                Spacer(Modifier.weight((RecentCount - shown.size).toFloat()))
+            }
         }
     }
 }

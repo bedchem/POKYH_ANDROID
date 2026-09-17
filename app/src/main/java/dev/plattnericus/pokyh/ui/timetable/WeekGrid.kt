@@ -38,7 +38,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.plattnericus.pokyh.core.util.Fmt
+import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.TimetableEntry
+import dev.plattnericus.pokyh.data.untis.AbsenceBand
+import dev.plattnericus.pokyh.data.untis.AbsenceMark
+import dev.plattnericus.pokyh.data.untis.AbsenceMarks
 import dev.plattnericus.pokyh.data.untis.DayKind
 import dev.plattnericus.pokyh.data.untis.GRID_GUTTER_DP
 import dev.plattnericus.pokyh.data.untis.MergedSlot
@@ -49,6 +53,7 @@ import dev.plattnericus.pokyh.data.untis.TimetablePeriod
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
 import dev.plattnericus.pokyh.data.untis.changes
 import dev.plattnericus.pokyh.data.untis.splitChanged
+import dev.plattnericus.pokyh.ui.components.PokyhFittedText
 import dev.plattnericus.pokyh.ui.components.SpecialDayCard
 import dev.plattnericus.pokyh.ui.components.SpecialDaySpec
 import dev.plattnericus.pokyh.ui.theme.Brand
@@ -106,6 +111,8 @@ fun WeekGrid(
     onTap: (MergedSlot) -> Unit,
     modifier: Modifier = Modifier,
     weekNumber: Int? = null,
+    /** The student's Abwesenheiten — drawn as [AbsenceOverlay] bands over the lessons they cover. */
+    absences: List<AbsenceEntry> = emptyList(),
 ) {
     BoxWithConstraints(modifier) {
         val gutter = GRID_GUTTER_DP.dp
@@ -193,6 +200,7 @@ fun WeekGrid(
                         todayNum = todayNum,
                         minute = minute,
                         onTap = onTap,
+                        absences = absences,
                     )
                 }
             }
@@ -609,9 +617,19 @@ private fun DayColumn(
     todayNum: Int,
     minute: Int,
     onTap: (MergedSlot) -> Unit,
+    absences: List<AbsenceEntry>,
 ) {
     val colors = PokyhTheme.colors
     val cells = remember(slots) { buildGridCells(slots) }
+    val absenceBands = remember(cells, absences, dayNum, todayNum, minute) {
+        AbsenceMarks.bands(
+            absences = absences,
+            dateNum = dayNum,
+            lessons = cells.filterNot { it.isCancelled }.map { it.startMinute to it.endMinute },
+            nowDateNum = todayNum,
+            nowMinute = minute,
+        )
+    }
 
     Box(
         Modifier
@@ -675,7 +693,56 @@ private fun DayColumn(
                     }
                 }
             }
+            absenceBands.forEach { band ->
+                AbsenceOverlay(
+                    band = band,
+                    width = width,
+                    top = ((band.startMinute - minMins) * PX_PER_MINUTE).dp,
+                    height = maxOf(MinCellHeight, ((band.endMinute - band.startMinute) * PX_PER_MINUTE).dp),
+                )
+            }
         }
+    }
+}
+
+/**
+ * A wash over the lessons an absence covers, with its label in the middle — the way WebUntis marks
+ * a Vorentschuldigung. Not clickable, so a tap still reaches the lesson underneath.
+ *
+ * Vorentschuldigung and Entschuldigt are a neutral grey (nothing to do); Gefehlt is tinted red,
+ * because an unexcused absence is the one that still needs something from you.
+ */
+@Composable
+private fun AbsenceOverlay(band: AbsenceBand, width: Dp, top: Dp, height: Dp) {
+    val colors = PokyhTheme.colors
+    val absent = band.mark == AbsenceMark.ABSENT
+    val wash = if (absent) {
+        Brand.danger.copy(alpha = if (colors.isDark) 0.28f else 0.18f)
+    } else {
+        colors.textSecondary.copy(alpha = if (colors.isDark) 0.32f else 0.26f)
+    }
+    val labelColor = if (absent) Brand.danger else colors.textPrimary
+    Box(
+        modifier = Modifier
+            .width(width)
+            .height(height)
+            .offset(y = top)
+            .padding(vertical = 1.dp)
+            .clip(CellShape)
+            .background(wash, CellShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        PokyhFittedText(
+            text = band.mark.label,
+            style = PokyhType.gridCellSubject,
+            color = labelColor,
+            maxLines = 2,
+            minScale = 0.7f,
+            modifier = Modifier
+                .padding(horizontal = 2.dp)
+                .background(colors.card.copy(alpha = 0.85f), smoothCorner(4.dp))
+                .padding(horizontal = 3.dp, vertical = 1.5.dp),
+        )
     }
 }
 

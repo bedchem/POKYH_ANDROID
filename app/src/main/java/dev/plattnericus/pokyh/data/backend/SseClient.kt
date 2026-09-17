@@ -4,11 +4,15 @@ import dev.plattnericus.pokyh.BuildConfig
 import dev.plattnericus.pokyh.data.model.ApiComment
 import dev.plattnericus.pokyh.data.model.ApiReminder
 import dev.plattnericus.pokyh.data.model.ApiTodo
+import dev.plattnericus.pokyh.data.model.DishRatingEvent
 import dev.plattnericus.pokyh.data.model.DishRatingsResponse
 import dev.plattnericus.pokyh.data.network.Config
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -45,10 +49,37 @@ class SseClient @Inject constructor(
         connect(Config.Routes.sseReminderComments(reminderId), token) { json.decodeFromString(it) }
 
     fun sseDishRatings(dishId: String, token: String): Flow<DishRatingsResponse> =
-        connect(Config.Routes.sseDishRatings(dishId), token) { json.decodeFromString(it) }
+        reconnecting { connect(Config.Routes.sseDishRatings(dishId), token) { json.decodeFromString(it) } }
 
     fun sseDishComments(dishId: String, token: String): Flow<List<ApiComment>> =
-        connect(Config.Routes.sseDishComments(dishId), token) { json.decodeFromString(it) }
+        reconnecting { connect(Config.Routes.sseDishComments(dishId), token) { json.decodeFromString(it) } }
+
+    /** Ratings of every dish, whenever anyone votes — web or app. */
+    fun sseAllDishRatings(token: String): Flow<DishRatingEvent> =
+        reconnecting { connect(Config.Routes.sseAllDishRatings, token) { json.decodeFromString(it) } }
+
+    /**
+     * Mensa votes and comments must keep arriving live: a dropped connection (network switch,
+     * server restart) is reopened with backoff instead of ending the stream for good.
+     * Cancellation of the collector still ends it.
+     */
+    private fun <T> reconnecting(open: () -> Flow<T>): Flow<T> = flow {
+        var backoffMs = 1_000L
+        while (true) {
+            try {
+                open().collect {
+                    backoffMs = 1_000L
+                    emit(it)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                // fall through to the retry
+            }
+            delay(backoffMs)
+            backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
+        }
+    }
 
     /**
      * Baut eine [EventSource]-Verbindung zu `Config.backendURL + path` auf. Header werden bei

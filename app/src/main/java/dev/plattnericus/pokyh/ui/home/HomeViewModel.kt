@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.plattnericus.pokyh.core.images.ImagePrefetcher
+import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.core.util.SchoolDates
 import dev.plattnericus.pokyh.core.util.mondayOfWeek
 import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.backend.BackendClient
+import dev.plattnericus.pokyh.data.backend.DishRatingsLive
 import dev.plattnericus.pokyh.data.model.ApiReminder
 import dev.plattnericus.pokyh.data.model.ApiTodo
 import dev.plattnericus.pokyh.data.model.AppError
@@ -59,6 +61,7 @@ class HomeViewModel @Inject constructor(
     private val offlineStore: OfflineStore,
     private val imagePrefetcher: ImagePrefetcher,
     private val outbox: Outbox,
+    private val dishRatingsLive: DishRatingsLive,
 ) : ViewModel() {
 
     /** `HomeView.RecentGrade` — a flattened, most-recent-first grade entry for the "Zuletzt
@@ -124,6 +127,10 @@ class HomeViewModel @Inject constructor(
     )
 
     private val _state = MutableStateFlow(UiState(session = appState.session.value))
+
+    /** Every exam from the sampled weeks; [nextUpcomingExam] picks against the clock. */
+    private var examCandidates: List<TimetableEntry> = emptyList()
+
     val uiState: StateFlow<UiState> = _state.asStateFlow()
 
     /**
@@ -179,6 +186,14 @@ class HomeViewModel @Inject constructor(
     init {
         viewModelScope.launch { appState.session.collect { s -> _state.update { it.copy(session = s) } } }
         viewModelScope.launch { loadAll() }
+        // "Nächste Schularbeit" moves on by itself once the shown exam has ended, without a reload.
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30_000)
+                val next = nextUpcomingExam(examCandidates)
+                if (next != _state.value.nextExam) _state.update { it.copy(nextExam = next) }
+            }
+        }
         // Silently re-check on every background→foreground return (AppState.resumeSignal) — a
         // WebUntis session that expired while backgrounded surfaces via loadToday's
         // AppError.isSessionExpired catch instead of leaving stale data on screen.
@@ -197,6 +212,8 @@ class HomeViewModel @Inject constructor(
                 if (updates.isNotEmpty()) _state.update { it.copy(dishRatings = it.dishRatings + updates) }
             }
         }
+        // Votes from anyone else — browser or another phone — arrive through the same map.
+        viewModelScope.launch { dishRatingsLive.updates.collect { } }
         // An offline session that just got its token back: the POKYH widgets can load for real.
         viewModelScope.launch {
             appState.session.map { it?.apiToken != null }.distinctUntilChanged().collect { hasToken ->
@@ -365,6 +382,20 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * The next exam that is not over yet — by date *and* time. One that already ended today is
+     * skipped, so with two exams on one day the second takes over once the first is done.
+     */
+    private fun nextUpcomingExam(exams: List<TimetableEntry>): TimetableEntry? {
+        val today = SchoolDates.todayNum()
+        val minute = SchoolDates.minuteNow()
+        return exams
+            .filter { it.isExam && !it.isCancelled }
+            .filter { it.date > today || (it.date == today && Fmt.minutes(it.endTime) > minute) }
+            .sortedWith(compareBy({ it.date }, { it.startTime }))
+            .firstOrNull()
+    }
+
     /** No dedicated `upcomingExams` endpoint on the Android client — samples the next six weeks'
      * timetables in parallel and keeps the earliest `isExam` entry, mirroring what
      * `UntisClient.swift`'s `upcomingExams` (start = today, end = +40 days) resolves to. */
@@ -387,10 +418,8 @@ class HomeViewModel @Inject constructor(
                     }
                 }.awaitAll()
             }
-            val next = weeks.filterNotNull().flatMap { it.value }
-                .filter { it.isExam && it.date >= today }
-                .sortedWith(compareBy({ it.date }, { it.startTime }))
-                .firstOrNull()
+            examCandidates = weeks.filterNotNull().flatMap { it.value }.filter { it.isExam && it.date >= today }
+            val next = nextUpcomingExam(examCandidates)
             val unknown = weeks.any { it == null || (it.stale && it.value.isEmpty()) }
             val all = weeks.filterNotNull().flatMap { it.value }
             val nextDay = all.map { it.date }.filter { it > today }.minOrNull()

@@ -90,6 +90,13 @@ data class PokyhColors(
      * white/near-black card. This is the same value at every size: plain gray.
      */
     val nested: Color,
+    /**
+     * The bottom nav's fill. One step off [card] on purpose: when the bar was card-colored, a
+     * card scrolled up against it merged with it into one shape — in dark mode the shadow that
+     * should have separated them barely registers. Still a neutral from the same ramp, so it
+     * sits under every screen without a border.
+     */
+    val nav: Color,
     /** Hairline at the edge of a surface. Used sparingly — tone does the separating. */
     val border: Color,
     /** Hairline *between rows inside* a card. Lighter than [border]. */
@@ -112,6 +119,7 @@ val LightPokyhColors = PokyhColors(
     card = Color(0xFFFFFFFF),
     cardAlt = Color(0xFFEEEAE3),
     nested = Color(0xFFECECEB),
+    nav = Color(0xFFEBE7E0),
     border = Color(0xFFE7E2D9),
     separator = Color(0xFFF0ECE5),
     textPrimary = Color(0xFF1C1A17),
@@ -149,6 +157,9 @@ val DarkPokyhColors = PokyhColors(
     card = Color(0xFF1B1B1F),
     cardAlt = Color(0xFF26262B),
     nested = Color(0xFF232323),
+    // A small step above the card. 0xFF25252A glowed against the dark page, and 0xFF151518
+    // (below the card) sank into the background.
+    nav = Color(0xFF212126),
     border = Color(0xFF303036),
     separator = Color(0xFF232327),
     textPrimary = Color(0xFFF2F2F4),

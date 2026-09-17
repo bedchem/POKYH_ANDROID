@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dev.plattnericus.pokyh.core.update.AppUpdater
 import dev.plattnericus.pokyh.state.AppState
@@ -193,12 +195,38 @@ private fun AuthedShell(appState: AppState) {
      */
     val startRoute = rememberSaveable { effectiveTab.route }
 
+    /** The tab whose stack is currently on screen — the one being left when [effectiveTab] changes. */
+    var shownTab by rememberSaveable { mutableStateOf(effectiveTab) }
+
     LaunchedEffect(effectiveTab) {
+        val leaving = shownTab
+        shownTab = effectiveTab
         if (navController.currentDestination?.route == effectiveTab.route) return@LaunchedEffect
+        // Leave the old tab at its root before its state is saved. Otherwise whatever was pushed
+        // on top of it (Profil, Nachrichten, a subject) is saved with it and `restoreState`
+        // brings it straight back the next time that tab is tapped. The root's own state — its
+        // scroll position, its ViewModel — is still saved and restored.
+        if (leaving != effectiveTab) navController.popBackStack(leaving.route, inclusive = false)
         navController.navigate(effectiveTab.route) {
             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
             launchSingleTop = true
             restoreState = true
+        }
+    }
+
+    // The other direction: the system back button pops the stack without going through the
+    // bar, so it could land on another tab's root while the bar still highlighted the old one.
+    // Whenever the stack settles on a tab root, that tab becomes the selection. `shownTab` is
+    // set first so the effect above sees nothing left to navigate.
+    val currentEntry by navController.currentBackStackEntryAsState()
+    LaunchedEffect(currentEntry) {
+        // Read live rather than from `currentEntry`: a tab switch pops to the old root and then
+        // navigates in one go, and acting on that in-between root would flip the bar back.
+        val route = navController.currentBackStackEntry?.destination?.route ?: return@LaunchedEffect
+        val tab = AppTab.entries.firstOrNull { it.route == route } ?: return@LaunchedEffect
+        if (tab != effectiveTab) {
+            shownTab = tab
+            appState.selectTab(tab)
         }
     }
 
@@ -222,7 +250,10 @@ private fun AuthedShell(appState: AppState) {
         PokyhNavHost(
             navController = navController,
             startDestination = startRoute,
-            modifier = Modifier.padding(innerPadding).fillMaxSize(),
+            // Consumed, not just applied: the tab screens are Scaffolds of their own, and an
+            // inner Scaffold still sees the raw navigation-bar inset and pads for it a second
+            // time — a bare strip of canvas between the content and the nav bar.
+            modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding).fillMaxSize(),
         )
     }
 }

@@ -56,6 +56,10 @@ object SchoolDates {
     fun todayIso(): String = todayLocalDate().toString()
     fun todayNum(): Int = todayLocalDate().toYyyyMMdd()
 
+    /** Minuten seit Mitternacht auf der Schul-Uhr (Europe/Rome) — dieselbe Zone wie die Stundenzeiten. */
+    fun minuteNow(): Int = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Europe/Rome"))
+        .let { it.get(java.util.Calendar.HOUR_OF_DAY) * 60 + it.get(java.util.Calendar.MINUTE) }
+
     /** ISO-String (yyyy-MM-dd) des Montags der Woche, die `date` enthält. */
     fun mondayIso(date: LocalDate = todayLocalDate()): String = mondayOfWeek(date).toString()
 

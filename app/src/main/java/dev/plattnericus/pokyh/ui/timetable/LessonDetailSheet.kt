@@ -25,7 +25,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -43,8 +42,10 @@ import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.SlotKind
+import dev.plattnericus.pokyh.ui.components.PokyhBleedCard
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhFittedText
+import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhRowSeparator
 import dev.plattnericus.pokyh.ui.components.TagChip
@@ -54,6 +55,7 @@ import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
+import dev.plattnericus.pokyh.ui.theme.PokyhType.monospacedDigits
 import dev.plattnericus.pokyh.ui.theme.SubjectTone
 import dev.plattnericus.pokyh.ui.theme.statusTone
 import dev.plattnericus.pokyh.ui.theme.subjectTone
@@ -62,12 +64,17 @@ import kotlinx.coroutines.launch
 /**
  * The lesson detail, as a bottom sheet.
  *
- * It opens on a **header image of the subject**, served by the POKYH backend and keyed by the
- * subject's long name — the same images, from the same endpoint, that the web app's lesson popup
- * uses, so a lesson looks like itself on both. The backend has no placeholder for a subject it
- * hasn't got a picture of, so [imageUrl] is null in that case and the header falls back to the
- * subject's monogram on its own pastel — which is a deliberate design, not an error state: two
- * big letters in the subject's colour identify it at a glance just as well.
+ * Built like a screen rather than like a dialog: the sheet is the warm [PokyhColors.bg] canvas
+ * and everything on it is a card standing on that canvas, so the hero, the Lehrer/Raum list and
+ * the note cards separate by the same tone step and radius as the rest of the app. It used to be
+ * a card-colored sheet holding card-colored cards — the cards vanished into it and the whole
+ * thing read as one flat slab with a photo glued to its top edge.
+ *
+ * The hero card opens on a **header image of the subject**, served by the POKYH backend and keyed
+ * by the subject's long name — the same images the web app's lesson popup uses. The backend has
+ * no placeholder for a subject it hasn't got a picture of, so [imageUrl] is null in that case and
+ * the header falls back to the subject's monogram on its own pastel — a deliberate design, not an
+ * error state.
  *
  * `skipPartiallyExpanded = false` so it can rest at a medium height instead of jumping to full —
  * the content is short, and a half sheet keeps the timetable visible behind it.
@@ -89,14 +96,24 @@ fun LessonDetailSheet(
     ModalBottomSheet(
         onDismissRequest = ::dismiss,
         sheetState = sheetState,
-        containerColor = PokyhTheme.colors.card,
+        containerColor = PokyhTheme.colors.bg,
         shape = PokyhShapes.topXxl,
-        // The image runs to the sheet's edges, and a drag handle sitting on top of a photo is
-        // both hard to see and hard to aim at. The sheet still drags from anywhere on the header.
-        dragHandle = null,
+        dragHandle = { SheetHandle() },
     ) {
-        LessonDetailContent(slot = slot, imageUrl = imageUrl, imageHeader = imageHeader)
+        LessonDetailContent(slot = slot, imageUrl = imageUrl, imageHeader = imageHeader, onClose = ::dismiss)
     }
+}
+
+/** A slim pill — the image now sits inside a card below it, so the handle has plain canvas to
+ * sit on and no longer has to be hidden. */
+@Composable
+private fun SheetHandle() {
+    Box(
+        Modifier
+            .padding(vertical = PokyhSpacing.md)
+            .size(width = 36.dp, height = 4.dp)
+            .background(PokyhTheme.colors.textTertiary.copy(alpha = 0.35f), PokyhShapes.pill),
+    )
 }
 
 @Composable
@@ -104,6 +121,7 @@ private fun LessonDetailContent(
     slot: MergedSlot,
     imageUrl: String?,
     imageHeader: Pair<String, String>,
+    onClose: () -> Unit,
 ) {
     val colors = PokyhTheme.colors
     val d = slot.display
@@ -114,27 +132,27 @@ private fun LessonDetailContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = PokyhSpacing.screenH)
+            .padding(bottom = PokyhSpacing.xxxl),
+        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
     ) {
-        LessonHeaderImage(
-            imageUrl = imageUrl,
-            imageHeader = imageHeader,
-            monogram = headerName,
-            tone = tone,
-            tags = tagsFor(slot),
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = PokyhSpacing.screenH)
-                .padding(top = PokyhSpacing.xl, bottom = PokyhSpacing.xxxl),
-            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
+        PokyhBleedCard {
+            LessonHeaderImage(
+                imageUrl = imageUrl,
+                imageHeader = imageHeader,
+                monogram = headerName,
+                tone = tone,
+                tags = tagsFor(slot),
+                onClose = onClose,
+            )
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(PokyhSpacing.card),
+                verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+            ) {
                 PokyhFittedText(
                     text = headerName,
-                    style = PokyhType.title1,
+                    style = PokyhType.title2,
                     color = colors.textPrimary,
                     maxLines = 2,
                 )
@@ -142,34 +160,45 @@ private fun LessonDetailContent(
                 if (short.isNotEmpty() && !short.equals(headerName, ignoreCase = true)) {
                     Text(short, style = PokyhType.subheadline, color = colors.textSecondary)
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-                ) {
-                    Icon(
-                        imageVector = PokyhIcons.clock,
-                        contentDescription = null,
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(15.dp),
-                    )
-                    Text(
-                        text = "${Fmt.time(d.startTime)} – ${Fmt.time(d.endTime)}",
-                        style = PokyhType.callout,
-                        color = colors.textSecondary,
-                    )
-                }
+                Spacer(Modifier.size(PokyhSpacing.xs))
+                TimePill(text = "${Fmt.time(d.startTime)} – ${Fmt.time(d.endTime)}", tone = tone)
             }
-
-            DetailsCard(detailEntryFor(slot))
-            slot.replacement?.let { InsteadCard(it) }
-            // Every free-text field WebUntis can attach to a period, each under its own heading.
-            // `note` and `lessonText` are different things and a server may send either or both;
-            // folding them into one card meant whichever lost the coin toss was never shown.
-            d.note?.takeIf { it.isNotBlank() }?.let { SectionCard("Notiz", it) }
-            d.lessonText?.takeIf { it.isNotBlank() && it != d.note }?.let { SectionCard("Stundentext", it) }
-            d.substitutionText?.takeIf { it.isNotBlank() }?.let { SectionCard("Vertretungstext", it) }
-            if (d.isExam) d.examDescription?.takeIf { it.isNotEmpty() }?.let { SectionCard("Prüfungsinhalt", it) }
         }
+
+        DetailsCard(detailEntryFor(slot), tone)
+        slot.replacement?.let { InsteadCard(it) }
+        // Every free-text field WebUntis can attach to a period, each under its own heading.
+        // `note` and `lessonText` are different things and a server may send either or both;
+        // folding them into one card meant whichever lost the coin toss was never shown.
+        d.note?.takeIf { it.isNotBlank() }?.let { SectionCard("Notiz", it) }
+        d.lessonText?.takeIf { it.isNotBlank() && it != d.note }?.let { SectionCard("Stundentext", it) }
+        d.substitutionText?.takeIf { it.isNotBlank() }?.let { SectionCard("Vertretungstext", it) }
+        if (d.isExam) d.examDescription?.takeIf { it.isNotEmpty() }?.let { SectionCard("Prüfungsinhalt", it) }
+    }
+}
+
+/** The lesson's time on the subject's own pastel — ties the card body to its header. */
+@Composable
+private fun TimePill(text: String, tone: SubjectTone) {
+    Row(
+        modifier = Modifier
+            .background(tone.fill, PokyhShapes.pill)
+            .padding(horizontal = PokyhSpacing.md, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+    ) {
+        Icon(
+            imageVector = PokyhIcons.clock,
+            contentDescription = null,
+            tint = tone.ink,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text = text,
+            style = PokyhType.footnote.monospacedDigits(),
+            color = tone.ink,
+            maxLines = 1,
+        )
     }
 }
 
@@ -177,15 +206,15 @@ private fun LessonDetailContent(
 
 /** Tall enough to be a picture rather than a band, short enough that the facts under it are
  * still on screen when the sheet rests at its medium detent. */
-private val HeaderHeight = 168.dp
+private val HeaderHeight = 148.dp
 
 /**
- * The subject photo, or its monogram on the subject's pastel.
+ * The subject photo, or its monogram on the subject's pastel — the top of the hero card, which
+ * clips it to the card's radius.
  *
  * **The dark gradient only exists over a photo.** It is there to make the status chips legible
  * against whatever the picture happens to contain — over the flat pastel fallback there is
- * nothing to fight, and laying a black wash over a pale tint just dirties it. The chips carry
- * their own filled backgrounds, so they read on the plain fill without help.
+ * nothing to fight, and laying a black wash over a pale tint just dirties it.
  *
  * Either way the layout is identical, so nothing below shifts when an image finishes loading,
  * and the monogram is what shows while a photo is still on its way — the header is never blank
@@ -198,13 +227,14 @@ private fun LessonHeaderImage(
     monogram: String,
     tone: SubjectTone,
     tags: List<Pair<String, Color>>,
+    onClose: () -> Unit,
 ) {
     val context = LocalContext.current
+    val colors = PokyhTheme.colors
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(HeaderHeight)
-            .clip(PokyhShapes.topXxl)
             .background(tone.fill),
     ) {
         if (imageUrl != null) {
@@ -223,11 +253,6 @@ private fun LessonHeaderImage(
                 loading = { MonogramFallback(monogram, tone) },
                 error = { MonogramFallback(monogram, tone) },
             )
-        } else {
-            MonogramFallback(monogram, tone)
-        }
-
-        if (imageUrl != null) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -238,16 +263,37 @@ private fun LessonHeaderImage(
                         ),
                     ),
             )
+        } else {
+            MonogramFallback(monogram, tone)
         }
+
+        PokyhIconButton(
+            icon = PokyhIcons.close,
+            contentDescription = "Schließen",
+            onClick = onClose,
+            tint = colors.textPrimary,
+            containerColor = colors.card.copy(alpha = 0.92f),
+            size = 34.dp,
+            iconSize = 16.dp,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(PokyhSpacing.md),
+        )
 
         if (tags.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(PokyhSpacing.lg),
+                    .padding(PokyhSpacing.md),
                 horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
             ) {
-                tags.forEach { (text, color) -> TagChip(text = text, color = color, large = true) }
+                // A card-colored backing under each tinted chip, so it reads the same over a
+                // photo, the dark gradient or the pastel fallback.
+                tags.forEach { (text, color) ->
+                    Box(Modifier.background(colors.card, PokyhShapes.pill)) {
+                        TagChip(text = text, color = color, large = true)
+                    }
+                }
             }
         }
     }
@@ -319,7 +365,7 @@ private fun shortNameFor(slot: MergedSlot): String = slot.display.subjectName
 private fun detailEntryFor(slot: MergedSlot): TimetableEntry = slot.display
 
 @Composable
-private fun DetailsCard(d: TimetableEntry) {
+private fun DetailsCard(d: TimetableEntry, tone: SubjectTone) {
     val teacher = d.teacherLongName ?: d.teacherName
     val origTeacher = d.originalTeacherLong ?: (d.originalTeacher ?: "")
     val room = d.roomName
@@ -332,30 +378,48 @@ private fun DetailsCard(d: TimetableEntry) {
     PokyhCard(padding = 0.dp) {
         if (hasTeacher) {
             if (origTeacher.isNotEmpty() && origTeacher != teacher) {
-                ChangeRow("Lehrer", origTeacher, teacher, PokyhIcons.person)
+                ChangeRow("Lehrer", origTeacher, teacher, PokyhIcons.person, tone)
             } else {
-                DetailRow("Lehrer", teacher.ifEmpty { origTeacher }, PokyhIcons.person)
+                DetailRow("Lehrer", teacher.ifEmpty { origTeacher }, PokyhIcons.person, tone)
             }
         }
-        if (hasTeacher && hasRoom) PokyhRowSeparator()
+        if (hasTeacher && hasRoom) PokyhRowSeparator(startInset = DetailTextInset)
         if (hasRoom) {
             if (origRoom.isNotEmpty() && origRoom != room) {
-                ChangeRow("Raum", origRoom, room, PokyhIcons.room)
+                ChangeRow("Raum", origRoom, room, PokyhIcons.room, tone)
             } else {
-                DetailRow("Raum", room.ifEmpty { origRoom }, PokyhIcons.room)
+                DetailRow("Raum", room.ifEmpty { origRoom }, PokyhIcons.room, tone)
             }
         }
     }
 }
 
+private val DetailTileSize = 40.dp
+
+/** Where a row's text starts — the hairline is inset to it, as in the app's other list cards. */
+private val DetailTextInset = PokyhSpacing.card + DetailTileSize + PokyhSpacing.iconText
+
+/** The row's glyph on the subject's pastel, so the list belongs to the lesson it describes. */
 @Composable
-private fun DetailRow(label: String, value: String, icon: ImageVector) {
+private fun DetailTile(icon: ImageVector, tone: SubjectTone) {
+    Box(
+        modifier = Modifier.size(DetailTileSize).background(tone.fill, PokyhShapes.sm),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = tone.ink, modifier = Modifier.size(19.dp))
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String, icon: ImageVector, tone: SubjectTone) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(PokyhSpacing.card),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PokyhSpacing.card, vertical = PokyhSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
     ) {
-        Icon(icon, contentDescription = null, tint = PokyhTheme.colors.accentText, modifier = Modifier.size(20.dp))
+        DetailTile(icon, tone)
         Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
             PokyhLabel(label)
             Text(value, style = PokyhType.body, color = PokyhTheme.colors.textPrimary)
@@ -364,25 +428,29 @@ private fun DetailRow(label: String, value: String, icon: ImageVector) {
 }
 
 @Composable
-private fun ChangeRow(label: String, from: String, to: String, icon: ImageVector) {
+private fun ChangeRow(label: String, from: String, to: String, icon: ImageVector, tone: SubjectTone) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(PokyhSpacing.card),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PokyhSpacing.card, vertical = PokyhSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
     ) {
-        Icon(icon, contentDescription = null, tint = PokyhTheme.colors.accentText, modifier = Modifier.size(20.dp))
+        DetailTile(icon, tone)
         Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
             PokyhLabel(label)
+            // Old and new on their own lines: side by side, two full teacher names ran out of
+            // width and wrapped mid-name.
+            Text(
+                text = from,
+                style = PokyhType.body,
+                color = Brand.danger,
+                textDecoration = TextDecoration.LineThrough,
+            )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
             ) {
-                Text(
-                    text = from,
-                    style = PokyhType.body,
-                    color = Brand.danger,
-                    textDecoration = TextDecoration.LineThrough,
-                )
                 Icon(
                     imageVector = PokyhIcons.forward,
                     contentDescription = null,

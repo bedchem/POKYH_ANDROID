@@ -101,6 +101,7 @@ object Config {
         fun sseReminders(classId: String): String = "/sse/reminders/$classId"
         fun sseReminderComments(reminderId: String): String = "/sse/reminder-comments/$reminderId"
         fun sseDishRatings(dishId: String): String = "/sse/dish-ratings/$dishId"
+        const val sseAllDishRatings = "/sse/dish-ratings"
         fun sseDishComments(dishId: String): String = "/sse/dish-comments/$dishId"
     }
 }

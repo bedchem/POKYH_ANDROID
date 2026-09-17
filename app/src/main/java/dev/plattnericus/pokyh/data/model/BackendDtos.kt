@@ -143,6 +143,14 @@ data class DishRatingsResponse(
     val myRating: Int? = null,
 )
 
+/** One event of `/sse/dish-ratings`: a dish's ratings right after anyone voted on it. */
+@Serializable
+data class DishRatingEvent(
+    val dishId: String,
+    val ratings: Map<String, Double> = emptyMap(),
+    val myRating: Int? = null,
+)
+
 /**
  * `name`/`description` are a plain string OR an object with de/it/en on the wire.
  * Tries a direct string first, then de -> it -> en from the object, else empty string.

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.data.backend.BackendClient
+import dev.plattnericus.pokyh.data.backend.DishRatingsLive
 import dev.plattnericus.pokyh.data.backend.SseClient
 import dev.plattnericus.pokyh.data.model.ApiComment
 import dev.plattnericus.pokyh.data.model.Dish
@@ -97,6 +98,7 @@ object MensaSchedule {
 class MensaViewModel @Inject constructor(
     private val appState: AppState,
     private val backendClient: BackendClient,
+    private val dishRatingsLive: DishRatingsLive,
 ) : ViewModel() {
 
     data class UiState(
@@ -152,6 +154,8 @@ class MensaViewModel @Inject constructor(
                 if (updates.isNotEmpty()) _ui.update { it.copy(ratings = it.ratings + updates) }
             }
         }
+        // Votes from anyone else — browser or another phone — arrive through the same map.
+        viewModelScope.launch { dishRatingsLive.updates.collect { } }
         // Ratings need a backend token. On a cold start the session often resolves *after* the
         // dishes do, so fetching once on load would leave the stars permanently empty.
         viewModelScope.launch {

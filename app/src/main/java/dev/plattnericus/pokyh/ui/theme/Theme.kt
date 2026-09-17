@@ -155,6 +155,7 @@ private fun animatedColors(target: PokyhColors): PokyhColors {
         surface = fade(target.surface, "surface"),
         card = fade(target.card, "card"),
         cardAlt = fade(target.cardAlt, "cardAlt"),
+        nav = fade(target.nav, "nav"),
         border = fade(target.border, "border"),
         separator = fade(target.separator, "separator"),
         textPrimary = fade(target.textPrimary, "textPrimary"),

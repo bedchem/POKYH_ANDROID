@@ -2,6 +2,9 @@
 
 package dev.plattnericus.pokyh.ui.timetable
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -55,6 +58,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.core.util.Fmt
+import dev.plattnericus.pokyh.data.model.AbsenceEntry
+import dev.plattnericus.pokyh.data.untis.AbsenceMark
+import dev.plattnericus.pokyh.data.untis.AbsenceMarks
 import dev.plattnericus.pokyh.data.untis.DayKind
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.SlotKind
@@ -108,6 +114,7 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val pages by viewModel.pages.collectAsStateWithLifecycle()
     val detail by viewModel.detail.collectAsStateWithLifecycle()
+    val absences by viewModel.absences.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
     var yearMenuExpanded by remember { mutableStateOf(false) }
@@ -229,10 +236,16 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
                         weekNumber = viewModel.weekNumber(offset),
                         onTap = viewModel::showDetail,
                         onRetry = { viewModel.retryWeek(offset) },
+                        absences = absences[viewModel.schoolYearOf(offset)].orEmpty(),
                     )
                 }
             } else {
-                DayModeContent(viewModel = viewModel, ui = ui, pages = pages)
+                DayModeContent(
+                    viewModel = viewModel,
+                    ui = ui,
+                    pages = pages,
+                    absences = absences[viewModel.schoolYearOf(ui.weekOffset)].orEmpty(),
+                )
             }
         }
     }
@@ -339,6 +352,7 @@ private fun WeekPageContent(
     weekNumber: Int,
     onTap: (MergedSlot) -> Unit,
     onRetry: () -> Unit,
+    absences: List<AbsenceEntry>,
 ) {
     when (state) {
         is WeekPageState.Loading -> WeekGridSkeleton(Modifier.fillMaxSize())
@@ -368,6 +382,7 @@ private fun WeekPageContent(
                     onTap = onTap,
                     modifier = Modifier.fillMaxSize(),
                     weekNumber = weekNumber,
+                    absences = absences,
                 )
             }
         }
@@ -377,7 +392,12 @@ private fun WeekPageContent(
 // ── Day mode ─────────────────────────────────────────────────────────────────
 
 @Composable
-private fun DayModeContent(viewModel: TimetableViewModel, ui: TimetableUiState, pages: Map<Int, WeekPageState>) {
+private fun DayModeContent(
+    viewModel: TimetableViewModel,
+    ui: TimetableUiState,
+    pages: Map<Int, WeekPageState>,
+    absences: List<AbsenceEntry>,
+) {
     Column(Modifier.fillMaxSize()) {
         DayChipsRow(
             dayLabels = viewModel.dayLabels,
@@ -453,8 +473,22 @@ private fun DayModeContent(viewModel: TimetableViewModel, ui: TimetableUiState, 
                             verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap),
                         ) {
                             itemsIndexed(slots, key = { _, s -> s.id }) { idx, slot ->
+                                val shown = slot.replacement ?: slot.display
+                                val absenceMark = if (shown.isCancelled) {
+                                    null
+                                } else {
+                                    AbsenceMarks.markFor(
+                                        absences = absences,
+                                        dateNum = dayNum,
+                                        startMinute = Fmt.minutes(shown.startTime),
+                                        endMinute = Fmt.minutes(shown.endTime),
+                                        nowDateNum = viewModel.todayDateNum(),
+                                        nowMinute = schoolMinuteNow(),
+                                    )
+                                }
                                 SlotRow(
                                     slot = slot,
+                                    absenceMark = absenceMark,
                                     onClick = { viewModel.showDetail(slot) },
                                     modifier = Modifier.fadeIn(delayMillis = idx * 30),
                                 )
@@ -502,7 +536,7 @@ private fun DayChipsRow(
  * as a second line is more direct than a second column two thumbs wide.
  */
 @Composable
-private fun SlotRow(slot: MergedSlot, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun SlotRow(slot: MergedSlot, onClick: () -> Unit, modifier: Modifier = Modifier, absenceMark: AbsenceMark? = null) {
     val colors = PokyhTheme.colors
     val isDark = colors.isDark
     // For a substitution the lesson that actually happens leads the row; `display` is then the
@@ -519,7 +553,20 @@ private fun SlotRow(slot: MergedSlot, onClick: () -> Unit, modifier: Modifier = 
         else -> subjectTone(shown.subjectName, isDark)
     }
 
-    PokyhTileRow(modifier = modifier, onClick = onClick, verticalAlignment = Alignment.Top) {
+    // The same wash the week grid lays over an absence, with the label as a chip in the title.
+    val absenceWash = when (absenceMark) {
+        null -> Color.Transparent
+        AbsenceMark.ABSENT -> Brand.danger.copy(alpha = if (isDark) 0.16f else 0.08f)
+        else -> colors.textSecondary.copy(alpha = if (isDark) 0.18f else 0.12f)
+    }
+    PokyhTileRow(
+        modifier = modifier.drawWithContent {
+            drawContent()
+            if (absenceMark != null) drawOutline(PokyhShapes.lg.createOutline(size, layoutDirection, this), absenceWash)
+        },
+        onClick = onClick,
+        verticalAlignment = Alignment.Top,
+    ) {
         Box(Modifier.width(4.dp).height(44.dp).background(tone.bar, PokyhShapes.xs))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
             Row(
@@ -533,6 +580,12 @@ private fun SlotRow(slot: MergedSlot, onClick: () -> Unit, modifier: Modifier = 
                     textDecoration = if (cancelled) TextDecoration.LineThrough else TextDecoration.None,
                 )
                 slotBadge(slot)
+                if (absenceMark != null) {
+                    TagChip(
+                        absenceMark.label,
+                        if (absenceMark == AbsenceMark.ABSENT) Brand.danger else colors.textSecondary,
+                    )
+                }
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -609,3 +662,8 @@ private fun slotBadge(slot: MergedSlot) {
 private const val OFFLINE_WEEK_UNKNOWN =
     "Du bist offline und für diese Woche ist kein Stundenplan gespeichert. Ob Unterricht ist, " +
         "lässt sich erst sagen, wenn du wieder Internet hast."
+
+/** Minutes since midnight on the school's clock — the same zone the lesson times are in. */
+private fun schoolMinuteNow(): Int =
+    java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Europe/Rome"))
+        .let { it.get(java.util.Calendar.HOUR_OF_DAY) * 60 + it.get(java.util.Calendar.MINUTE) }

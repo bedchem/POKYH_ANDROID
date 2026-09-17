@@ -271,6 +271,9 @@ class AppState @Inject constructor(
         _statusText.value = "Verbinde mit WebUntis…"
 
         val snap: UserSession? = if (allowOffline) diskCache.read(sessionKey(username), UserSession.serializer())?.takeIf { it.studentId > 0 } else null
+        // A fingerprint unlock right after returning to the app beats Android releasing the
+        // network, and that login failed instantly into "Offline angemeldet" on working Wi-Fi.
+        networkMonitor.awaitSettled()
         val startedAt = System.currentTimeMillis()
         val untisAnswered = java.util.concurrent.atomic.AtomicBoolean(false)
         val loginDeferred = backgroundScope.async { buildSession(username, password, untisAnswered) }
@@ -496,6 +499,31 @@ class AppState @Inject constructor(
         // this session is cached has to be on screen from the moment the session is.
         serviceHealth.markDown(PokyhService.UNTIS, "Anmeldung nicht möglich", unlessOkSince = loginStartedAt)
         scope.launch { prefsStore.setLastActive(snap.username) }
+        keepReconnecting()
+    }
+
+    private var healJob: Job? = null
+
+    /**
+     * Retry the real sign-in on a backoff for as long as the session is offline.
+     *
+     * The other triggers — the network coming back, the app returning to the foreground — only
+     * fire on a *change*. A login that failed while the network already counted as online (a
+     * slow wake from Doze, a stale DNS answer, a server hiccup) had no change left to wait for,
+     * so the app sat in "Offline angemeldet" on working Wi-Fi until it was closed and reopened.
+     */
+    private fun keepReconnecting() {
+        if (healJob?.isActive == true) return
+        healJob = scope.launch {
+            var wait = RECONNECT_FIRST_MS
+            while (_isOffline.value) {
+                delay(wait)
+                wait = (wait * 2).coerceAtMost(RECONNECT_MAX_MS)
+                if (backgroundedAt != null || !networkMonitor.usableNow()) continue
+                retryOfflineLogin()
+                reconnectJob?.join()
+            }
+        }
     }
 
     /** What an offline session was opened with — kept **in memory only**, so a reconnect can sign
@@ -781,20 +809,27 @@ class AppState @Inject constructor(
 
     /** Wired to `ON_STOP` by MainActivity via `ProcessLifecycleOwner`. */
     fun onAppBackgrounded() {
+        networkMonitor.onBackgrounded()
         backgroundedAt = if (_phase.value == Phase.Authed) SystemClock.elapsedRealtime() else null
     }
 
     /** Wired to `ON_START`. Force-locks if the app spent >= [AUTO_LOCK_INTERVAL_MS] backgrounded,
      * otherwise bumps [resumeSignal] so still-authed screens can silently revalidate. */
     fun onAppForegrounded() {
+        networkMonitor.onForegrounded()
         val since = backgroundedAt
         backgroundedAt = null
         if (since == null || _phase.value != Phase.Authed) return
         if (SystemClock.elapsedRealtime() - since >= AUTO_LOCK_INTERVAL_MS) {
             _phase.value = Phase.Lock
         } else {
-            _resumeSignal.value += 1
-            retryOfflineLogin()
+            // Android releases a backgrounded app's network a moment after it is back on screen;
+            // reloading before that just fails and leaves the old data (and a banner) up.
+            scope.launch {
+                networkMonitor.awaitSettled()
+                _resumeSignal.value += 1
+                retryOfflineLogin()
+            }
         }
     }
 
@@ -804,6 +839,10 @@ class AppState @Inject constructor(
 
         /** Extra wait once WebUntis has answered but the POKYH backend has not yet. */
         const val BACKEND_GRACE_MS = 15_000L
+
+        /** Backoff for [keepReconnecting]: first retry, doubling up to the cap. */
+        const val RECONNECT_FIRST_MS = 3_000L
+        const val RECONNECT_MAX_MS = 60_000L
 
         /** Time spent backgrounded before auto-locking — 10 minutes, same as iOS. */
         const val AUTO_LOCK_INTERVAL_MS = 600_000L

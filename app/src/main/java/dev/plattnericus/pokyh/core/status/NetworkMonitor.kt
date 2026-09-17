@@ -6,10 +6,13 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -40,6 +43,15 @@ import javax.inject.Singleton
  *    immediate.
  *  - *Ignoring the servers.* A request that just got an answer is proof of a connection no
  *    matter what the callbacks last said — see [reportReachable].
+ *
+ * **Coming back from the background was the other half of it.** Android cuts a backgrounded app
+ * off the network (Doze, battery saver, Data Saver, app standby) and says so through
+ * `onBlockedStatusChanged`, which this took for "the phone is offline". On return the unblock
+ * arrives a moment *after* the app is on screen, so a return could flash "Keine
+ * Internetverbindung" then "Wieder online", and whatever loaded in that moment failed and was
+ * blamed on the servers. So nothing goes offline while in the background, the real state is
+ * re-read on return with [ResumeGraceMs] to settle, and failures in that window are not held
+ * against a server — see [failureMeansServerDown].
  */
 @Singleton
 class NetworkMonitor @Inject constructor(
@@ -52,6 +64,9 @@ class NetworkMonitor @Inject constructor(
     val online: StateFlow<Boolean> = _online.asStateFlow()
 
     private val goOffline = Runnable { _online.value = false }
+
+    @Volatile private var foreground = true
+    @Volatile private var foregroundedAt = SystemClock.elapsedRealtime()
 
     init {
         _online.value = usable(runCatching { manager?.getNetworkCapabilities(manager.activeNetwork) }.getOrNull())
@@ -72,6 +87,59 @@ class NetworkMonitor @Inject constructor(
         runCatching { manager?.registerDefaultNetworkCallback(callback, main) }
     }
 
+    /** Wired to the app going to the background. Network blocks from here on are Android's
+     * background restrictions, not the phone losing its connection. */
+    fun onBackgrounded() {
+        foreground = false
+        main.removeCallbacks(goOffline)
+    }
+
+    /** Wired to the app coming back. Re-reads the real state instead of trusting callbacks that
+     * may still be queued, and gives a blocked network [ResumeGraceMs] to be released. */
+    fun onForegrounded() {
+        foreground = true
+        foregroundedAt = SystemClock.elapsedRealtime()
+        main.removeCallbacks(goOffline)
+        if (usableNow()) {
+            reportReachable()
+        } else if (_online.value) {
+            main.postDelayed(goOffline, ResumeGraceMs)
+        }
+    }
+
+    /** Whether the system says there is a usable network *right now*. `activeNetwork` is null
+     * while this app is blocked, so a background restriction reads as not usable. */
+    fun usableNow(): Boolean {
+        if (manager == null) return true
+        return usable(runCatching { manager.getNetworkCapabilities(manager.activeNetwork) }.getOrNull())
+    }
+
+    /** Waits up to [timeoutMs] for [usableNow]; returns whether it got there. */
+    suspend fun awaitUsable(timeoutMs: Long): Boolean {
+        if (usableNow()) return true
+        if (timeoutMs <= 0) return false
+        return withTimeoutOrNull(timeoutMs) {
+            while (!usableNow()) delay(PollMs)
+            true
+        } ?: false
+    }
+
+    /** Waits for the network only while the app is still settling after a return from the
+     * background; otherwise returns at once, so a phone that really is offline is not held up. */
+    suspend fun awaitSettled() {
+        awaitUsable(ResumeGraceMs - (SystemClock.elapsedRealtime() - foregroundedAt))
+    }
+
+    /**
+     * Whether a failed request says anything about the server. Not when the phone has no network,
+     * not while the app is in the background (Android blocks it there), and not in the first
+     * moments after coming back, while that block is still being lifted.
+     */
+    fun failureMeansServerDown(): Boolean =
+        foreground &&
+            SystemClock.elapsedRealtime() - foregroundedAt >= ResumeGraceMs &&
+            usableNow()
+
     /** A server just answered — whatever the callbacks think, this phone is online. */
     fun reportReachable() {
         main.removeCallbacks(goOffline)
@@ -81,7 +149,7 @@ class NetworkMonitor @Inject constructor(
     private fun update(caps: NetworkCapabilities?) {
         if (usable(caps)) {
             reportReachable()
-        } else if (_online.value) {
+        } else if (_online.value && foreground) {
             main.removeCallbacks(goOffline)
             main.postDelayed(goOffline, OfflineDebounceMs)
         }
@@ -94,5 +162,7 @@ class NetworkMonitor @Inject constructor(
 
     private companion object {
         const val OfflineDebounceMs = 3_000L
+        const val ResumeGraceMs = 5_000L
+        const val PollMs = 250L
     }
 }

@@ -48,7 +48,9 @@ class ServiceHealthInterceptor @Inject constructor(
             }
             return response
         } catch (e: IOException) {
-            if (!chain.call().isCanceled()) health.reportDown(service, describe(e))
+            // Cancelled, or failed because the phone has no network (or Android is still blocking
+            // it right after a return from the background): not the server's fault.
+            if (!chain.call().isCanceled() && network.failureMeansServerDown()) health.reportDown(service, describe(e))
             throw e
         }
     }

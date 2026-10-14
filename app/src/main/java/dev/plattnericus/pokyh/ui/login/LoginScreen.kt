@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn as animateFadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -59,6 +61,8 @@ import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.centeredForm
 import dev.plattnericus.pokyh.ui.theme.fadeIn
+
+private const val PRIVACY_URL = "https://pokyh.com/legal?view=datenschutz"
 
 /**
  * Anmeldung. `isAdditional` mirrors the sheet-presented "Konto hinzufügen" / "Mit Passwort
@@ -244,6 +248,25 @@ fun LoginScreen(
                     style = PokyhType.footnote,
                     color = PokyhTheme.colors.textTertiary,
                     textAlign = TextAlign.Center,
+                )
+                // Die Datenschutzerklärung dort, wo Daten erhoben werden (Art. 13 DSGVO).
+                val uriHandler = LocalUriHandler.current
+                Spacer(Modifier.height(PokyhSpacing.xs))
+                Text(
+                    text = "Wie POKYH mit deinen Daten umgeht, steht in der Datenschutzerklärung.",
+                    style = PokyhType.footnote,
+                    color = PokyhTheme.colors.textTertiary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = PokyhSpacing.xxl),
+                )
+                Text(
+                    text = "Datenschutzerklärung lesen",
+                    style = PokyhType.footnote,
+                    color = PokyhTheme.colors.accentText,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .clickable { uriHandler.openUri(PRIVACY_URL) }
+                        .padding(PokyhSpacing.xs),
                 )
                 Spacer(Modifier.height(PokyhSpacing.huge))
             }

@@ -574,6 +574,27 @@ class BackendClient @Inject constructor(
         _ratingUpdates.update { it + (dishId to data) }
     }
 
+    // ── Nutzungsstatistik ───────────────────────────────────────────────────
+
+    /**
+     * Ein Heartbeat für die Nutzungsstatistik im Admin-Panel (siehe
+     * [dev.plattnericus.pokyh.core.usage.UsageReporter]): Vordergrund-Sekunden und geöffnete
+     * Tabs seit dem letzten Ping. Best effort — ein Fehler wird verschluckt, er darf die App nie
+     * stören.
+     */
+    suspend fun usagePing(sessionId: String, activeSeconds: Int, screens: Int, token: String) {
+        val payload = buildJsonObject {
+            put("sessionId", sessionId)
+            put("device", "android")
+            put("client", "app")
+            // Das Backend nimmt nur [0-9A-Za-z.+_-] bis 32 Zeichen an.
+            put("appVersion", BuildConfig.VERSION_NAME.filter { it.isLetterOrDigit() && it.code < 128 || it in ".+_-" }.take(32))
+            put("activeSeconds", activeSeconds)
+            put("screens", screens)
+        }
+        runCatching { request(Config.Routes.usagePing, method = "POST", token = token, jsonBody = payload.toString()) }
+    }
+
     // ── Popups (Admin-Mitteilungen) ─────────────────────────────────────────
 
     suspend fun activePopups(): List<ApiPopup> =

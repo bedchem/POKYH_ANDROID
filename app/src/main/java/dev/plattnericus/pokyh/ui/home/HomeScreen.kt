@@ -100,7 +100,6 @@ import dev.plattnericus.pokyh.ui.theme.insetSurface
 import dev.plattnericus.pokyh.ui.theme.nestedSurface
 import dev.plattnericus.pokyh.ui.theme.statusTone
 import dev.plattnericus.pokyh.ui.theme.subjectTone
-import kotlin.math.round
 import kotlin.time.Clock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
@@ -1054,7 +1053,12 @@ private fun GradeRow(grade: HomeViewModel.RecentGrade) {
 }
 
 /** The grade number in a tinted disc — the app's one way of showing a single grade, shared by
- * Home, Grades and the subject detail's calculator. */
+ * Home, Grades and the subject detail's calculator.
+ *
+ * The value is shown exactly, never rounded to one decimal: "8+" is 8,25 and must not read as
+ * 8,3. A two-decimal value is wider than the disc at full size (and more so at a large system
+ * font), so the number shrinks to fit instead of the disc growing — the discs stay one size and
+ * the row titles beside them stay aligned. */
 @Composable
 internal fun GradeBubble(
     value: Double,
@@ -1062,17 +1066,19 @@ internal fun GradeBubble(
     muted: Boolean = false,
 ) {
     val color = if (muted) PokyhTheme.colors.textTertiary else gradeColor(value)
-    val digits = if (value == round(value)) 0 else 1
     Box(
         modifier = modifier
             .size(44.dp)
-            .background(color.copy(alpha = 0.14f), PokyhShapes.pill),
+            .background(color.copy(alpha = 0.14f), PokyhShapes.pill)
+            .padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = Fmt.num(value, digits = digits),
+        PokyhFittedText(
+            text = Fmt.num(value),
             style = PokyhType.statSmall,
             color = color,
+            maxLines = 1,
+            minScale = 0.55f,
         )
     }
 }

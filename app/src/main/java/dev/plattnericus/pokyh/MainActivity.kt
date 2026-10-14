@@ -20,6 +20,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
+import dev.plattnericus.pokyh.core.usage.UsageReporter
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.PokyhApp
 import dev.plattnericus.pokyh.ui.theme.PokyhAppTheme
@@ -37,6 +38,7 @@ import javax.inject.Inject
 class MainActivity : FragmentActivity() {
 
     @Inject lateinit var appState: AppState
+    @Inject lateinit var usageReporter: UsageReporter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,11 +57,19 @@ class MainActivity : FragmentActivity() {
 
         // App-wide (not per-Activity) background/foreground signal for auto-lock — the Android
         // analog of POKYHApp.swift's `.onChange(of: scenePhase)` on `.background`/`.active`.
+        // The same signal drives the usage statistics (foreground time, see UsageReporter).
+        usageReporter.start()
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             LifecycleEventObserver { _, event ->
                 when (event) {
-                    Lifecycle.Event.ON_STOP -> appState.onAppBackgrounded()
-                    Lifecycle.Event.ON_START -> appState.onAppForegrounded()
+                    Lifecycle.Event.ON_STOP -> {
+                        usageReporter.onBackground()
+                        appState.onAppBackgrounded()
+                    }
+                    Lifecycle.Event.ON_START -> {
+                        appState.onAppForegrounded()
+                        usageReporter.onForeground()
+                    }
                     else -> Unit
                 }
             },

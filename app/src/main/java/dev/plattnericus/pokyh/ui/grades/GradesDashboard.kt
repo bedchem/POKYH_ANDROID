@@ -4,10 +4,10 @@ import dev.plattnericus.pokyh.data.model.GradeEntry
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlinx.datetime.LocalDate
@@ -33,7 +33,7 @@ internal data class GradesDashboard(
     val pos: Int,
     val neg: Int,
     val passRate: Double,
-    /** Index 0 = grade 1 … index 9 = grade 10. */
+    /** Index 0 = grade 1 … index 9 = grade 10, bucketed by [gradeBucket]. */
     val distribution: List<Int>,
     val mode: Int,
     val median: Double,
@@ -111,10 +111,7 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
     val passRate = if (values.isEmpty()) 0.0 else pos.toDouble() / values.size * 100
 
     val distribution = MutableList(10) { 0 }
-    values.forEach { v ->
-        val idx = v.roundToInt().coerceIn(1, 10) - 1
-        distribution[idx] += 1
-    }
+    values.forEach { v -> distribution[gradeBucket(v) - 1] += 1 }
     val modeIdx = distribution.indexOf(distribution.max())
 
     val sortedVals = values.sorted()
@@ -222,6 +219,14 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
         donutSegments = donutSegments,
     )
 }
+
+/**
+ * The whole grade a value counts as in the distribution. A half rounds *down* — 8,5 ("8/9") is
+ * still an 8, not a 9 — and only what lies above the half goes up: 8,25 ("8+") is an 8, 8,75
+ * ("9-") a 9. Plain rounding would send 8,5 to 9. The epsilon absorbs floating-point noise
+ * around the exact half.
+ */
+internal fun gradeBucket(value: Double): Int = ceil(value - 0.5 - 1e-9).toInt().coerceIn(1, 10)
 
 /** Walks grades 10 → 1 so the ring reads best-first clockwise from the top, like the web. */
 private fun buildDonutSegments(distribution: List<Int>, total: Int): List<DonutSegment> {

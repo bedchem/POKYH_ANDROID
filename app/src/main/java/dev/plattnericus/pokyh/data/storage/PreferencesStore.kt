@@ -206,8 +206,13 @@ class PreferencesStore @Inject constructor(
         prefs[POPUPS_SEEN]?.let { decodeOrNull(it, MapStringPopupSeenSerializer) } ?: emptyMap()
     }
 
-    suspend fun setPopupsSeen(seen: Map<String, PopupSeenEntry>) {
-        context.dataStore.edit { it[POPUPS_SEEN] = json.encodeToString(MapStringPopupSeenSerializer, seen) }
+    /** Lesen und Schreiben in einer Transaktion — zwei schnell hintereinander gezeigte Popups
+     * dürfen sich ihren Eintrag nicht gegenseitig überschreiben. */
+    suspend fun updatePopupsSeen(transform: (Map<String, PopupSeenEntry>) -> Map<String, PopupSeenEntry>) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[POPUPS_SEEN]?.let { decodeOrNull(it, MapStringPopupSeenSerializer) } ?: emptyMap()
+            prefs[POPUPS_SEEN] = json.encodeToString(MapStringPopupSeenSerializer, transform(current))
+        }
     }
 
     // ── Update-Hinweis "Morgen" (Epoch-ms, bis wann nicht automatisch gefragt wird) ──

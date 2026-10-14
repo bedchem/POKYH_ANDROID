@@ -7,11 +7,24 @@ import android.net.Uri
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,7 +42,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -37,10 +56,14 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.plattnericus.pokyh.data.model.ApiPopup
+import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
+import dev.plattnericus.pokyh.ui.components.PokyhTextButton
+import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhDecorative
 import dev.plattnericus.pokyh.ui.theme.PokyhElevation
+import dev.plattnericus.pokyh.ui.theme.PokyhIcons
+import dev.plattnericus.pokyh.ui.theme.PokyhMotion
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
@@ -49,70 +72,196 @@ import dev.plattnericus.pokyh.ui.theme.floatingSurface
 
 /**
  * Hosts admin announcement popups for the signed-in app. Checks on every return to the
- * foreground (throttled in the ViewModel) and shows the queue one popup at a time.
+ * foreground (throttled in the ViewModel) and shows everything due as one stack.
  */
 @Composable
 fun AnnouncementPopupHost(viewModel: AnnouncementPopupViewModel = hiltViewModel()) {
-    val queue by viewModel.queue.collectAsStateWithLifecycle()
+    val stack by viewModel.stack.collectAsStateWithLifecycle()
 
     LifecycleStartEffect(Unit) {
         viewModel.check()
         onStopOrDispose { }
     }
 
-    val current = queue.firstOrNull() ?: return
+    val current = stack.current ?: return
     LaunchedEffect(current.id, current.revision) { viewModel.markShown(current) }
 
     AnnouncementPopupDialog(
-        popup = current,
-        remaining = queue.size - 1,
-        onDismiss = viewModel::dismissCurrent,
+        stack = stack,
+        onNext = viewModel::next,
+        onBack = viewModel::back,
+        onSelect = viewModel::goTo,
+        onClose = viewModel::close,
     )
 }
 
+/** How far each waiting popup peeks out above the card. */
+private val LayerPeek = 9.dp
+
+/** Beyond this the dots stop being countable at a glance — "3 / 9" instead. */
+private const val MAX_DOTS = 7
+
 /**
  * Pastel, borderless card in the app's own language: a periwinkle icon tile, the title, the
- * backend-rendered content and one primary action. Tone separates the layers — no outlines.
+ * backend-rendered content and a footer — "Zurück" on the left, one dot per popup in the
+ * middle, "Weiter" (or "Fertig" on the last one) on the right. The popups still waiting peek
+ * out above the card. Tone separates the layers — no outlines.
  */
 @Composable
-private fun AnnouncementPopupDialog(popup: ApiPopup, remaining: Int, onDismiss: () -> Unit) {
+private fun AnnouncementPopupDialog(
+    stack: PopupStack,
+    onNext: () -> Unit,
+    onBack: () -> Unit,
+    onSelect: (Int) -> Unit,
+    onClose: () -> Unit,
+) {
     val colors = PokyhTheme.colors
     val tone = PokyhDecorative.periwinkle(colors.isDark)
     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.82f).dp
+    val waiting = stack.popups.size - 1 - stack.index
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = PokyhSpacing.xl)
-                .fillMaxWidth()
-                .heightIn(max = maxHeight)
-                .floatingSurface(shape = PokyhShapes.xxl, elevation = PokyhElevation.level4)
-                .padding(PokyhSpacing.xl),
-            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+        Box(Modifier.padding(horizontal = PokyhSpacing.xl).fillMaxWidth()) {
+            StackLayer(visible = waiting >= 2, inset = PokyhSpacing.huge, top = 0.dp, alpha = 0.55f)
+            StackLayer(visible = waiting >= 1, inset = PokyhSpacing.xl, top = LayerPeek, alpha = 1f)
+
+            Column(
+                modifier = Modifier
+                    .padding(top = LayerPeek * 2)
+                    .fillMaxWidth()
+                    .heightIn(max = maxHeight)
+                    .floatingSurface(shape = PokyhShapes.xxl, elevation = PokyhElevation.level4)
+                    .padding(PokyhSpacing.xl),
+                verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
             ) {
-                Box(
-                    Modifier.size(44.dp).background(tone.fill, PokyhShapes.md),
-                    contentAlignment = Alignment.Center,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
                 ) {
-                    Icon(Icons.Rounded.Campaign, contentDescription = null, tint = tone.ink, modifier = Modifier.size(22.dp))
+                    Box(
+                        Modifier.size(44.dp).background(tone.fill, PokyhShapes.md),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Campaign, contentDescription = null, tint = tone.ink, modifier = Modifier.size(22.dp))
+                    }
+                    AnimatedContent(
+                        targetState = stack.index,
+                        transitionSpec = { stepTransition() },
+                        modifier = Modifier.weight(1f),
+                        label = "popupTitle",
+                    ) { i ->
+                        Text(stack.popups.getOrNull(i)?.title.orEmpty(), style = PokyhType.title2, color = colors.textPrimary)
+                    }
+                    PokyhIconButton(
+                        icon = PokyhIcons.close,
+                        contentDescription = "Schließen",
+                        onClick = onClose,
+                        tint = colors.textSecondary,
+                        tinted = true,
+                        size = 36.dp,
+                        iconSize = 18.dp,
+                    )
                 }
-                Text(popup.title, style = PokyhType.title2, color = colors.textPrimary)
+
+                AnimatedContent(
+                    targetState = stack.index,
+                    transitionSpec = { stepTransition() },
+                    modifier = Modifier.weight(1f, fill = false),
+                    label = "popupBody",
+                ) { i ->
+                    stack.popups.getOrNull(i)?.let { PopupHtml(html = it.html) }
+                }
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    // Equal weights on both sides keep the dots exactly centred.
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        if (stack.index > 0) {
+                            PokyhTextButton(text = "Zurück", onClick = onBack, icon = PokyhIcons.chevronLeft, color = colors.textSecondary)
+                        }
+                    }
+                    when {
+                        stack.popups.size > MAX_DOTS -> Text(
+                            "${stack.index + 1} / ${stack.popups.size}",
+                            style = PokyhType.footnote,
+                            color = colors.textSecondary,
+                        )
+                        stack.popups.size > 1 -> PopupDots(count = stack.popups.size, current = stack.index, onSelect = onSelect)
+                    }
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                        PokyhPrimaryButton(text = if (stack.isLast) "Fertig" else "Weiter", onClick = onNext, compact = true)
+                    }
+                }
             }
+        }
+    }
+}
 
-            PopupHtml(html = popup.html)
+/** Next slides in from the right, back from the left; the outgoing popup just fades. */
+private fun AnimatedContentTransitionScope<Int>.stepTransition(): ContentTransform {
+    val direction = if (targetState > initialState) 1 else -1
+    return (fadeIn(tween(PokyhMotion.durationStandard)) +
+        slideInHorizontally(tween(PokyhMotion.durationStandard)) { width -> direction * width / 14 }) togetherWith
+        fadeOut(tween(PokyhMotion.durationFast))
+}
 
-            PokyhPrimaryButton(
-                text = if (remaining > 0) "Weiter ($remaining)" else "Verstanden",
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth(),
+/** One of the waiting popups behind the card: narrower, in the card's quieter tone. */
+@Composable
+private fun BoxScope.StackLayer(visible: Boolean, inset: Dp, top: Dp, alpha: Float) {
+    val shown by animateFloatAsState(
+        targetValue = if (visible) alpha else 0f,
+        animationSpec = tween(PokyhMotion.durationStandard),
+        label = "stackLayer",
+    )
+    Box(
+        Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = top)
+            .padding(horizontal = inset)
+            .fillMaxWidth()
+            .height(PokyhSpacing.huge)
+            .alpha(shown)
+            .background(PokyhTheme.colors.cardAlt, PokyhShapes.xl),
+    )
+}
+
+/** One dot per popup; the current one stretches into an accent pill. Tapping a dot jumps there. */
+@Composable
+private fun PopupDots(count: Int, current: Int, onSelect: (Int) -> Unit) {
+    val colors = PokyhTheme.colors
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        repeat(count) { i ->
+            val active = i == current
+            val width by animateDpAsState(
+                targetValue = if (active) 22.dp else 7.dp,
+                animationSpec = tween(PokyhMotion.durationStandard),
+                label = "popupDotWidth",
             )
+            val color by animateColorAsState(
+                targetValue = if (active) Brand.accent else colors.textTertiary,
+                animationSpec = tween(PokyhMotion.durationStandard),
+                label = "popupDotColor",
+            )
+            Box(
+                Modifier
+                    .height(PokyhSpacing.xxxl)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Tab,
+                        onClick = { onSelect(i) },
+                    )
+                    .semantics {
+                        contentDescription = "Mitteilung ${i + 1} von $count"
+                        selected = active
+                    }
+                    .padding(horizontal = 3.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.size(width = width, height = 7.dp).background(color, PokyhShapes.pill))
+            }
         }
     }
 }
@@ -124,15 +273,14 @@ private fun AnnouncementPopupDialog(popup: ApiPopup, remaining: Int, onDismiss: 
  * internally once the card reaches its maximum height.
  */
 @Composable
-private fun ColumnScope.PopupHtml(html: String) {
+private fun PopupHtml(html: String, modifier: Modifier = Modifier) {
     val colors = PokyhTheme.colors
     val document = remember(html, colors.isDark) { popupDocument(html, colors.isDark) }
     // Not keyed on the document: the WebViewClient below captures this state once.
     val contentHeight = remember { mutableIntStateOf(0) }
 
     AndroidView(
-        modifier = Modifier
-            .weight(1f, fill = false)
+        modifier = modifier
             .fillMaxWidth()
             .height(if (contentHeight.intValue > 0) contentHeight.intValue.dp else 120.dp),
         factory = { context ->

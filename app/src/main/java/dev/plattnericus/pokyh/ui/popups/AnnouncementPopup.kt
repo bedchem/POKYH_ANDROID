@@ -10,6 +10,7 @@ import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -18,6 +19,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -31,6 +33,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material3.Icon
@@ -39,23 +42,33 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.plattnericus.pokyh.data.model.ApiPopup
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
@@ -69,31 +82,45 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.floatingSurface
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 /**
  * Hosts admin announcement popups for the signed-in app. Checks on every return to the
- * foreground (throttled in the ViewModel) and shows everything due as one stack.
+ * foreground (throttled in the ViewModel) and shows everything due as one stack — but only
+ * once the app has been signed in and on screen for [SETTLE_MS], so a popup never flashes past
+ * while the sign-in check or a redirect is still settling.
  */
 @Composable
 fun AnnouncementPopupHost(viewModel: AnnouncementPopupViewModel = hiltViewModel()) {
     val stack by viewModel.stack.collectAsStateWithLifecycle()
+    var settled by remember { mutableStateOf(false) }
 
     LifecycleStartEffect(Unit) {
         viewModel.check()
         onStopOrDispose { }
     }
+    LaunchedEffect(Unit) {
+        delay(SETTLE_MS)
+        settled = true
+    }
 
-    val current = stack.current ?: return
-    LaunchedEffect(current.id, current.revision) { viewModel.markShown(current) }
+    if (!settled || stack.current == null) return
 
     AnnouncementPopupDialog(
         stack = stack,
         onNext = viewModel::next,
         onBack = viewModel::back,
         onSelect = viewModel::goTo,
+        onViewed = viewModel::markViewed,
         onClose = viewModel::close,
     )
 }
+
+private const val SETTLE_MS = 1500L
+
+/** Every popup stays up at least this long before it can be closed or skipped. */
+private const val MIN_VIEW_MS = 3000L
 
 /** How far each waiting popup peeks out above the card. */
 private val LayerPeek = 9.dp
@@ -106,6 +133,10 @@ private const val MAX_DOTS = 7
  * backend-rendered content and a footer — "Zurück" on the left, one dot per popup in the
  * middle, "Weiter" (or "Fertig" on the last one) on the right. The popups still waiting peek
  * out above the card. Tone separates the layers — no outlines.
+ *
+ * Until a popup has been on screen for [MIN_VIEW_MS] a countdown ring sits where the X goes and
+ * nothing closes or skips it — not X, back, tapping outside, "Weiter"/"Fertig" or a later dot.
+ * Only time the app is actually in the foreground counts.
  */
 @Composable
 private fun AnnouncementPopupDialog(
@@ -113,16 +144,42 @@ private fun AnnouncementPopupDialog(
     onNext: () -> Unit,
     onBack: () -> Unit,
     onSelect: (Int) -> Unit,
+    onViewed: (ApiPopup) -> Unit,
     onClose: () -> Unit,
 ) {
     val colors = PokyhTheme.colors
     val tone = PokyhDecorative.periwinkle(colors.isDark)
     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.82f).dp
     val waiting = stack.popups.size - 1 - stack.index
+    val current = stack.current ?: return
+    val locked = stack.locked
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+
+    var elapsed by remember(popupKey(current)) { mutableLongStateOf(0L) }
+    LaunchedEffect(popupKey(current), locked) {
+        if (!locked) return@LaunchedEffect
+        var last = -1L
+        while (elapsed < MIN_VIEW_MS) {
+            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                lifecycle.currentStateFlow.first { it.isAtLeast(Lifecycle.State.RESUMED) }
+                last = -1L
+            }
+            withFrameMillis { now ->
+                // Capped so a stalled frame can't jump the countdown ahead.
+                if (last >= 0) elapsed = (elapsed + (now - last).coerceAtMost(100L)).coerceAtMost(MIN_VIEW_MS)
+                last = now
+            }
+        }
+        onViewed(current)
+    }
 
     Dialog(
         onDismissRequest = onClose,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !locked,
+            dismissOnClickOutside = !locked,
+        ),
     ) {
         Box(Modifier.padding(horizontal = PokyhSpacing.xl).fillMaxWidth()) {
             StackLayer(visible = waiting >= 2, inset = PokyhSpacing.huge, top = 0.dp, alpha = 0.55f)
@@ -155,15 +212,21 @@ private fun AnnouncementPopupDialog(
                     ) { i ->
                         Text(stack.popups.getOrNull(i)?.title.orEmpty(), style = PokyhType.title2, color = colors.textPrimary)
                     }
-                    PokyhIconButton(
-                        icon = PokyhIcons.close,
-                        contentDescription = "Schließen",
-                        onClick = onClose,
-                        tint = colors.textSecondary,
-                        tinted = true,
-                        size = 36.dp,
-                        iconSize = 18.dp,
-                    )
+                    Crossfade(targetState = locked, animationSpec = tween(PokyhMotion.durationFast), label = "popupClose") { isLocked ->
+                        if (isLocked) {
+                            CountdownRing(elapsedMs = elapsed, totalMs = MIN_VIEW_MS)
+                        } else {
+                            PokyhIconButton(
+                                icon = PokyhIcons.close,
+                                contentDescription = "Schließen",
+                                onClick = onClose,
+                                tint = colors.textSecondary,
+                                tinted = true,
+                                size = 36.dp,
+                                iconSize = 18.dp,
+                            )
+                        }
+                    }
                 }
 
                 AnimatedContent(
@@ -188,10 +251,20 @@ private fun AnnouncementPopupDialog(
                             style = PokyhType.footnote,
                             color = colors.textSecondary,
                         )
-                        stack.popups.size > 1 -> PopupDots(count = stack.popups.size, current = stack.index, onSelect = onSelect)
+                        stack.popups.size > 1 -> PopupDots(
+                            count = stack.popups.size,
+                            current = stack.index,
+                            canSelect = stack::canReach,
+                            onSelect = onSelect,
+                        )
                     }
                     Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                        PokyhPrimaryButton(text = if (stack.isLast) "Fertig" else "Weiter", onClick = onNext, compact = true)
+                        PokyhPrimaryButton(
+                            text = if (stack.isLast) "Fertig" else "Weiter",
+                            onClick = onNext,
+                            enabled = !locked,
+                            compact = true,
+                        )
                     }
                 }
             }
@@ -227,9 +300,38 @@ private fun BoxScope.StackLayer(visible: Boolean, inset: Dp, top: Dp, alpha: Flo
     )
 }
 
-/** One dot per popup; the current one stretches into an accent pill. Tapping a dot jumps there. */
+/**
+ * Where the X goes while a popup is locked: the seconds left inside a ring that drains with the
+ * remaining time.
+ */
 @Composable
-private fun PopupDots(count: Int, current: Int, onSelect: (Int) -> Unit) {
+private fun CountdownRing(elapsedMs: Long, totalMs: Long) {
+    val colors = PokyhTheme.colors
+    val seconds = ((totalMs - elapsedMs + 999) / 1000).toInt().coerceAtLeast(1)
+    val remaining = 1f - elapsedMs.toFloat() / totalMs
+    val track = colors.textTertiary.copy(alpha = 0.25f)
+    Box(
+        Modifier
+            .size(36.dp)
+            .background(colors.cardAlt, CircleShape)
+            .semantics { contentDescription = "Schließen in $seconds Sekunden möglich" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.matchParentSize().padding(3.dp)) {
+            val stroke = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+            drawArc(track, startAngle = 0f, sweepAngle = 360f, useCenter = false, style = stroke)
+            drawArc(Brand.accent, startAngle = -90f, sweepAngle = 360f * remaining, useCenter = false, style = stroke)
+        }
+        Text("$seconds", style = PokyhType.caption, fontWeight = FontWeight.Bold, color = colors.textPrimary)
+    }
+}
+
+/**
+ * One dot per popup; the current one stretches into an accent pill. Tapping a dot jumps there
+ * when [canSelect] allows it (not past a popup that is still counting down).
+ */
+@Composable
+private fun PopupDots(count: Int, current: Int, canSelect: (Int) -> Boolean, onSelect: (Int) -> Unit) {
     val colors = PokyhTheme.colors
     Row(verticalAlignment = Alignment.CenterVertically) {
         repeat(count) { i ->
@@ -250,6 +352,7 @@ private fun PopupDots(count: Int, current: Int, onSelect: (Int) -> Unit) {
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
+                        enabled = active || canSelect(i),
                         role = Role.Tab,
                         onClick = { onSelect(i) },
                     )

@@ -16,17 +16,38 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** The popups due right now, shown as one stack, and which of them is on screen. */
-data class PopupStack(val popups: List<ApiPopup> = emptyList(), val index: Int = 0) {
+/**
+ * The popups due right now, shown as one stack, which of them is on screen, and which have been
+ * on screen for the minimum viewing time ([viewed], by "id:revision").
+ */
+data class PopupStack(
+    val popups: List<ApiPopup> = emptyList(),
+    val index: Int = 0,
+    val viewed: Set<String> = emptySet(),
+) {
     val current: ApiPopup? get() = popups.getOrNull(index)
     val isLast: Boolean get() = index >= popups.lastIndex
+
+    /** The current popup hasn't been on screen long enough yet: no closing, no skipping ahead. */
+    val locked: Boolean get() = current?.let { popupKey(it) !in viewed } ?: false
+
+    /** Back is always allowed; forward only to viewed popups, or to the next one once unlocked. */
+    fun canReach(i: Int): Boolean {
+        if (i !in popups.indices || i == index) return false
+        return i < index || popupKey(popups[i]) in viewed || (i == index + 1 && !locked)
+    }
 }
+
+internal fun popupKey(p: ApiPopup) = "${p.id}:${p.revision}"
 
 /**
  * Admin announcement popups (backend `/popups/active`), shown as one stack: "Weiter" steps
- * through it, the last one says "Fertig". Closing (X, back, tap outside) closes the whole stack
- * and counts every popup in it as seen, so the ones skipped by closing don't return on the next
- * start or sign-in.
+ * through it, the last one says "Fertig". Every popup has to be on screen for a few seconds
+ * first (the countdown in [AnnouncementPopupDialog]); until then nothing closes or skips it.
+ * A popup counts as seen once it has been on screen that long — never just because it was
+ * composed, so one that flashed past during a sign-in check comes back. Closing (X, back, tap
+ * outside) closes the whole stack and counts every popup in it as seen, so the ones skipped by
+ * closing don't return on the next start or sign-in.
  *
  * The backend only filters by time window; "is it due on this device" is decided here, with the
  * same rule as the website (`pokyh-frontend/lib/popup-schedule.ts`): the window is split into
@@ -62,23 +83,29 @@ class AnnouncementPopupViewModel @Inject constructor(
         }
     }
 
-    /** Counts as seen the moment it is on screen, not when it is dismissed. */
-    fun markShown(popup: ApiPopup) = markSeen(listOf(popup))
+    /** The popup has been on screen for the minimum viewing time: unlock it and count it as seen. */
+    fun markViewed(popup: ApiPopup) {
+        _stack.update { s -> s.copy(viewed = s.viewed + popupKey(popup)) }
+        markSeen(listOf(popup))
+    }
 
     fun goTo(index: Int) {
-        _stack.update { s -> if (index in s.popups.indices) s.copy(index = index) else s }
+        _stack.update { s -> if (s.canReach(index)) s.copy(index = index) else s }
     }
 
     fun next() {
-        if (_stack.value.isLast) close() else goTo(_stack.value.index + 1)
+        val s = _stack.value
+        if (s.locked) return
+        if (s.isLast) close() else goTo(s.index + 1)
     }
 
     fun back() = goTo(_stack.value.index - 1)
 
     fun close() {
-        val popups = _stack.value.popups
+        val s = _stack.value
+        if (s.locked) return
         _stack.value = PopupStack()
-        markSeen(popups)
+        markSeen(s.popups)
     }
 
     private fun markSeen(popups: List<ApiPopup>) {
@@ -93,7 +120,7 @@ class AnnouncementPopupViewModel @Inject constructor(
         const val RECHECK_MS = 10 * 60 * 1000L
         const val PRUNE_AFTER_MS = 365L * 24 * 60 * 60 * 1000
 
-        fun keyOf(p: ApiPopup) = "${p.id}:${p.revision}"
+        fun keyOf(p: ApiPopup) = popupKey(p)
 
         fun parse(iso: String?): Long? = iso?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
 

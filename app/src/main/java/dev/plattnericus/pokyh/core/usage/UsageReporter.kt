@@ -11,6 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -21,8 +23,9 @@ import kotlinx.coroutines.launch
  *
  *  - Nur angemeldet; ohne POKYH-Konto wird nichts gesendet.
  *  - Pro Besuch eine zufällige ID, nur im Speicher — keine Geräte-ID, nichts auf der Platte.
- *  - Etwa einmal pro Minute im Vordergrund ein Ping mit den Vordergrund-Sekunden und den
- *    geöffneten Tabs seit dem letzten, und ein letzter beim Wechsel in den Hintergrund.
+ *  - Sofort beim Öffnen bzw. bei der Anmeldung, dann alle 30 Sekunden im Vordergrund ein Ping
+ *    mit den Vordergrund-Sekunden und den geöffneten Tabs seit dem letzten, und ein letzter
+ *    beim Wechsel in den Hintergrund.
  *  - War die App länger als 30 Minuten im Hintergrund, beginnt ein neuer Besuch.
  *
  * Alle Zustände werden nur auf dem Main-Thread angefasst ([scope] läuft dort).
@@ -49,6 +52,15 @@ class UsageReporter @Inject constructor(
         started = true
         scope.launch {
             appState.selectedTab.drop(1).collect { pendingScreens += 1 }
+        }
+        // Eine Anmeldung (oder ein Kontowechsel) im Vordergrund beginnt den Besuch sofort,
+        // nicht erst mit dem nächsten Ping — so erscheint sie gleich im Admin-Panel.
+        scope.launch {
+            combine(appState.phase, appState.session) { phase, session ->
+                if (phase == AppState.Phase.Authed) session?.stableUid?.takeIf { it.isNotBlank() } else null
+            }
+                .distinctUntilChanged()
+                .collect { uid -> if (uid != null && ticker != null && uid != visitUid) send() }
         }
     }
 
@@ -119,7 +131,7 @@ class UsageReporter @Inject constructor(
     }
 
     private companion object {
-        const val PING_INTERVAL_MS = 60_000L
+        const val PING_INTERVAL_MS = 30_000L
         const val NEW_VISIT_AFTER_MS = 30 * 60_000L
     }
 }

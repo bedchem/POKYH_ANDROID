@@ -131,9 +131,23 @@ fun PokyhApp(appState: AppState) {
         val updateState by updateViewModel.updater.state.collectAsStateWithLifecycle()
         UpdateDialogHost(updateViewModel)
 
+        // The privacy notice after a first sign-in, or "aktualisiert" (AppState.checkPrivacyNotice):
+        // a banner where the offline notice sits, which never shows at the same time — the
+        // check skips an offline session.
+        val privacyNotice by appState.privacyNotice.collectAsStateWithLifecycle()
+        if (phase == AppState.Phase.Authed && !showSuccessFlash) {
+            dev.plattnericus.pokyh.ui.privacy.PrivacyNoticeHost(
+                appState,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .systemBarsPadding()
+                    .padding(top = PokyhSpacing.sm),
+            )
+        }
+
         // Admin announcement popups (backend /popups/active). Held back while the sign-in
-        // check or the update prompt is on screen so they never stack.
-        if (phase == AppState.Phase.Authed && !showSuccessFlash && updateState == AppUpdater.State.Idle) {
+        // check, the privacy notice or the update prompt is on screen so they never stack.
+        if (phase == AppState.Phase.Authed && !showSuccessFlash && privacyNotice == null && updateState == AppUpdater.State.Idle) {
             dev.plattnericus.pokyh.ui.popups.AnnouncementPopupHost()
         }
 

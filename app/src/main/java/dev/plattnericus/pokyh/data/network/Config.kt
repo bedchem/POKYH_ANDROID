@@ -11,6 +11,10 @@ import dev.plattnericus.pokyh.BuildConfig
 object Config {
     val backendURL: String = BuildConfig.BACKEND_BASE_URL
 
+    /** The privacy notice's current version, from the website that holds its text (see
+     * AppState.checkPrivacyNotice). */
+    const val privacyNoticeURL = "https://pokyh.com/api/privacy-notice"
+
     val untisBase: String = BuildConfig.UNTIS_BASE_URL
     val school: String = BuildConfig.UNTIS_SCHOOL
     const val untisClient: String = "pockyh"
@@ -91,6 +95,10 @@ object Config {
 
         /** Heartbeat for the admin usage statistics (foreground time per visit). */
         const val usagePing = "/usage/ping"
+
+        /** Which privacy notice the account confirmed, and confirming the current one. */
+        const val privacyStatus = "/privacy/status"
+        const val privacyAcknowledge = "/privacy/acknowledge"
 
         /** Admin announcement popups live right now. The app is always signed in, hence
          * `audience=user`; which ones are actually due is decided on-device. */

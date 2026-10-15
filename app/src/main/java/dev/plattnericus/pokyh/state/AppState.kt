@@ -86,6 +86,10 @@ class AppState @Inject constructor(
     private val _session = MutableStateFlow<UserSession?>(null)
     val session: StateFlow<UserSession?> = _session.asStateFlow()
 
+    /** The privacy notice waiting to be confirmed (see [checkPrivacyNotice]). */
+    private val _privacyNotice = MutableStateFlow<PrivacyNoticePrompt?>(null)
+    val privacyNotice: StateFlow<PrivacyNoticePrompt?> = _privacyNotice.asStateFlow()
+
     private val _accounts = MutableStateFlow<List<SavedAccount>>(emptyList())
     val accounts: StateFlow<List<SavedAccount>> = _accounts.asStateFlow()
 
@@ -228,7 +232,7 @@ class AppState @Inject constructor(
         val stored = credentialStore.getCredentials(username)?.second
         // The verifier covers a signed-out account: its password is gone, the hash is not.
         val known = (stored != null && stored == password) || credentialStore.verifyOfflinePassword(username, password)
-        performLogin(username, password, save, allowOffline = known)
+        performLogin(username, password, save, allowOffline = known, fresh = true)
     }
 
     /** Re-login for an already-saved account (Face-ID unlock, silent relaunch) — races
@@ -262,7 +266,8 @@ class AppState @Inject constructor(
         loginSaved(target)
     }
 
-    private suspend fun performLogin(username: String, password: String, save: Boolean, allowOffline: Boolean = false) {
+    /** [fresh]: the password was just typed in, not taken from the store (a first sign-in). */
+    private suspend fun performLogin(username: String, password: String, save: Boolean, allowOffline: Boolean = false, fresh: Boolean = false) {
         // Started from the add-account/re-auth sheet? Then the sheet-dismiss sequencing in
         // [finalize] applies (Store.swift `viaSheet`).
         val viaSheet = _showAddAccount.value
@@ -281,7 +286,7 @@ class AppState @Inject constructor(
         if (snap == null) {
             // No offline candidate → just wait for the real answer, however long it takes.
             try {
-                finalize(loginDeferred.await(), save, password, viaSheet)
+                finalize(loginDeferred.await(), save, password, viaSheet, fresh)
             } catch (e: Throwable) {
                 // Say which of the two it was. “Keine Verbindung” on an account that simply
                 // has no stored copy yet reads as a bug in the app; the real answer is that
@@ -318,7 +323,7 @@ class AppState @Inject constructor(
             return
         }
         raced.fold(
-            onSuccess = { s -> finalize(s, save, password, viaSheet) },
+            onSuccess = { s -> finalize(s, save, password, viaSheet, fresh) },
             onFailure = { e ->
                 // Fast network failure (e.g. airplane mode) + cache → also go offline.
                 if (e.isNetworkError()) {
@@ -392,7 +397,7 @@ class AppState @Inject constructor(
     }
 
     /** Successful online login: persist account + offline snapshot, then swap in the session. */
-    private suspend fun finalize(s: UserSession, save: Boolean, password: String, viaSheet: Boolean) {
+    private suspend fun finalize(s: UserSession, save: Boolean, password: String, viaSheet: Boolean, fresh: Boolean) {
         if (save) {
             credentialStore.saveCredentials(s.username, password)
             upsertAccount(SavedAccount(username = s.username, displayName = s.klasseName.ifEmpty { s.username }, nickname = null, imageUrl = s.imageUrl))
@@ -418,6 +423,38 @@ class AppState @Inject constructor(
         _showAddAccount.value = false
         _isOffline.value = false
         onAuthenticated()
+        checkPrivacyNotice(fresh)
+    }
+
+    // ── Datenschutzerklärung ──────────────────────────────────────────────────
+    // PrivacyNotice.swift, the website's PrivacyGate: after a sign-in, an account that has not
+    // confirmed the current notice sees it — after a first sign-in as the notice, when it is
+    // already signed in as "aktualisiert". The current version comes from the website, which holds
+    // the text; the confirmation goes to the backend. Without network nothing is shown and nothing
+    // blocked; it comes back with the next sign-in.
+    private fun checkPrivacyNotice(fresh: Boolean) {
+        scope.launch {
+            val s = _session.value ?: return@launch
+            val token = s.apiToken ?: return@launch
+            if (_isOffline.value) return@launch
+            val notice = backendClient.currentPrivacyNotice() ?: return@launch
+            val acknowledged = backendClient.acknowledgedPrivacyVersion(token).getOrElse { return@launch }
+            if (acknowledged == notice.version || _session.value?.username != s.username) return@launch
+            _privacyNotice.value = PrivacyNoticePrompt(
+                kind = if (fresh) PrivacyNoticePrompt.Kind.First else PrivacyNoticePrompt.Kind.Updated,
+                version = notice.version,
+                username = s.username,
+            )
+        }
+    }
+
+    /** "Verstanden": recorded by the backend, then the notice closes. */
+    suspend fun acknowledgePrivacyNotice(): Boolean {
+        val notice = _privacyNotice.value ?: return false
+        val token = _session.value?.apiToken ?: return false
+        if (!backendClient.acknowledgePrivacy(notice.version, token)) return false
+        _privacyNotice.compareAndSet(notice, null)
+        return true
     }
 
     // ── Nach erfolgreichem Login: Benachrichtigungen einrichten ───────────────
@@ -568,6 +605,7 @@ class AppState @Inject constructor(
         // möglich" mark from going offline instead of waiting for the next screen to load.
         if (s.hasUntis) serviceHealth.reportOk(PokyhService.UNTIS)
         onAuthenticated()
+        checkPrivacyNotice(fresh = false)
     }
 
     // ── Offline helpers ──────────────────────────────────────────────────────

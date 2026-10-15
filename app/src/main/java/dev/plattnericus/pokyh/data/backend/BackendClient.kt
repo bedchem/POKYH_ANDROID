@@ -36,6 +36,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import okhttp3.Call
@@ -594,6 +597,30 @@ class BackendClient @Inject constructor(
         }
         runCatching { request(Config.Routes.usagePing, method = "POST", token = token, jsonBody = payload.toString()) }
     }
+
+    // ── Datenschutzerklärung (siehe AppState.checkPrivacyNotice) ─────────────
+
+    data class PrivacyNotice(val version: String)
+
+    /** Die aktuelle Version von der Website, die den Text hält. `null` ohne Netz. */
+    suspend fun currentPrivacyNotice(): PrivacyNotice? = runCatching {
+        execute(Request.Builder().url(Config.privacyNoticeURL).build()).use { resp ->
+            if (!resp.isSuccessful) return@use null
+            val body = json.parseToJsonElement(resp.body?.string().orEmpty()).jsonObject
+            val version = body["version"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return@use null
+            PrivacyNotice(version)
+        }
+    }.getOrNull()
+
+    /** Welche Fassung dieses Konto bestätigt hat (`null`: noch keine). Fehlschlag ohne Antwort. */
+    suspend fun acknowledgedPrivacyVersion(token: String): Result<String?> = runCatching {
+        json.parseToJsonElement(request(Config.Routes.privacyStatus, token = token))
+            .jsonObject["acknowledgedVersion"]?.jsonPrimitive?.contentOrNull
+    }
+
+    suspend fun acknowledgePrivacy(version: String, token: String): Boolean = runCatching {
+        request(Config.Routes.privacyAcknowledge, method = "POST", token = token, jsonBody = buildJsonObject { put("version", version) }.toString())
+    }.isSuccess
 
     // ── Popups (Admin-Mitteilungen) ─────────────────────────────────────────
 

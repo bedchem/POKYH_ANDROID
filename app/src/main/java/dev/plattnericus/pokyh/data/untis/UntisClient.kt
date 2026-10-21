@@ -890,10 +890,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
         return arr.map { m ->
             val sender = m["sender"]
-            val recipientLabel = m["recipients"].array
-                .mapNotNull { it["displayName"].string ?: it["name"].string }
-                .filter { it.isNotEmpty() }
-                .joinToString(", ")
+            val recipientLabel = recipientNames(m)
             val senderName = sender["displayName"].string
                 ?: sender["name"].string
                 ?: m["senderName"].string
@@ -913,6 +910,21 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         }
     }
 
+    /**
+     * Names a sent message went to, comma-joined. WebUntis lists them as `recipientPersons` /
+     * `recipientGroups` (as in drafts); `recipients` / `recipient` cover older response shapes.
+     */
+    private fun recipientNames(m: JsonDyn): String =
+        (m["recipientPersons"].array + m["recipientGroups"].array + m["recipients"].array +
+            listOfNotNull(m["recipient"].takeIf { it.exists }))
+            .mapNotNull { r ->
+                r.string ?: r["displayName"].string ?: r["name"].string ?: r["longName"].string ?: r["fullName"].string
+            }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .joinToString(", ")
+
     suspend fun messageDetail(session: UserSession, id: Int): MessageDetail {
         val url = "${Config.untisBase}${Config.Routes.messageDetail(id)}"
         val (body, resp) = get(url, session)
@@ -920,7 +932,9 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         if (resp.code != 200) throw AppError("Nachricht nicht ladbar (HTTP ${resp.code}).")
         val m = JsonDyn.parse(body)
         val sender = m["sender"]
-        val senderName = sender["displayName"].string ?: sender["name"].string ?: m["senderName"].string ?: "Unbekannt"
+        val senderName = sender["displayName"].string ?: sender["name"].string ?: m["senderName"].string
+            ?: recipientNames(m).takeIf { it.isNotEmpty() }?.let { "An: $it" }
+            ?: "Unbekannt"
         val attachments = parseAttachments(m)
         return MessageDetail(
             id = m["id"].int ?: id,

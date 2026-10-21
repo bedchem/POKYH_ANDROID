@@ -99,6 +99,12 @@ class SecureCredentialStore @Inject constructor(
         if (!verifierPrefs.contains(key)) saveOfflineVerifier(key, password)
     }
 
+    /** The WebUntis password was changed in the app: the offline check follows it, whether or not
+     * the password itself is stored. */
+    suspend fun replaceOfflineVerifier(username: String, password: String) = withContext(Dispatchers.IO) {
+        saveOfflineVerifier(normalize(username), password)
+    }
+
     suspend fun deleteOfflineVerifier(username: String) = withContext(Dispatchers.IO) {
         verifierPrefs.edit().remove(normalize(username)).apply()
     }

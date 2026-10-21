@@ -99,6 +99,7 @@ private const val SUPPORT_EMAIL = "contact@pokyh.com"
 fun ProfileScreen(
     onNavigateUp: () -> Unit,
     onConnectionStatus: () -> Unit,
+    onOpenStats: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -125,6 +126,7 @@ fun ProfileScreen(
     var accountToRemove by remember { mutableStateOf<SavedAccount?>(null) }
     var renameTarget by remember { mutableStateOf<SavedAccount?>(null) }
     var renameText by remember { mutableStateOf("") }
+    var changingPassword by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -147,8 +149,12 @@ fun ProfileScreen(
                         session = session!!,
                         backendStatus = backendStatus,
                         onOpenConnectionStatus = onConnectionStatus,
+                        onChangePassword = { changingPassword = true },
                         modifier = Modifier.fadeIn(delayMillis = 30),
                     )
+                }
+                item(key = "aktivitaet") {
+                    ActivitySection(viewModel = viewModel, onOpenStats = onOpenStats, modifier = Modifier.fadeIn(delayMillis = 45))
                 }
             }
             item(key = "darstellung") {
@@ -383,6 +389,10 @@ fun ProfileScreen(
             onConfirm = viewModel::dismissSwitchError,
         )
     }
+
+    if (changingPassword) {
+        ChangePasswordSheet(viewModel = viewModel, onDismiss = { changingPassword = false })
+    }
 }
 
 /**
@@ -507,6 +517,7 @@ private fun KontoSection(
     session: UserSession,
     backendStatus: BackendStatus,
     onOpenConnectionStatus: () -> Unit,
+    onChangePassword: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     PokyhSection(title = "Konto", modifier = modifier) {
@@ -533,6 +544,15 @@ private fun KontoSection(
                 leading = { RowGlyph(PokyhIcons.school) },
                 showChevron = false,
             )
+            if (session.hasUntis) {
+                PokyhRowSeparator()
+                PokyhRow(
+                    title = "Passwort ändern",
+                    subtitle = "WebUntis",
+                    leading = { RowGlyph(PokyhIcons.password) },
+                    onClick = onChangePassword,
+                )
+            }
             PokyhRowSeparator()
             PokyhRow(
                 title = "POKYH-Konto",

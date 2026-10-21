@@ -210,3 +210,61 @@ data class ApiPopup(
 
 @Serializable
 data class ApiPopupsResponse(val popups: List<ApiPopup> = emptyList())
+
+// ── Aktivität / Statistiken (GET /users/me/activity) ────────────────────
+
+/** One day of the account's activity: online at all, sign-ins and, with consent, time in POKYH. */
+@Serializable
+data class ApiActivityDay(
+    val date: String, // YYYY-MM-DD
+    val active: Boolean = false,
+    val logins: Int = 0,
+    val activeSeconds: Int = 0,
+    val visits: Int = 0,
+    val screens: Int = 0,
+)
+
+@Serializable
+data class ApiActivityTotals(
+    val activeDays: Int = 0,
+    val logins: Int = 0,
+    val activeSeconds: Long = 0,
+    val visits: Int = 0,
+    val screens: Int = 0,
+    val currentStreak: Int = 0,
+    val longestStreak: Int = 0,
+)
+
+@Serializable
+data class ApiActivityPlatforms(val phone: Int = 0, val desktop: Int = 0, val app: Int = 0, val web: Int = 0)
+
+@Serializable
+data class ApiActivityPage(val page: String, val views: Int = 0)
+
+@Serializable
+data class ApiActivityCreated(
+    val todosDone: Int = 0,
+    val todosOpen: Int = 0,
+    val reminders: Int = 0,
+    val comments: Int = 0,
+    val ratings: Int = 0,
+)
+
+/**
+ * The account's own activity, as the POKYH server already keeps it (pokyh-backend
+ * services/accountActivity.ts): active days and sign-ins from its logs and, only with consent to
+ * the personal usage statistics, the time spent. Nothing is measured on the device for this.
+ */
+@Serializable
+data class ApiAccountActivity(
+    val today: String = "",
+    val usageConsent: Boolean = false,
+    val memberSince: String? = null,
+    val days: List<ApiActivityDay> = emptyList(),
+    val totals: ApiActivityTotals = ApiActivityTotals(),
+    val weekdays: List<Int> = emptyList(),
+    val hours: List<Int> = emptyList(),
+    val platforms: ApiActivityPlatforms = ApiActivityPlatforms(),
+    val pages: List<ApiActivityPage> = emptyList(),
+    val created: ApiActivityCreated = ApiActivityCreated(),
+)

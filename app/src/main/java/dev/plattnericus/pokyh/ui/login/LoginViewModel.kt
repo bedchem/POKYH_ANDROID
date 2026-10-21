@@ -8,10 +8,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.plattnericus.pokyh.data.model.AppError
+import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -36,8 +40,36 @@ data class LoginUiState(
 @HiltViewModel
 class LoginViewModel @Inject constructor(
     private val appState: AppState,
+    private val untisClient: UntisClient,
     @ApplicationContext context: Context,
 ) : ViewModel() {
+
+    // ── Passwort vergessen ──────────────────────────────────────────────────
+
+    data class ResetState(val sending: Boolean = false, val error: String? = null, val sent: Boolean = false)
+
+    private val _reset = MutableStateFlow(ResetState())
+    val reset: StateFlow<ResetState> = _reset.asStateFlow()
+
+    fun resetResetState() {
+        _reset.value = ResetState()
+    }
+
+    /** WebUntis e-mails a reset link to the address stored for the account (UntisClient.requestPasswordReset). */
+    fun requestPasswordReset(username: String, email: String) {
+        if (_reset.value.sending) return
+        _reset.value = ResetState(sending = true)
+        viewModelScope.launch {
+            _reset.value = try {
+                untisClient.requestPasswordReset(username, email)
+                ResetState(sent = true)
+            } catch (e: AppError) {
+                ResetState(error = e.message)
+            } catch (e: Exception) {
+                ResetState(error = "WebUntis ist gerade nicht erreichbar.")
+            }
+        }
+    }
 
     /** LoginView.swift `app.biometricAvailable` — gates the "Mit Biometrie speichern" toggle. */
     val biometricAvailable: Boolean = BiometricManager.from(context)

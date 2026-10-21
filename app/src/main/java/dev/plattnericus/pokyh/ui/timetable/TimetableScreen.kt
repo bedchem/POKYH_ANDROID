@@ -269,12 +269,15 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
         }
         val date = slot.display.date
         val schoolYear = if ((date / 100) % 100 >= 9) date / 10000 else date / 10000 - 1
+        val lessonDetail by viewModel.lessonDetail.collectAsStateWithLifecycle()
         LessonDetailSheet(
             slot = slot,
             imageUrl = imageUrl,
             imageHeader = viewModel.subjectImageHeaders(),
             onDismiss = viewModel::dismissDetail,
             absences = absences[schoolYear].orEmpty(),
+            detailLoading = lessonDetail.loading,
+            detail = lessonDetail.detail,
         )
     }
 }

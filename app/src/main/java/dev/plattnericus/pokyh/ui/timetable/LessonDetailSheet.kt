@@ -21,8 +21,12 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -41,6 +45,7 @@ import coil3.request.ImageRequest
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.core.util.SchoolDates
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
+import dev.plattnericus.pokyh.data.model.LessonDetail
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.untis.AbsenceMark
 import dev.plattnericus.pokyh.data.untis.AbsenceMarks
@@ -53,6 +58,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhFittedText
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhRowSeparator
+import dev.plattnericus.pokyh.ui.components.SkeletonBlock
 import dev.plattnericus.pokyh.ui.components.TagChip
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
@@ -83,6 +89,10 @@ import kotlinx.coroutines.launch
  *
  * `skipPartiallyExpanded = false` so it can rest at a medium height instead of jumping to full —
  * the content is short, and a half sheet keeps the timetable visible behind it.
+ *
+ * What only the lesson's detail knows (classes, group, lesson texts, homework) comes from WebUntis
+ * separately ([detail], loaded by the view model when the lesson opens). Everything below the hero
+ * waits for it, at most [DetailWaitMillis], so the sheet fills in once instead of row by row.
  */
 @Composable
 fun LessonDetailSheet(
@@ -91,6 +101,8 @@ fun LessonDetailSheet(
     imageHeader: Pair<String, String>,
     onDismiss: () -> Unit,
     absences: List<AbsenceEntry> = emptyList(),
+    detailLoading: Boolean = false,
+    detail: LessonDetail? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
@@ -106,9 +118,20 @@ fun LessonDetailSheet(
         shape = PokyhShapes.topXxl,
         dragHandle = { SheetHandle() },
     ) {
-        LessonDetailContent(slot = slot, imageUrl = imageUrl, imageHeader = imageHeader, absences = absences, onClose = ::dismiss)
+        LessonDetailContent(
+            slot = slot,
+            imageUrl = imageUrl,
+            imageHeader = imageHeader,
+            absences = absences,
+            detailLoading = detailLoading,
+            detail = detail,
+            onClose = ::dismiss,
+        )
     }
 }
+
+/** How long the part below the hero waits for the lesson's detail before it shows what the timetable knows. */
+private const val DetailWaitMillis = 3500L
 
 /** A slim pill — the image now sits inside a card below it, so the handle has plain canvas to
  * sit on and no longer has to be hidden. */
@@ -128,6 +151,8 @@ private fun LessonDetailContent(
     imageUrl: String?,
     imageHeader: Pair<String, String>,
     absences: List<AbsenceEntry>,
+    detailLoading: Boolean,
+    detail: LessonDetail?,
     onClose: () -> Unit,
 ) {
     val colors = PokyhTheme.colors
@@ -135,6 +160,12 @@ private fun LessonDetailContent(
     val isDark = colors.isDark
     val tone = remember(slot.id, isDark) { detailTone(slot, isDark) }
     val headerName = headerNameFor(slot)
+    var waited by remember(slot.id) { mutableStateOf(false) }
+    LaunchedEffect(slot.id) {
+        kotlinx.coroutines.delay(DetailWaitMillis)
+        waited = true
+    }
+    val ready = !detailLoading || waited
 
     Column(
         modifier = Modifier
@@ -186,16 +217,60 @@ private fun LessonDetailContent(
                 )
             }
         }
-        DetailsCard(detailEntryFor(slot), tone)
+        if (!ready) {
+            DetailSkeleton(tone)
+            return@Column
+        }
+        DetailsCard(detailEntryFor(slot), tone, classes = detail?.classes.orEmpty(), group = detail?.group.orEmpty())
         absence?.let { AbsenceCard(it, tone) }
         slot.replacement?.let { InsteadCard(it) }
-        // Every free-text field WebUntis can attach to a period, each under its own heading.
+        // Every free-text field WebUntis can attach to a period, each under its own heading, each
+        // text once: the timetable's own first, then what the lesson's detail adds.
         // `note` and `lessonText` are different things and a server may send either or both;
         // folding them into one card meant whichever lost the coin toss was never shown.
-        d.note?.takeIf { it.isNotBlank() }?.let { SectionCard("Notiz", it) }
-        d.lessonText?.takeIf { it.isNotBlank() && it != d.note }?.let { SectionCard("Stundentext", it) }
-        d.substitutionText?.takeIf { it.isNotBlank() }?.let { SectionCard("Vertretungstext", it) }
-        if (d.isExam) d.examDescription?.takeIf { it.isNotEmpty() }?.let { SectionCard("Prüfungsinhalt", it) }
+        val notes = mutableListOf<Pair<String, String>>()
+        fun addNote(label: String, text: String?) {
+            val v = text?.trim().orEmpty()
+            if (v.isNotEmpty() && notes.none { sameText(it.second, v) }) notes += label to v
+        }
+        addNote("Notiz", d.note)
+        addNote("Stundentext", d.lessonText)
+        addNote("Vertretungstext", d.substitutionText)
+        detail?.texts?.forEach { (label, text) -> addNote(label, text) }
+        if (d.isExam) {
+            val exam = listOfNotNull(detail?.examName, d.examDescription ?: detail?.examDescription)
+                .filter { it.isNotBlank() }.distinct().joinToString("\n")
+            if (exam.isNotEmpty()) SectionCard("Prüfungsinhalt", exam)
+        }
+        notes.forEach { (label, text) -> SectionCard(label, text) }
+        detail?.homeworks?.takeIf { it.isNotEmpty() }?.let { SectionCard("Hausaufgaben", it.joinToString("\n\n")) }
+    }
+}
+
+/** The same text once, whichever field it came from. */
+private fun sameText(a: String, b: String): Boolean =
+    a.replace(Regex("\\s+"), " ").trim().equals(b.replace(Regex("\\s+"), " ").trim(), ignoreCase = true)
+
+/** Stands in for the part below the hero while the lesson's detail is on its way. */
+@Composable
+private fun DetailSkeleton(tone: SubjectTone) {
+    PokyhCard(padding = 0.dp) {
+        repeat(2) { i ->
+            if (i > 0) PokyhRowSeparator(startInset = DetailTextInset)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PokyhSpacing.card, vertical = PokyhSpacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
+            ) {
+                Box(Modifier.size(DetailTileSize).background(tone.fill.copy(alpha = 0.6f), PokyhShapes.sm))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+                    SkeletonBlock(height = 9.dp, width = 64.dp)
+                    SkeletonBlock(height = 14.dp, width = if (i == 0) 150.dp else 90.dp)
+                }
+            }
+        }
     }
 }
 
@@ -413,7 +488,7 @@ private fun AbsenceCard(absence: LessonAbsence, tone: SubjectTone) {
 }
 
 @Composable
-private fun DetailsCard(d: TimetableEntry, tone: SubjectTone) {
+private fun DetailsCard(d: TimetableEntry, tone: SubjectTone, classes: List<String> = emptyList(), group: String = "") {
     val teacher = d.teacherLongName ?: d.teacherName
     val origTeacher = d.originalTeacherLong ?: (d.originalTeacher ?: "")
     val room = d.roomName
@@ -421,23 +496,35 @@ private fun DetailsCard(d: TimetableEntry, tone: SubjectTone) {
 
     val hasTeacher = teacher.isNotEmpty() || origTeacher.isNotEmpty()
     val hasRoom = room.isNotEmpty() || origRoom.isNotEmpty()
-    if (!hasTeacher && !hasRoom) return
+    if (!hasTeacher && !hasRoom && classes.isEmpty() && group.isEmpty()) return
+
+    // Which rows are there, so each one after the first gets its hairline.
+    val shown = listOf(hasTeacher, hasRoom, classes.isNotEmpty(), group.isNotEmpty())
+    fun afterFirst(row: Int) = shown.take(row).any { it }
 
     PokyhCard(padding = 0.dp) {
         if (hasTeacher) {
             if (origTeacher.isNotEmpty() && origTeacher != teacher) {
-                ChangeRow("Lehrer", origTeacher, teacher, PokyhIcons.person, tone)
+                ChangeRow("Lehrkraft", origTeacher, teacher, PokyhIcons.person, tone)
             } else {
-                DetailRow("Lehrer", teacher.ifEmpty { origTeacher }, PokyhIcons.person, tone)
+                DetailRow("Lehrkraft", teacher.ifEmpty { origTeacher }, PokyhIcons.person, tone)
             }
         }
-        if (hasTeacher && hasRoom) PokyhRowSeparator(startInset = DetailTextInset)
         if (hasRoom) {
+            if (afterFirst(1)) PokyhRowSeparator(startInset = DetailTextInset)
             if (origRoom.isNotEmpty() && origRoom != room) {
                 ChangeRow("Raum", origRoom, room, PokyhIcons.room, tone)
             } else {
                 DetailRow("Raum", room.ifEmpty { origRoom }, PokyhIcons.room, tone)
             }
+        }
+        if (classes.isNotEmpty()) {
+            if (afterFirst(2)) PokyhRowSeparator(startInset = DetailTextInset)
+            DetailRow("Klassen", classes.joinToString(", "), PokyhIcons.classMembers, tone)
+        }
+        if (group.isNotEmpty()) {
+            if (afterFirst(3)) PokyhRowSeparator(startInset = DetailTextInset)
+            DetailRow("Gruppe", group, PokyhIcons.classMembers, tone)
         }
     }
 }

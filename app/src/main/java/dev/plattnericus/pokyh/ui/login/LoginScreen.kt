@@ -50,6 +50,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.ui.components.PokyhMark
 import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
+import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextField
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TopBarNav
@@ -89,6 +90,7 @@ fun LoginScreen(
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var saveCredentials by rememberSaveable { mutableStateOf(true) }
+    var resettingPassword by rememberSaveable { mutableStateOf(false) }
     val passwordFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
 
@@ -240,6 +242,11 @@ fun LoginScreen(
                         loading = uiState.busy,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    PokyhTextButton(
+                        text = "Passwort vergessen?",
+                        onClick = { resettingPassword = true },
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
                 }
 
                 Spacer(Modifier.height(PokyhSpacing.xxl))
@@ -271,6 +278,10 @@ fun LoginScreen(
                 Spacer(Modifier.height(PokyhSpacing.huge))
             }
         }
+    }
+
+    if (resettingPassword) {
+        PasswordResetSheet(viewModel = viewModel, initialUsername = username, onDismiss = { resettingPassword = false })
     }
 }
 

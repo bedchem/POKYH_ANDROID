@@ -431,7 +431,9 @@ class AppState @Inject constructor(
     // confirmed the current notice sees it — after a first sign-in as the notice, when it is
     // already signed in as "aktualisiert". The current version comes from the website, which holds
     // the text; the confirmation goes to the backend. Without network nothing is shown and nothing
-    // blocked; it comes back with the next sign-in.
+    // blocked; it comes back with the next sign-in. Versions sort as text (date, then tag): a newer
+    // version confirmed elsewhere (beta.pokyh.com can be ahead of pokyh.com) covers this one, so
+    // the app and the website never ask again after each other.
     private fun checkPrivacyNotice(fresh: Boolean) {
         scope.launch {
             val s = _session.value ?: return@launch
@@ -439,7 +441,8 @@ class AppState @Inject constructor(
             if (_isOffline.value) return@launch
             val notice = backendClient.currentPrivacyNotice() ?: return@launch
             val acknowledged = backendClient.acknowledgedPrivacyVersion(token).getOrElse { return@launch }
-            if (acknowledged == notice.version || _session.value?.username != s.username) return@launch
+            val covered = acknowledged != null && acknowledged >= notice.version
+            if (covered || _session.value?.username != s.username) return@launch
             _privacyNotice.value = PrivacyNoticePrompt(
                 kind = if (fresh) PrivacyNoticePrompt.Kind.First else PrivacyNoticePrompt.Kind.Updated,
                 version = notice.version,

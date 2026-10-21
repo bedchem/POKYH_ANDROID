@@ -10,7 +10,9 @@ import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.ApiClass
 import dev.plattnericus.pokyh.data.model.AppError
+import dev.plattnericus.pokyh.data.model.ClassService
 import dev.plattnericus.pokyh.data.model.ClassregEvent
+import dev.plattnericus.pokyh.data.model.HomeworkItem
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
@@ -162,6 +164,29 @@ class ClassViewModel @Inject constructor(
                 }
                 val thisWeekJob = weekJob(thisMonday)
                 val nextWeekJob = weekJob(nextMonday)
+                val servicesJob = async {
+                    runCatching {
+                        offlineStore.load(
+                            "classservices-$studentId-$schoolYear",
+                            ListSerializer(ClassService.serializer()),
+                        ) { untisClient.classServices(session) }.value
+                    }.getOrNull()
+                }
+                // Homework due in this and next week, one request for both.
+                val homeworkJob = async {
+                    runCatching {
+                        offlineStore.load(
+                            "homework-$studentId-$thisMonday",
+                            ListSerializer(HomeworkItem.serializer()),
+                        ) {
+                            untisClient.homeworks(
+                                session,
+                                thisMonday.toYyyyMMdd(),
+                                weekAfter.plus(-1, DateTimeUnit.DAY).toYyyyMMdd(),
+                            )
+                        }.value
+                    }.getOrNull()
+                }
 
                 val eventsResult = eventsJob.await()
                 val events = eventsResult.orEmpty()
@@ -181,16 +206,28 @@ class ClassViewModel @Inject constructor(
                     .distinctBy { it.date to it.startTime to it.subjectName }
                     .sortedWith(compareBy({ it.date }, { it.startTime }))
 
+                val services = servicesJob.await()
+                val homework = homeworkJob.await()
+                // Open homework only, soonest first (as on the web).
+                val openHomework = homework.orEmpty().filter { !it.completed && it.dueDate > 0 }.sortedBy { it.dueDate }
+                fun homeworkIn(fromInclusive: Int, toExclusive: Int) =
+                    openHomework.filter { it.dueDate >= fromInclusive && it.dueDate < toExclusive }
+
                 ClassOverview(
                     loading = false,
                     recentEvents = events,
                     openAbsences = openAbsences,
                     examsThisWeek = examsIn(thisWeek.orEmpty(), thisMonday.toYyyyMMdd(), nextMonday.toYyyyMMdd()),
                     examsNextWeek = examsIn(nextWeek.orEmpty(), nextMonday.toYyyyMMdd(), weekAfter.toYyyyMMdd()),
+                    classServices = services.orEmpty(),
+                    homeworkThisWeek = homeworkIn(thisMonday.toYyyyMMdd(), nextMonday.toYyyyMMdd()),
+                    homeworkNextWeek = homeworkIn(nextMonday.toYyyyMMdd(), weekAfter.toYyyyMMdd()),
                     eventsUnknown = eventsResult == null,
                     absencesUnknown = absencesResult == null,
                     thisWeekUnknown = thisWeek == null,
                     nextWeekUnknown = nextWeek == null,
+                    servicesUnknown = services == null,
+                    homeworkUnknown = homework == null,
                 )
             }
             _overview.value = result
@@ -199,13 +236,9 @@ class ClassViewModel @Inject constructor(
 }
 
 /**
- * The WebUntis-sourced part of the Klasse screen.
- *
- * Klassendienste and Hausaufgaben are on the screen as sections but have no fields here: this
- * app's [UntisClient] has no endpoint for either yet (the web frontend reads WebUntis'
- * `classreg/duties` and `homework` routes, which aren't ported). Their sections therefore always
- * render their empty state — deliberately present so the screen matches the web's shape, and so
- * wiring them up later is a data change rather than a layout change.
+ * The WebUntis-sourced part of the Klasse screen, the same parts as the web frontend's class
+ * page: class-register entries, open absences, Klassendienste (`classreg/classservices`), and the
+ * exams and open homework (`homeworks/lessons`) of this and next week.
  */
 data class ClassOverview(
     val loading: Boolean = false,
@@ -213,9 +246,14 @@ data class ClassOverview(
     val openAbsences: List<AbsenceEntry> = emptyList(),
     val examsThisWeek: List<TimetableEntry> = emptyList(),
     val examsNextWeek: List<TimetableEntry> = emptyList(),
+    val classServices: List<ClassService> = emptyList(),
+    val homeworkThisWeek: List<HomeworkItem> = emptyList(),
+    val homeworkNextWeek: List<HomeworkItem> = emptyList(),
     /** The source could not be loaded and nothing is stored — an empty list here is unknown. */
     val eventsUnknown: Boolean = false,
     val absencesUnknown: Boolean = false,
     val thisWeekUnknown: Boolean = false,
     val nextWeekUnknown: Boolean = false,
+    val servicesUnknown: Boolean = false,
+    val homeworkUnknown: Boolean = false,
 )

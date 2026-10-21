@@ -173,17 +173,21 @@ fun PokyhNavHost(
         }
         composable(PokyhDestinations.MESSAGES) {
             dev.plattnericus.pokyh.ui.messages.MessagesScreen(
-                onMessageClick = { id -> navController.navigate(PokyhDestinations.messageDetail(id)) },
+                onMessageClick = { id, reply -> navController.navigate(PokyhDestinations.messageDetail(id, reply)) },
                 onNavigateBack = { navController.popBackStack() },
             )
         }
         composable(
             route = PokyhDestinations.MESSAGE_DETAIL,
-            arguments = listOf(navArgument("id") { type = NavType.IntType }),
+            arguments = listOf(
+                navArgument("id") { type = NavType.IntType },
+                navArgument("reply") { type = NavType.BoolType; defaultValue = false },
+            ),
         ) { entry ->
             val id = entry.arguments?.getInt("id") ?: 0
             dev.plattnericus.pokyh.ui.messages.MessageDetailScreen(
                 id = id,
+                canReply = entry.arguments?.getBoolean("reply") ?: false,
                 onNavigateBack = { navController.popBackStack() },
             )
         }
@@ -202,6 +206,12 @@ fun PokyhNavHost(
             dev.plattnericus.pokyh.ui.profile.ProfileScreen(
                 onNavigateUp = { navController.popBackStack() },
                 onConnectionStatus = { navController.navigate(PokyhDestinations.CONNECTION_STATUS) },
+                onOpenStats = { navController.navigate(PokyhDestinations.PROFILE_STATS) },
+            )
+        }
+        composable(PokyhDestinations.PROFILE_STATS) {
+            dev.plattnericus.pokyh.ui.profile.StatsScreen(
+                onNavigateBack = { navController.popBackStack() },
             )
         }
         composable(PokyhDestinations.CONNECTION_STATUS) {

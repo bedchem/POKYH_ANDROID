@@ -48,7 +48,9 @@ import dev.plattnericus.pokyh.core.util.toLocalDate
 import kotlinx.datetime.isoDayNumber
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.ApiClassMember
+import dev.plattnericus.pokyh.data.model.ClassService
 import dev.plattnericus.pokyh.data.model.ClassregEvent
+import dev.plattnericus.pokyh.data.model.HomeworkItem
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.ui.components.BackendUnavailableView
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
@@ -90,9 +92,6 @@ private val MonthsShort = listOf(
  * Every section renders even when it has nothing to show — the empty line is the content. That's
  * intentional: a class page that hides its empty halves changes shape week to week, and you
  * can't tell "nothing due" from "didn't load".
- *
- * Klassendienste and Hausaufgaben have no data source in this app yet (see [ClassOverview]), so
- * they always show their empty state.
  */
 @Composable
 fun ClassScreen(
@@ -164,10 +163,10 @@ fun ClassScreen(
             // ── 3. Klassendienste ───────────────────────────────────────────
             OverviewSection(
                 title = "Klassendienste",
-                emptyText = "Keine Klassendienste eingetragen",
-                items = emptyList<Unit>(),
+                emptyText = if (overview.servicesUnknown) OFFLINE_NOT_STORED else "Keine Klassendienste eingetragen",
+                items = overview.classServices,
                 modifier = Modifier.fadeIn(80),
-            ) {}
+            ) { service -> ClassServiceRow(service) }
 
             // ── 4. Prüfungen ────────────────────────────────────────────────
             WeekSplitSection(
@@ -187,13 +186,13 @@ fun ClassScreen(
             // ── 5. Hausaufgaben ─────────────────────────────────────────────
             WeekSplitSection(
                 title = "Hausaufgaben",
-                thisWeekEmpty = "Keine Hausaufgaben diese Woche",
-                nextWeekEmpty = "Keine Hausaufgaben nächste Woche",
-                bothEmpty = "Keine Hausaufgaben in Zukunft",
-                thisWeek = emptyList<Unit>(),
-                nextWeek = emptyList<Unit>(),
+                thisWeekEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else "Keine Hausaufgaben diese Woche",
+                nextWeekEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else "Keine Hausaufgaben nächste Woche",
+                bothEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else "Keine Hausaufgaben in Zukunft",
+                thisWeek = overview.homeworkThisWeek,
+                nextWeek = overview.homeworkNextWeek,
                 modifier = Modifier.fadeIn(160),
-            ) {}
+            ) { homework -> HomeworkRow(homework) }
 
             // ── 6. Klasse & Mitglieder ──────────────────────────────────────
             when {
@@ -461,6 +460,69 @@ private fun ExamRow(exam: TimetableEntry) {
             }
         }
         TagChip(text = "Prüfung", color = Brand.warning)
+    }
+}
+
+/** Who holds which class duty, with the person's initials. */
+@Composable
+private fun ClassServiceRow(service: ClassService) {
+    val colors = PokyhTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(PokyhSpacing.card),
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        InitialAvatar(name = service.personName.ifEmpty { service.duty }, size = 38.dp)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = service.personName.ifEmpty { "–" },
+                style = PokyhType.headline,
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (service.duty.isNotEmpty()) {
+                Text(service.duty, style = PokyhType.footnote, color = colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/** The due day on the left (like an exam), subject and the task on the right. */
+@Composable
+private fun HomeworkRow(homework: HomeworkItem) {
+    val colors = PokyhTheme.colors
+    val date = homework.dueDate.toLocalDate()
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(PokyhSpacing.card),
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(modifier = Modifier.width(36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = Weekdays[(date.dayOfWeek.isoDayNumber - 1).coerceIn(0, 6)],
+                style = PokyhType.caption,
+                color = colors.textTertiary,
+            )
+            Text(
+                text = "${date.dayOfMonth}.",
+                style = PokyhType.headline.monospacedDigits(),
+                color = colors.textPrimary,
+            )
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = homework.subject.ifEmpty { "Hausaufgabe" },
+                style = PokyhType.headline,
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (homework.text.isNotEmpty()) {
+                Text(homework.text, style = PokyhType.footnote, color = colors.textSecondary)
+            }
+        }
+        TagChip(text = "Fällig", color = Brand.success)
     }
 }
 

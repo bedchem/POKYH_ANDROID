@@ -17,10 +17,11 @@ object PokyhDestinations {
     const val REMINDER_DETAIL = "reminders/{reminderId}"
     const val ABSENCES = "absences"
     const val MESSAGES = "messages"
-    const val MESSAGE_DETAIL = "messages/{id}"
+    const val MESSAGE_DETAIL = "messages/{id}?reply={reply}"
     const val CLASSREG_EVENTS = "classreg_events"
     const val CLASSROOM = "classroom"
     const val PROFILE = "profile"
+    const val PROFILE_STATS = "profile/stats"
     const val CONNECTION_STATUS = "connection_status"
     const val LOGIN = "login"
     const val LOCK = "lock"
@@ -31,7 +32,8 @@ object PokyhDestinations {
     fun gradeSubject(subjectId: Int, year: Int): String = "grades/$subjectId?year=$year"
     fun dishDetail(dishId: String): String = "mensa/$dishId"
     fun reminderDetail(reminderId: String): String = "reminders/$reminderId"
-    fun messageDetail(id: Int): String = "messages/$id"
+    /** [reply]: opened from the inbox, so "Antworten" is offered (sent and draft messages have none). */
+    fun messageDetail(id: Int, reply: Boolean = false): String = "messages/$id?reply=$reply"
 }
 
 /** Store.swift `AppTab` — the 5 bottom-navigation roots; [route] is that tab's NavHost start destination. */

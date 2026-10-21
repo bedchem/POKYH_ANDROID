@@ -3,15 +3,21 @@ package dev.plattnericus.pokyh.data.untis
 import android.util.Base64
 import dev.plattnericus.pokyh.data.json.JsonDyn
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
+import dev.plattnericus.pokyh.data.model.AbsenceMeta
+import dev.plattnericus.pokyh.data.model.AbsenceReason
 import dev.plattnericus.pokyh.data.model.AppError
+import dev.plattnericus.pokyh.data.model.ClassService
 import dev.plattnericus.pokyh.data.model.ClassregEvent
 import dev.plattnericus.pokyh.data.model.GradeEntry
+import dev.plattnericus.pokyh.data.model.HomeworkItem
+import dev.plattnericus.pokyh.data.model.LessonDetail
 import dev.plattnericus.pokyh.data.model.MessageAttachment
 import dev.plattnericus.pokyh.data.model.MessageDetail
 import dev.plattnericus.pokyh.data.model.MessageFolder
 import dev.plattnericus.pokyh.data.model.MessagePreview
 import dev.plattnericus.pokyh.data.model.MessageRecipient
 import dev.plattnericus.pokyh.data.model.OutgoingAttachment
+import dev.plattnericus.pokyh.data.model.ReplyForm
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
@@ -39,6 +45,7 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -1256,5 +1263,529 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                 text = r["text"].string ?: "",
             )
         }
+    }
+
+    // ── Klassendienste / Class services ──────────────────────────────────────
+
+    /** The class duties of the current school year and who holds them, each person-duty once. */
+    suspend fun classServices(session: UserSession): List<ClassService> {
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
+        val y = currentSchoolYear()
+        val url = "${Config.untisBase}${Config.Routes.classServices}?startDate=${y}0901&endDate=${y + 1}0630"
+        val (body, resp) = get(url, session, timeoutMs = 15_000)
+        if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+        if (resp.code != 200) throw AppError("Die Klassendienste konnten gerade nicht geladen werden.")
+        val root = JsonDyn.parse(body)
+        val data = if (root["data"].exists) root["data"] else root
+        val seen = mutableSetOf<String>()
+        return data["classRoles"].array.mapNotNull { role ->
+            if (!seen.add("${role["personId"].int}-${role["duty"]["id"].int}")) return@mapNotNull null
+            ClassService(
+                id = role["id"].int ?: 0,
+                personName = listOfNotNull(role["foreName"].string, role["longName"].string).joinToString(" ").trim(),
+                duty = role["duty"]["label"].string.orEmpty(),
+            )
+        }
+    }
+
+    // ── Hausaufgaben / Homework ──────────────────────────────────────────────
+
+    /** Homework due between the two dates (YYYYMMDD), with the subject of the lesson it belongs to. */
+    suspend fun homeworks(session: UserSession, startDate: Int, endDate: Int): List<HomeworkItem> {
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
+        val url = "${Config.untisBase}${Config.Routes.homeworks}?startDate=$startDate&endDate=$endDate"
+        val (body, resp) = get(url, session, timeoutMs = 15_000)
+        if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+        if (resp.code != 200) throw AppError("Hausaufgaben nicht ladbar (HTTP ${resp.code}).")
+        val root = JsonDyn.parse(body)
+        val data = if (root["data"].exists) root["data"] else root
+        // "Mathematik (4BFS_M)" → "Mathematik", as on the web.
+        val subjects = data["lessons"].array.mapNotNull { lesson ->
+            lesson["id"].int?.let { it to lesson["subject"].string.orEmpty().substringBefore(" (") }
+        }.toMap()
+        return (data["homeworks"].array + data["records"].array).mapNotNull { hw ->
+            val id = hw["id"].int ?: return@mapNotNull null
+            HomeworkItem(
+                id = id,
+                subject = subjects[hw["lessonId"].int].orEmpty(),
+                dueDate = hw["dueDate"].int ?: 0,
+                text = plainText(hw["text"].string),
+                completed = hw["completed"].bool ?: false,
+            )
+        }.distinctBy { it.id }
+    }
+
+    // ── Stundenplan: Details einer Stunde ────────────────────────────────────
+
+    /**
+     * What the lesson's detail adds to the timetable's fields: lesson content, the teacher's note
+     * for everyone, the lesson info and the substitution text, the classes, the group, the exam
+     * and the homework due. Ported from the web frontend's `/api/webuntis/lesson-detail`.
+     */
+    suspend fun lessonDetail(session: UserSession, entry: TimetableEntry): LessonDetail {
+        fun iso(time: Int): String {
+            val d = entry.date.toString().padStart(8, '0')
+            val t = time.toString().padStart(4, '0')
+            return "${d.substring(0, 4)}-${d.substring(4, 6)}-${d.substring(6, 8)}T${t.substring(0, 2)}:${t.substring(2, 4)}:00"
+        }
+        val url = "${Config.untisBase}${Config.Routes.lessonDetail}?elementId=${session.studentId}&elementType=5" +
+            "&startDateTime=${URLEncoder.encode(iso(entry.startTime), "UTF-8")}" +
+            "&endDateTime=${URLEncoder.encode(iso(entry.endTime), "UTF-8")}&homeworkOption=DUE"
+        val (body, resp) = get(url, session, timeoutMs = 10_000)
+        if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+        if (resp.code != 200) throw AppError("Die Details konnten gerade nicht geladen werden.")
+        val texts = mutableListOf<Pair<String, String>>()
+        val classes = linkedSetOf<String>()
+        val homeworks = mutableListOf<String>()
+        var group = ""
+        var examName = ""
+        var examDescription = ""
+        for (e in JsonDyn.parse(body)["calendarEntries"].array) {
+            for ((label, key) in DetailTextFields) {
+                plainText(e[key].string).takeIf { it.isNotEmpty() }?.let { texts.add(label to it) }
+            }
+            e["klasses"].array.forEach { k ->
+                plainText(k["displayName"].string ?: k["name"].string ?: k["shortName"].string)
+                    .takeIf { it.isNotEmpty() }?.let(classes::add)
+            }
+            if (group.isEmpty()) group = plainText(e["mainStudentGroup"]["name"].string ?: e["mainStudentGroup"]["displayName"].string)
+            if (examName.isEmpty()) examName = plainText(e["exam"]["name"].string)
+            if (examDescription.isEmpty()) examDescription = plainText(e["exam"]["description"].string)
+            e["homeworks"].array.forEach { hw -> plainText(hw["text"].string).takeIf { it.isNotEmpty() }?.let(homeworks::add) }
+        }
+        return LessonDetail(
+            texts = texts,
+            classes = classes.toList(),
+            group = group,
+            examName = examName,
+            examDescription = examDescription,
+            homeworks = homeworks,
+        )
+    }
+
+    // ── Abwesenheit melden und entschuldigen ─────────────────────────────────
+
+    /** Reasons and the preset range of WebUntis' own report dialog. */
+    suspend fun absenceMeta(session: UserSession): AbsenceMeta {
+        val (body, resp) = get("${Config.untisBase}${Config.Routes.absenceMeta}", session, timeoutMs = 12_000)
+        if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+        if (resp.code != 200) throw AppError("Abwesenheitsgründe konnten nicht geladen werden.")
+        val root = JsonDyn.parse(body)
+        val data = if (root["data"].exists) root["data"] else root
+        val list = data["absenceReasons"].array.ifEmpty { data["reasons"].array }
+        val reasons = list.mapNotNull { r ->
+            val id = r["id"].int ?: return@mapNotNull null
+            val name = (r["name"].string ?: r["longName"].string ?: r["displayName"].string).orEmpty().trim()
+            if (name.isEmpty() || name == "---") null else AbsenceReason(id, name)
+        }
+        return AbsenceMeta(
+            reasons = reasons,
+            defaultReasonId = data["defaultAbsenceReason"]["id"].int,
+            defaultDate = data["defaultDate"].int,
+            defaultStartTime = data["defaultStartTime"].int?.let(::hhmmOf),
+            defaultEndTime = data["defaultEndTime"].int?.let(::hhmmOf),
+        )
+    }
+
+    /**
+     * Whether WebUntis lets this account report (and so excuse) absences itself: its own
+     * age-aware flag `showCreateAbsence` on the absence list, and without it a write right on
+     * absences in the app data. The web frontend's `canReportAbsence`.
+     */
+    suspend fun canReportAbsence(session: UserSession): Boolean {
+        if (session.bearerToken.isEmpty()) return false
+        val today = Clock.System.todayIn(TimeZone.currentSystemDefault())
+        val day = today.year * 10000 + today.monthNumber * 100 + today.dayOfMonth
+        val url = "${Config.untisBase}${Config.Routes.absences}?studentId=${session.studentId}" +
+            "&startDate=$day&endDate=$day&excuseStatusId=-1"
+        val flag = runCatching {
+            val (body, resp) = get(url, session, timeoutMs = 12_000)
+            if (resp.code != 200 || body.firstOrNull() == '<') null
+            else JsonDyn.parse(body)["data"]["showCreateAbsence"].bool
+        }.getOrNull()
+        if (flag != null) return flag
+        val raw = runCatching { fetchAppData(session)?.raw?.toString() }.getOrNull() ?: return false
+        return AbsenceWriteRight.containsMatchIn(raw.uppercase())
+    }
+
+    /**
+     * "Abwesenheit melden", as the official client does it: the student comes from the session,
+     * dates are YYYYMMDD, times HHMM. WebUntis saves it only when there are no conflicts.
+     */
+    suspend fun reportAbsence(
+        session: UserSession,
+        startDate: Int,
+        startTime: Int,
+        endDate: Int,
+        endTime: Int,
+        reasonId: Int,
+        text: String,
+    ) {
+        if (endDate.toLong() * 10_000 + endTime <= startDate.toLong() * 10_000 + startTime) {
+            throw AppError("Das Ende muss nach dem Beginn liegen.")
+        }
+        if (!canReportAbsence(session)) {
+            throw AppError("Abwesenheiten melden ist für dein Konto in WebUntis nicht freigegeben.")
+        }
+        val reply = classicWrite(
+            session,
+            Config.Routes.absenceReport,
+            "POST",
+            JSONObject().apply {
+                put("studentId", session.studentId)
+                put("startDate", startDate)
+                put("startTime", startTime)
+                put("endDate", endDate)
+                put("endTime", endTime)
+                put("text", text.take(1000))
+                put("reasonId", reasonId)
+            },
+        )
+        checkAbsenceWrite(reply, "Die Abwesenheit konnte nicht gemeldet werden.")
+    }
+
+    /**
+     * A reason and a note for existing absences, what "entschuldigen" is for a student; the
+     * excuse status itself is set by the school. As the official edit dialog does it: read the
+     * absence (only when WebUntis says it may be edited), then save it with its own dates.
+     */
+    suspend fun excuseAbsences(session: UserSession, absenceIds: List<Int>, reasonId: Int, text: String) {
+        var failure: String? = null
+        for (id in absenceIds.take(20)) {
+            val (body, resp) = get("${Config.untisBase}${Config.Routes.absenceSingle}?absenceId=$id", session, timeoutMs = 12_000)
+            if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+            val absence = JsonDyn.parse(body)["data"]["absence"]
+            if (resp.code != 200 || !absence.exists) {
+                failure = failure ?: "Die Abwesenheit wurde in WebUntis nicht gefunden."
+                continue
+            }
+            if (absence["canEdit"].bool != true) {
+                failure = failure ?: "WebUntis erlaubt dir bei dieser Abwesenheit keine Änderung."
+                continue
+            }
+            val reply = classicWrite(
+                session,
+                Config.Routes.absenceEdit,
+                "POST",
+                JSONObject().apply {
+                    put("absenceId", id)
+                    absence["startDate"].int?.let { put("startDate", it) }
+                    absence["startTime"].int?.let { put("startTime", it) }
+                    absence["endDate"].int?.let { put("endDate", it) }
+                    absence["endTime"].int?.let { put("endTime", it) }
+                    put("text", text.take(1000))
+                    put("reasonId", reasonId)
+                },
+            )
+            try {
+                checkAbsenceWrite(reply, "Die Abwesenheit konnte nicht gespeichert werden.")
+            } catch (e: AppError) {
+                if (e.isSessionExpired) throw e
+                failure = failure ?: e.message
+            }
+        }
+        failure?.let { throw AppError(it) }
+    }
+
+    /**
+     * "Entschuldigungsschreiben": the excuse letter WebUntis generates as a PDF for the absences
+     * given (the same report the official absence list prints). Read-only.
+     */
+    suspend fun excuseLetter(session: UserSession, startDate: Int, endDate: Int, absenceIds: List<Int>): DownloadedAttachment {
+        val params = buildString {
+            append("name=Excuse&format=pdf&rpt_sd=$startDate&rpt_ed=$endDate&excuseStatusId=1")
+            append("&withLateness=true&withAbsences=true&excuseGroup=1")
+            absenceIds.take(100).forEach { append("&id=$it") }
+        }
+        val (body, resp) = get("${Config.untisBase}${Config.Routes.reports}?$params", session, timeoutMs = 20_000)
+        if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+        val data = JsonDyn.parse(body)["data"]
+        if (resp.code != 200 || !data.exists) throw AppError("Das Entschuldigungsschreiben konnte nicht erstellt werden.")
+        if (data["finished"].bool != true) throw AppError("WebUntis erstellt das Schreiben noch. Versuch es gleich noch einmal.")
+        val msgId = URLEncoder.encode(data["messageId"].string.orEmpty(), "UTF-8")
+        val url = "${Config.untisBase}${Config.Routes.reports}?msgId=$msgId&${data["reportParams"].string.orEmpty()}"
+        return fetchFile(url, "Entschuldigung-$startDate.pdf", session = session)
+            ?: throw AppError("Das Entschuldigungsschreiben konnte nicht geladen werden.")
+    }
+
+    /** Saved only when WebUntis reports neither errors nor conflicts (the official client's rule). */
+    private fun checkAbsenceWrite(reply: UntisReply, failure: String) {
+        if (reply.expired) throw AppError.sessionExpired
+        val json = reply.json
+        if (json["errors"].array.isNotEmpty() || !reply.ok) throw AppError(untisError(json) ?: failure)
+        val conflicts = json["data"]["conflicts"].array
+        if (conflicts.isNotEmpty()) {
+            val details = conflicts.mapNotNull { c ->
+                c.string ?: listOf("text", "message", "title", "description", "name").firstNotNullOfOrNull { c[it].string }
+            }.filter { it.isNotBlank() }.take(3)
+            throw AppError((listOf("Für diesen Zeitraum gibt es bereits eine Abwesenheit.") + details).joinToString(" "))
+        }
+    }
+
+    // ── Passwort ─────────────────────────────────────────────────────────────
+
+    /**
+     * Changes the WebUntis password exactly as the official profile page does. WebUntis checks
+     * the old password and its own rules; its reason is shown as it is. Nothing is logged.
+     */
+    suspend fun changePassword(session: UserSession, oldPassword: String, newPassword: String) {
+        if (oldPassword.isEmpty() || newPassword.isEmpty()) throw AppError("Bitte beide Passwörter eingeben.")
+        if (oldPassword.length > 200 || newPassword.length > 200) throw AppError("Eingabe zu lang.")
+        if (oldPassword == newPassword) throw AppError("Das neue Passwort muss sich vom alten unterscheiden.")
+        val reply = classicWrite(
+            session,
+            Config.Routes.profilePassword,
+            "POST",
+            JSONObject().put("oldPassword", oldPassword).put("newPassword", newPassword),
+        )
+        if (reply.expired) throw AppError.sessionExpired
+        if (reply.ok && reply.json["errors"].array.isEmpty()) return
+        throw AppError(untisError(reply.json) ?: "Das Passwort konnte nicht geändert werden.")
+    }
+
+    /**
+     * "Passwort vergessen": WebUntis' own reset request. WebUntis e-mails a reset link to the
+     * address stored for the account; POKYH never sees a password. It needs an anonymous
+     * session: the login page sets the cookie and carries the CSRF token and tenant for it.
+     */
+    suspend fun requestPasswordReset(username: String, email: String) {
+        val user = username.trim()
+        val mail = email.trim()
+        if (user.isEmpty() || mail.isEmpty()) throw AppError("Bitte Benutzername und E-Mail-Adresse eingeben.")
+        if (user.length > 100 || mail.length > 200 || !EmailPattern.matches(mail)) {
+            throw AppError("Bitte eine gültige E-Mail-Adresse eingeben.")
+        }
+        val unavailable = "WebUntis ist gerade nicht erreichbar."
+        withContext(Dispatchers.IO) {
+            val pageRequest = Request.Builder()
+                .url("${Config.untisBase}/?school=${Config.school}")
+                .header("Accept", "text/html")
+                .build()
+            val (sessionId, config) = runCatching {
+                noCookieClient.newCall(pageRequest).execute().use { resp ->
+                    val id = resp.headers("Set-Cookie")
+                        .firstNotNullOfOrNull { Regex("JSESSIONID=([^;]+)").find(it)?.groupValues?.get(1) }
+                    id to readPageConfig(resp.body?.string().orEmpty())
+                }
+            }.getOrElse { throw AppError.noConnection(unavailable) }
+            val csrf = config.csrf
+            if (sessionId == null || csrf == null) throw AppError(unavailable)
+
+            val request = Request.Builder()
+                .url("${Config.untisBase}${Config.Routes.passwordReset}")
+                .header("Cookie", cookieHeader(sessionId))
+                .header("Accept", "application/json")
+                .header("X-CSRF-TOKEN", csrf)
+                .apply { config.tenant?.let { header("Tenant-Id", it) } }
+                .post(JSONObject().put("username", user).put("email", mail).toString().toRequestBody(jsonMediaType))
+                .build()
+            val (code, text) = runCatching {
+                noCookieClient.newCall(request).execute().use { it.code to it.body?.string().orEmpty() }
+            }.getOrElse { throw AppError.noConnection(unavailable) }
+            val isJson = text.isBlank() || text.trimStart().startsWith("{")
+            val errorCode = if (isJson) JsonDyn.parse(text.ifBlank { "{}" })["errors"][0]["code"].string else null
+            if (code in 200..299 && isJson && errorCode == null) return@withContext
+            throw AppError(
+                when (errorCode) {
+                    "INVALID_USER_DATA" -> "Benutzername und E-Mail-Adresse passen zu keinem Konto."
+                    "SEND_EMAIL_FAILURE" -> "WebUntis konnte die E-Mail gerade nicht senden."
+                    "PW_RESET_NOT_ALLOWED" -> "Das Zurücksetzen des Passworts ist an deiner Schule nicht freigegeben. Wende dich an das Sekretariat."
+                    "INTERNAL_ERROR" -> "WebUntis hat einen internen Fehler gemeldet."
+                    else -> "Das Zurücksetzen konnte nicht gestartet werden."
+                },
+            )
+        }
+    }
+
+    // ── Nachrichten: Antworten ───────────────────────────────────────────────
+
+    /** The reply form: subject and recipient prefilled by WebUntis. Fails when the sender forbade replies. */
+    suspend fun replyForm(session: UserSession, messageId: Int): ReplyForm {
+        val token = freshMessageToken(session)
+        val schoolYearId = runCatching { rpc("getCurrentSchoolyear", session, "sy")["id"].int }.getOrNull()
+        val (body, code) = withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("${Config.untisBase}${Config.Routes.messageReplyForm(messageId)}")
+                .headers(messageWriteHeaders(session, token, schoolYearId))
+                .build()
+            noCookieClient.newCall(request).execute().use { it.body?.string().orEmpty() to it.code }
+        }
+        if (code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+        val json = JsonDyn.parse(body)
+        if (code !in 200..299) throw AppError(untisError(json) ?: "Auf diese Nachricht kann nicht geantwortet werden.")
+        return ReplyForm(
+            subject = json["subject"].string.orEmpty(),
+            recipientName = json["recipient"]["displayName"].string.orEmpty(),
+        )
+    }
+
+    /** Sends a reply: multipart like a new message, the text as the HTML paragraphs WebUntis stores. */
+    suspend fun sendReply(
+        session: UserSession,
+        messageId: Int,
+        subject: String,
+        content: String,
+        attachments: List<OutgoingAttachment> = emptyList(),
+    ) {
+        val token = freshMessageToken(session)
+        val schoolYearId = runCatching { rpc("getCurrentSchoolyear", session, "sy")["id"].int }.getOrNull()
+        val permissions = messagePermissions(session, token, schoolYearId)
+        if (attachments.size > permissions.maxFileCount) {
+            throw AppError("Maximal ${permissions.maxFileCount} Anhänge erlaubt.")
+        }
+        attachments.firstOrNull { it.bytes.size > permissions.maxFileSize }?.let {
+            throw AppError("„${it.name}“ ist zu groß (max. ${permissions.maxFileSize / (1024 * 1024)} MB pro Datei).")
+        }
+        val meta = JSONObject().apply {
+            put("subject", subject.take(255))
+            put("content", plainTextToHtml(content.take(10_000)))
+            put("oneDriveAttachments", JSONArray())
+        }
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("request", null, meta.toString().toRequestBody(jsonMediaType))
+            .apply {
+                attachments.forEach { file ->
+                    addFormDataPart("attachments", file.name, file.bytes.toRequestBody(file.mimeType.toMediaTypeOrNull()))
+                }
+            }
+            .build()
+        val (text, code) = withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("${Config.untisBase}${Config.Routes.messageReply(messageId)}")
+                .headers(messageWriteHeaders(session, token, schoolYearId))
+                .post(form)
+                .build()
+            val client = noCookieClient.newBuilder().callTimeout(60, TimeUnit.SECONDS).build()
+            client.newCall(request).execute().use { it.body?.string().orEmpty() to it.code }
+        }
+        if (code == 401 || text.firstOrNull() == '<') throw AppError.sessionExpired
+        if (code in 200..299) return
+        throw AppError(serverMessage(text) ?: "Die Antwort konnte nicht gesendet werden.")
+    }
+
+    // ── Classic writes (CSRF) ────────────────────────────────────────────────
+
+    /** CSRF token and tenant of one WebUntis session, from the page WebUntis renders for it. */
+    private class PageConfig(val csrf: String?, val tenant: String?)
+
+    private val pageConfigs = ConcurrentHashMap<String, PageConfig>()
+
+    private fun readPageConfig(html: String): PageConfig = PageConfig(
+        csrf = Regex("\"csrfToken\"\\s*:\\s*\"([^\"]+)\"").find(html)?.groupValues?.get(1),
+        tenant = Regex("\"tenantId\"\\s*:\\s*\"?([0-9A-Za-z-]+)\"?").find(html)?.groupValues?.get(1),
+    )
+
+    /**
+     * The session's CSRF token: WebUntis embeds it in the configuration of every page it renders
+     * for the session, and the official client sends it as `X-CSRF-TOKEN` on every classic
+     * (non-REST) request that changes data. Kept per session.
+     */
+    private suspend fun pageConfig(s: UserSession, force: Boolean = false): PageConfig {
+        if (!force) pageConfigs[s.sessionId]?.let { return it }
+        val config = withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder()
+                    .url("${Config.untisBase}/?school=${Config.school}")
+                    .header("Cookie", cookieHeader(s.sessionId))
+                    .header("Accept", "text/html")
+                    .build()
+                noCookieClient.newCall(request).execute().use { readPageConfig(it.body?.string().orEmpty()) }
+            }.getOrNull()
+        } ?: PageConfig(null, null)
+        if (config.csrf != null) pageConfigs[s.sessionId] = config
+        return config
+    }
+
+    private class UntisReply(val code: Int, val body: String) {
+        val json: JsonDyn by lazy { JsonDyn.parse(body) }
+        val expired: Boolean get() = code == 401 || body.trimStart().startsWith("<")
+        val ok: Boolean get() = code in 200..299 && !expired
+    }
+
+    /**
+     * A classic write the way the official client sends one: cookie session, `X-CSRF-TOKEN`,
+     * `Tenant-Id` and a JSON body, no bearer. A 403 is what WebUntis answers to a stale CSRF
+     * token (and nothing was written), so it is retried once with a fresh one.
+     */
+    private suspend fun classicWrite(s: UserSession, path: String, method: String, body: JSONObject): UntisReply {
+        suspend fun send(config: PageConfig): UntisReply = withContext(Dispatchers.IO) {
+            val builder = Request.Builder()
+                .url("${Config.untisBase}$path")
+                .header("Cookie", cookieHeader(s.sessionId))
+                .header("Accept", "application/json")
+                .method(method, body.toString().toRequestBody(jsonMediaType))
+            config.csrf?.let { builder.header("X-CSRF-TOKEN", it) }
+            (config.tenant ?: tenantIdOf(s.bearerToken))?.let { builder.header("Tenant-Id", it) }
+            noCookieClient.newCall(builder.build()).execute().use { UntisReply(it.code, it.body?.string().orEmpty()) }
+        }
+        val first = send(pageConfig(s))
+        if (first.code != 403) return first
+        return send(pageConfig(s, force = true))
+    }
+
+    /** The reason WebUntis gives for a rejected request, in any of its services' shapes. */
+    private fun untisError(json: JsonDyn): String? {
+        json["errorMessage"].string?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        json["validationErrors"].array.mapNotNull { it["errorMessage"].string }
+            .filter { it.isNotBlank() }.joinToString(" ").takeIf { it.isNotBlank() }?.let { return it }
+        json["errors"].array.firstOrNull()?.let { first ->
+            listOf(first["title"].string, first["detail"].string).firstOrNull { !it.isNullOrBlank() }?.let { return it.trim() }
+        }
+        return json["message"].string?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /** WebUntis sends times as HHMM (750) or as minutes since midnight (470); a value whose last
+     * two digits exceed 59 can only be minutes. Always answers HHMM. */
+    private fun hhmmOf(n: Int): Int {
+        val minutes = if (n > 2359 || n % 100 > 59) n else (n / 100) * 60 + n % 100
+        return (minutes / 60) * 100 + minutes % 60
+    }
+
+    /** Plain text from WebUntis' rich text: line breaks kept, tags and entities resolved. */
+    private fun plainText(value: String?): String {
+        if (value.isNullOrBlank()) return ""
+        if (!value.contains('<') && !value.contains('&')) return value.trim()
+        return value
+            .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("</(p|div|li|h\\d)>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("<[^>]+>"), "")
+            .replace(Regex("&#(\\d+);")) { m -> m.groupValues[1].toIntOrNull()?.let { String(Character.toChars(it)) } ?: m.value }
+            .replace("&nbsp;", " ")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+    }
+
+    /** Plain text → the HTML paragraphs WebUntis stores message bodies as (the web's plainTextToHtml). */
+    private fun plainTextToHtml(text: String): String {
+        val escaped = text.replace("\r\n", "\n").replace('\r', '\n')
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\"", "&quot;").replace("'", "&#39;")
+        return escaped.split(Regex("\n{2,}"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("") { "<p>${it.replace("\n", "<br>")}</p>" }
+    }
+
+    private companion object {
+        /** The lesson-detail fields that hold a text, with the label the popup shows. */
+        val DetailTextFields = listOf(
+            "Lehrstoff" to "teachingContent",
+            "Notiz der Lehrkraft" to "notesAll",
+            "Notiz" to "lessonInfo",
+            "Vertretungstext" to "substText",
+        )
+
+        /** A write right on absences in the app data ("STUDABS_REPORT:RW"); no rights part means all. */
+        val AbsenceWriteRight = Regex(
+            "\"(?:STUDABS_REPORT|SELF_ABSENCEREASON|WRITE_OWN_ABSENCE|WRITE_STUD_ABSENCE|STUDENT_ABSENCE|SELF_ABSENCE)" +
+                "(?::[A-Z]*[WC][A-Z]*)?\"",
+        )
+
+        val EmailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
     }
 }

@@ -214,8 +214,13 @@ class MessagesViewModel @Inject constructor(
         val error: String? = null,
         val sent: Boolean = false,
         val draftSaved: Boolean = false,
+        /** Answering this message: WebUntis fixes the recipient (the sender) and prefills the subject. */
+        val replyTo: Int? = null,
+        val replyRecipient: String? = null,
+        val replyLoading: Boolean = false,
     ) {
-        val busy: Boolean get() = sending || savingDraft || sent || draftSaved
+        val busy: Boolean get() = sending || savingDraft || sent || draftSaved || replyLoading
+        val isReply: Boolean get() = replyTo != null
     }
 
     private val _compose = MutableStateFlow(ComposeUiState())
@@ -224,6 +229,30 @@ class MessagesViewModel @Inject constructor(
     fun openCompose() {
         _compose.value = ComposeUiState(open = true)
         loadRecipients()
+    }
+
+    /** "Antworten": the reply form from WebUntis, which also says whether replies are allowed. */
+    fun openReply(messageId: Int) {
+        val session = appState.session.value ?: return
+        _compose.value = ComposeUiState(open = true, replyTo = messageId, replyLoading = true)
+        viewModelScope.launch {
+            try {
+                val form = untisClient.replyForm(session, messageId)
+                _compose.update {
+                    it.copy(replyLoading = false, replyRecipient = form.recipientName, subject = form.subject.take(255))
+                }
+            } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
+                _compose.update {
+                    it.copy(
+                        replyLoading = false,
+                        error = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message,
+                    )
+                }
+            } catch (e: Exception) {
+                _compose.update { it.copy(replyLoading = false, error = "Antwort konnte nicht vorbereitet werden.") }
+            }
+        }
     }
 
     fun closeCompose() {
@@ -277,7 +306,8 @@ class MessagesViewModel @Inject constructor(
         val state = _compose.value
         if (state.busy) return
         when {
-            state.selected.isEmpty() -> return fileError("Bitte mindestens eine Lehrkraft wählen.")
+            state.isReply && state.replyRecipient == null -> return fileError("Auf diese Nachricht kann nicht geantwortet werden.")
+            !state.isReply && state.selected.isEmpty() -> return fileError("Bitte mindestens eine Lehrkraft wählen.")
             state.subject.isBlank() -> return fileError("Bitte einen Betreff eingeben.")
             state.content.isBlank() -> return fileError("Bitte einen Text eingeben.")
         }
@@ -299,14 +329,25 @@ class MessagesViewModel @Inject constructor(
         _compose.update { it.copy(sending = !asDraft, savingDraft = asDraft, error = null) }
         viewModelScope.launch {
             try {
-                untisClient.sendMessage(
-                    session = session,
-                    subject = state.subject.trim(),
-                    content = state.content.trim(),
-                    recipients = state.selected,
-                    attachments = state.files,
-                    asDraft = asDraft,
-                )
+                val replyTo = state.replyTo
+                if (replyTo != null && !asDraft) {
+                    untisClient.sendReply(
+                        session = session,
+                        messageId = replyTo,
+                        subject = state.subject.trim(),
+                        content = state.content.trim(),
+                        attachments = state.files,
+                    )
+                } else {
+                    untisClient.sendMessage(
+                        session = session,
+                        subject = state.subject.trim(),
+                        content = state.content.trim(),
+                        recipients = state.selected,
+                        attachments = state.files,
+                        asDraft = asDraft,
+                    )
+                }
                 _compose.update {
                     it.copy(sending = false, savingDraft = false, sent = !asDraft, draftSaved = asDraft)
                 }

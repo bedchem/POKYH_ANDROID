@@ -9,6 +9,7 @@ import dev.plattnericus.pokyh.core.util.mondayOfWeek
 import dev.plattnericus.pokyh.core.util.toLocalDate
 import dev.plattnericus.pokyh.core.util.toYyyyMMdd
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
+import dev.plattnericus.pokyh.data.model.AbsenceMeta
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.model.UserSession
@@ -171,6 +172,117 @@ class AbsencesViewModel @Inject constructor(
 
     init {
         load()
+    }
+
+    // ── Melden, entschuldigen, Entschuldigungsschreiben ─────────────────────
+    // Like WebUntis: only who may report absences (guardians, students of age) reports and
+    // excuses them, decided by WebUntis' own flag (UntisClient.canReportAbsence).
+
+    private val _canReport = MutableStateFlow(false)
+    val canReport: StateFlow<Boolean> = _canReport.asStateFlow()
+
+    /** One open report or excuse sheet: WebUntis' reasons and presets, then the save. */
+    data class FormState(
+        val meta: AbsenceMeta? = null,
+        val metaFailed: Boolean = false,
+        /** Today's first and last lesson (HHMM), when WebUntis gives no preset range. */
+        val todayRange: Pair<Int, Int>? = null,
+        val saving: Boolean = false,
+        val error: String? = null,
+        val done: Boolean = false,
+    )
+
+    private val _form = MutableStateFlow(FormState())
+    val form: StateFlow<FormState> = _form.asStateFlow()
+
+    data class LetterState(val loading: Boolean = false, val error: String? = null)
+
+    private val _letter = MutableStateFlow(LetterState())
+    val letter: StateFlow<LetterState> = _letter.asStateFlow()
+
+    // After the flows above: init blocks run in declaration order.
+    init {
+        checkCanReport()
+    }
+
+    private fun checkCanReport() {
+        val session = appState.session.value ?: return
+        if (!session.hasUntis || appState.isOffline.value) return
+        viewModelScope.launch {
+            _canReport.value = runCatching { untisClient.canReportAbsence(session) }.getOrDefault(false)
+        }
+    }
+
+    /** A fresh form: reasons and presets from WebUntis, today's lessons from the stored week. */
+    fun openForm() {
+        val session = appState.session.value ?: return
+        _form.value = FormState()
+        viewModelScope.launch {
+            val meta = runCatching { untisClient.absenceMeta(session) }.getOrNull()
+            val today = dev.plattnericus.pokyh.core.util.todayLocalDate()
+            val week = runCatching {
+                offlineStore.peek(
+                    key = "tt-${session.studentId}-${mondayOfWeek(today)}",
+                    serializer = ListSerializer(TimetableEntry.serializer()),
+                )?.value
+            }.getOrNull().orEmpty()
+            val lessons = week.filter { it.date == today.toYyyyMMdd() && !it.isCancelled }
+            val range = if (lessons.isEmpty()) null else lessons.minOf { it.startTime } to lessons.maxOf { it.endTime }
+            _form.value = _form.value.copy(meta = meta, metaFailed = meta == null, todayRange = range)
+        }
+    }
+
+    fun report(startDate: Int, startTime: Int, endDate: Int, endTime: Int, reasonId: Int, text: String) =
+        save { session -> untisClient.reportAbsence(session, startDate, startTime, endDate, endTime, reasonId, text.trim()) }
+
+    fun excuse(absenceIds: List<Int>, reasonId: Int, text: String) =
+        save { session -> untisClient.excuseAbsences(session, absenceIds, reasonId, text.trim()) }
+
+    /** Reports success only when WebUntis did, then reloads the list. */
+    private fun save(write: suspend (UserSession) -> Unit) {
+        val session = appState.session.value ?: return
+        if (_form.value.saving || _form.value.done) return
+        _form.value = _form.value.copy(saving = true, error = null)
+        viewModelScope.launch {
+            try {
+                write(session)
+                _form.value = _form.value.copy(saving = false, done = true)
+                load()
+            } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
+                _form.value = _form.value.copy(
+                    saving = false,
+                    error = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message,
+                )
+            } catch (e: Exception) {
+                _form.value = _form.value.copy(saving = false, error = "Das hat nicht geklappt. Bitte versuche es später erneut.")
+            }
+        }
+    }
+
+    fun formError(message: String) {
+        _form.value = _form.value.copy(error = message)
+    }
+
+    /** The year's excuse letter for its open absences, as WebUntis prints it; [onFile] opens it. */
+    fun excuseLetter(onFile: (UntisClient.DownloadedAttachment) -> Unit) {
+        val session = appState.session.value ?: return
+        if (_letter.value.loading) return
+        val y = _year.value
+        val open = _absences.value.filter { !it.isExcused }.map { it.id }
+        _letter.value = LetterState(loading = true)
+        viewModelScope.launch {
+            try {
+                val file = untisClient.excuseLetter(session, y * 10000 + 901, (y + 1) * 10000 + 630, open)
+                _letter.value = LetterState()
+                onFile(file)
+            } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
+                _letter.value = LetterState(error = e.message)
+            } catch (e: Exception) {
+                _letter.value = LetterState(error = "Das Entschuldigungsschreiben konnte nicht geladen werden.")
+            }
+        }
     }
 
     fun toggleExact() {

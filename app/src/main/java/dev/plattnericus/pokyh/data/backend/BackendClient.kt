@@ -2,6 +2,7 @@ package dev.plattnericus.pokyh.data.backend
 
 import dev.plattnericus.pokyh.BuildConfig
 import dev.plattnericus.pokyh.core.util.TtlCache
+import dev.plattnericus.pokyh.data.model.ApiAccountActivity
 import dev.plattnericus.pokyh.data.model.ApiClass
 import dev.plattnericus.pokyh.data.model.ApiComment
 import dev.plattnericus.pokyh.data.model.ApiErrorBody
@@ -626,6 +627,12 @@ class BackendClient @Inject constructor(
 
     suspend fun activePopups(): List<ApiPopup> =
         decode<ApiPopupsResponse>(request(Config.Routes.popupsActive)).popups
+
+    // ── Aktivität (Profil, Statistiken) ─────────────────────────────────────
+
+    /** The account's own activity for the profile's grid and the statistics screen. */
+    suspend fun accountActivity(token: String): ApiAccountActivity =
+        decode(request(Config.Routes.myActivity, token = token))
 
     // ── Authentifizierte Requests ───────────────────────────────────────────
 

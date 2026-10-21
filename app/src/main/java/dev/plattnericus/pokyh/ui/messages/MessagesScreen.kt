@@ -67,7 +67,8 @@ import kotlinx.datetime.toLocalDateTime
 @Composable
 fun MessagesScreen(
     viewModel: MessagesViewModel = hiltViewModel(),
-    onMessageClick: (Int) -> Unit,
+    /** The message and whether it can be answered (only what came into the inbox). */
+    onMessageClick: (Int, Boolean) -> Unit,
     onNavigateBack: () -> Unit = {},
 ) {
     val ui by viewModel.list.collectAsStateWithLifecycle()
@@ -137,7 +138,7 @@ fun MessagesScreen(
                                     msg = msg,
                                     onClick = {
                                         viewModel.markRead(msg)
-                                        onMessageClick(msg.id)
+                                        onMessageClick(msg.id, ui.folder == MessageFolder.Inbox)
                                     },
                                 )
                             }

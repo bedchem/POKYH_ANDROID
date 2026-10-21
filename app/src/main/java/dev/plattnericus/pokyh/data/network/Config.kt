@@ -35,6 +35,21 @@ object Config {
         const val messagesSent = "/api/rest/view/v1/messages/sent"
         const val messagesDrafts = "/api/rest/view/v1/messages/drafts"
         const val classregEvents = "/api/classreg/classregevents"
+        const val classServices = "/api/classreg/classservices"
+        const val homeworks = "/api/homeworks/lessons"
+        const val lessonDetail = "/api/rest/view/v2/calendar-entry/detail"
+
+        // Absences as the official client writes them (classreg/absences/widget/absence.ts):
+        // classic endpoints with the session's CSRF token.
+        const val absenceMeta = "/api/classreg/absences/meta"
+        const val absenceReport = "/api/classreg/absences/students/self"
+        const val absenceSingle = "/api/classreg/absences/student"
+        const val absenceEdit = "/api/classreg/absences/students/edit"
+        const val reports = "/reports.do"
+
+        // Password: the profile's change (classic, CSRF) and the login page's reset request.
+        const val profilePassword = "/api/profile/access/password"
+        const val passwordReset = "/passwordReset/resetPassword.do"
 
         // MessageCenter writes go to the v2 collection (multipart), with v1 kept as a fallback
         // for older WebUntis instances — mirrors the web frontend's candidate order.
@@ -53,6 +68,8 @@ object Config {
         fun messageDetail(id: Int): String = "$messages/$id"
         fun messageMarkRead(id: Int): String = "$messages/$id/markasread"
         fun messageAttachments(id: Int): String = "$messages/$id/attachments"
+        fun messageReplyForm(id: Int): String = "$messages/$id/reply-form?contentAsHtml=false"
+        fun messageReply(id: Int): String = "$messagesV2/$id/reply"
 
         /** Keyed on the attachment's storage UUID, not on the message id. */
         fun attachmentStorageUrl(storageId: String): String = "$messages/$storageId/attachmentstorageurl"
@@ -99,6 +116,9 @@ object Config {
         /** Which privacy notice the account confirmed, and confirming the current one. */
         const val privacyStatus = "/privacy/status"
         const val privacyAcknowledge = "/privacy/acknowledge"
+
+        /** The account's own activity: active days, sign-ins and, with consent, time in POKYH. */
+        const val myActivity = "/users/me/activity"
 
         /** Admin announcement popups live right now. The app is always signed in, hence
          * `audience=user`; which ones are actually due is decided on-device. */

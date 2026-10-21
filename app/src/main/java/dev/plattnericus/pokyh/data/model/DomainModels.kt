@@ -287,3 +287,59 @@ data class ClassregEvent(
     var categoryName: String,
     var text: String,
 )
+
+// ── Abwesenheit melden / entschuldigen ───────────────────────────────────
+
+data class AbsenceReason(val id: Int, val name: String)
+
+/**
+ * What WebUntis' own report dialog loads first (`/api/classreg/absences/meta`): the reasons, the
+ * preset reason and the preset range. Times are HHMM; WebUntis sometimes sends minutes since
+ * midnight instead, which the client already converted.
+ */
+data class AbsenceMeta(
+    val reasons: List<AbsenceReason>,
+    val defaultReasonId: Int? = null,
+    val defaultDate: Int? = null, // YYYYMMDD
+    val defaultStartTime: Int? = null, // HHMM
+    val defaultEndTime: Int? = null, // HHMM
+)
+
+// ── Klasse: Klassendienste und Hausaufgaben ──────────────────────────────
+
+/** A class duty and who holds it ("Klassensprecher: Anna Mair"). */
+@Serializable
+data class ClassService(
+    val id: Int,
+    val personName: String,
+    val duty: String,
+)
+
+@Serializable
+data class HomeworkItem(
+    val id: Int,
+    val subject: String,
+    val dueDate: Int, // YYYYMMDD
+    val text: String,
+    val completed: Boolean,
+)
+
+// ── Stundenplan: Details einer Stunde ────────────────────────────────────
+
+/**
+ * What a lesson's detail (WebUntis `calendar-entry/detail`) adds to the timetable's own fields:
+ * the lesson texts, classes, group, exam and the homework due. Every field is optional.
+ */
+data class LessonDetail(
+    val texts: List<Pair<String, String>> = emptyList(), // label to text
+    val classes: List<String> = emptyList(),
+    val group: String = "",
+    val examName: String = "",
+    val examDescription: String = "",
+    val homeworks: List<String> = emptyList(),
+)
+
+// ── Nachrichten: Antworten ───────────────────────────────────────────────
+
+/** WebUntis' reply form: the prefilled subject and who the answer goes to. */
+data class ReplyForm(val subject: String, val recipientName: String)

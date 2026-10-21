@@ -34,6 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.core.util.Fmt
@@ -45,6 +46,8 @@ import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhListCard
 import dev.plattnericus.pokyh.ui.components.PokyhMenuButton
+import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
+import dev.plattnericus.pokyh.ui.components.openOrShareFile
 import dev.plattnericus.pokyh.ui.components.PokyhSection
 import dev.plattnericus.pokyh.ui.components.PokyhStat
 import dev.plattnericus.pokyh.ui.components.PokyhSecondaryButton
@@ -86,7 +89,31 @@ fun AbsencesScreen(onNavigateBack: () -> Unit = {}, viewModel: AbsencesViewModel
     val totalPossibleMins by viewModel.totalPossibleMins.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val canReport by viewModel.canReport.collectAsStateWithLifecycle()
+    val letter by viewModel.letter.collectAsStateWithLifecycle()
     var yearMenuExpanded by remember { mutableStateOf(false) }
+    var reporting by remember { mutableStateOf(false) }
+    var excusing by remember { mutableStateOf<Pair<List<Int>, String>?>(null) }
+    var noViewer by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    @Composable
+    fun Actions(modifier: Modifier) {
+        if (!canReport) return
+        AbsenceActions(
+            hasOpen = absences.any { !it.isExcused },
+            letterLoading = letter.loading,
+            letterError = letter.error ?: if (noViewer) "Keine App gefunden, die PDFs öffnen kann." else null,
+            onReport = { reporting = true },
+            onLetter = {
+                noViewer = false
+                viewModel.excuseLetter { file ->
+                    noViewer = !openOrShareFile(context, file.name, file.mimeType, file.bytes)
+                }
+            },
+            modifier = modifier,
+        )
+    }
 
     fun getMin(e: AbsenceEntry) = minutesMap[e.id] ?: (e.hours * 50)
     fun fmt(m: Int) = formatAbsenceMinutes(m, exact)
@@ -173,6 +200,7 @@ fun AbsencesScreen(onNavigateBack: () -> Unit = {}, viewModel: AbsencesViewModel
                         rate = rate,
                         rateColor = rateColor,
                     )
+                    Actions(Modifier)
                     EmptyStateView(
                         icon = PokyhIcons.verified,
                         title = "Keine Fehlstunden",
@@ -197,6 +225,7 @@ fun AbsencesScreen(onNavigateBack: () -> Unit = {}, viewModel: AbsencesViewModel
                         rateColor = rateColor,
                         modifier = Modifier.fadeIn(),
                     )
+                    Actions(Modifier.fadeIn(20))
                     groupAbsencesByMonth(absences, minutesMap).forEachIndexed { idx, group ->
                         PokyhSection(
                             title = group.label,
@@ -208,6 +237,14 @@ fun AbsencesScreen(onNavigateBack: () -> Unit = {}, viewModel: AbsencesViewModel
                                     absence = a,
                                     label = fmt(getMin(a)),
                                     onOpenInTimetable = { viewModel.openInTimetable(a.startDate) },
+                                    onExcuse = if (canReport && !a.isExcused) {
+                                        {
+                                            excusing = listOf(a.id) to
+                                                listOf(dateText(a), subText(a)).filter { it.isNotEmpty() }.joinToString(" · ")
+                                        }
+                                    } else {
+                                        null
+                                    },
                                 )
                             }
                         }
@@ -215,6 +252,42 @@ fun AbsencesScreen(onNavigateBack: () -> Unit = {}, viewModel: AbsencesViewModel
                 }
             }
         }
+    }
+
+    if (reporting) ReportAbsenceSheet(viewModel = viewModel, onDismiss = { reporting = false })
+    excusing?.let { (ids, summary) ->
+        ExcuseAbsenceSheet(viewModel = viewModel, absenceIds = ids, summary = summary, onDismiss = { excusing = null })
+    }
+}
+
+/** "Abwesenheit melden" and, with open absences, the year's excuse letter as WebUntis prints it. */
+@Composable
+private fun AbsenceActions(
+    hasOpen: Boolean,
+    letterLoading: Boolean,
+    letterError: String?,
+    onReport: () -> Unit,
+    onLetter: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+        PokyhPrimaryButton(
+            text = "Abwesenheit melden",
+            icon = PokyhIcons.add,
+            onClick = onReport,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (hasOpen) {
+            PokyhSecondaryButton(
+                text = "Entschuldigungsschreiben",
+                icon = PokyhIcons.filePdf,
+                onClick = onLetter,
+                loading = letterLoading,
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        letterError?.let { Text(it, style = PokyhType.footnote, color = Brand.danger) }
     }
 }
 
@@ -288,7 +361,12 @@ private fun FehlquoteBar(rate: Double, rateColor: Color, modifier: Modifier = Mo
 }
 
 @Composable
-private fun AbsenceRow(absence: AbsenceEntry, label: String, onOpenInTimetable: () -> Unit) {
+private fun AbsenceRow(
+    absence: AbsenceEntry,
+    label: String,
+    onOpenInTimetable: () -> Unit,
+    onExcuse: (() -> Unit)? = null,
+) {
     val colors = PokyhTheme.colors
     Column(
         modifier = Modifier
@@ -315,13 +393,25 @@ private fun AbsenceRow(absence: AbsenceEntry, label: String, onOpenInTimetable: 
         }
         absence.reasonName?.takeIf { it.isNotEmpty() }?.let { InfoLine("Grund", it) }
         absence.note?.takeIf { it.isNotEmpty() }?.let { InfoLine("Text", it) }
-        PokyhSecondaryButton(
-            text = "Im Stundenplan ansehen",
-            icon = PokyhIcons.timetable,
-            onClick = onOpenInTimetable,
-            compact = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+            // Like WebUntis: who may report absences gives open ones a reason and a note.
+            if (onExcuse != null) {
+                PokyhSecondaryButton(
+                    text = "Entschuldigen",
+                    icon = PokyhIcons.edit,
+                    onClick = onExcuse,
+                    compact = true,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            PokyhSecondaryButton(
+                text = if (onExcuse != null) "Stundenplan" else "Im Stundenplan ansehen",
+                icon = PokyhIcons.timetable,
+                onClick = onOpenInTimetable,
+                compact = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 

@@ -10,6 +10,7 @@ import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
 import dev.plattnericus.pokyh.data.backend.BackendClient
 import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.AppError
+import dev.plattnericus.pokyh.data.model.LessonDetail
 import dev.plattnericus.pokyh.data.model.TimetableEntry
 import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.untis.MergedSlot
@@ -437,8 +438,47 @@ class TimetableViewModel @Inject constructor(
 
     // ── Detail sheet ─────────────────────────────────────────────────────────
 
-    fun showDetail(slot: MergedSlot) { _detail.value = slot }
-    fun dismissDetail() { _detail.value = null }
+    fun showDetail(slot: MergedSlot) {
+        _detail.value = slot
+        loadLessonDetail(slot.display)
+    }
+
+    fun dismissDetail() {
+        _detail.value = null
+        lessonDetailJob?.cancel()
+    }
+
+    /** The open lesson's detail from WebUntis (classes, group, lesson texts, homework). */
+    data class LessonDetailState(val loading: Boolean = false, val detail: LessonDetail? = null)
+
+    private val _lessonDetail = MutableStateFlow(LessonDetailState())
+    val lessonDetail: StateFlow<LessonDetailState> = _lessonDetail.asStateFlow()
+
+    /** Kept while the screen lives, so a lesson opened again shows everything at once. */
+    private val lessonDetails = mutableMapOf<String, LessonDetail>()
+    private var lessonDetailJob: kotlinx.coroutines.Job? = null
+
+    private fun loadLessonDetail(entry: TimetableEntry) {
+        lessonDetailJob?.cancel()
+        val session = appState.session.value
+        // Cancelled lessons have nothing worth waiting for; offline there is no detail at all.
+        if (entry.isCancelled || session == null || session.bearerToken.isEmpty() || appState.isOffline.value) {
+            _lessonDetail.value = LessonDetailState()
+            return
+        }
+        val key = "${entry.date}-${entry.startTime}-${entry.endTime}"
+        lessonDetails[key]?.let {
+            _lessonDetail.value = LessonDetailState(detail = it)
+            return
+        }
+        _lessonDetail.value = LessonDetailState(loading = true)
+        lessonDetailJob = viewModelScope.launch {
+            // A failed detail only means the popup shows what the timetable knows.
+            val detail = runCatching { untisClient.lessonDetail(session, entry) }.getOrNull()
+            if (detail != null) lessonDetails[key] = detail
+            _lessonDetail.value = LessonDetailState(detail = detail)
+        }
+    }
 
     // ── .ics export ──────────────────────────────────────────────────────────
 

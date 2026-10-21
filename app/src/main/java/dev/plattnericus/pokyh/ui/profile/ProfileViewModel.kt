@@ -6,6 +6,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.plattnericus.pokyh.BuildConfig
 import dev.plattnericus.pokyh.core.update.AppUpdater
 import dev.plattnericus.pokyh.data.backend.BackendClient
+import dev.plattnericus.pokyh.data.model.ApiAccountActivity
 import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.data.model.UserSession
@@ -318,6 +319,86 @@ class ProfileViewModel @Inject constructor(
             if (backendReachable != null) appendLine("backendErreichbar=${if (backendReachable) "ja" else "nein"}")
             appendLine()
             append("App-Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+        }
+    }
+
+    // ── WebUntis-Passwort ändern ────────────────────────────────────────────
+
+    data class PasswordState(val saving: Boolean = false, val error: String? = null, val done: Boolean = false)
+
+    private val _password = MutableStateFlow(PasswordState())
+    val password: StateFlow<PasswordState> = _password.asStateFlow()
+
+    fun resetPasswordState() {
+        _password.value = PasswordState()
+    }
+
+    /**
+     * Changes the WebUntis password (WebUntis checks the old one and its rules). Afterwards the
+     * app signs in with the new one: it replaces a stored password and the offline check.
+     * Passwords never leave this call except to WebUntis.
+     */
+    fun changePassword(oldPassword: String, newPassword: String, confirm: String) {
+        val s = appState.session.value ?: return
+        if (_password.value.saving) return
+        val problem = when {
+            oldPassword.isEmpty() || newPassword.isEmpty() -> "Bitte beide Passwörter eingeben."
+            newPassword != confirm -> "Die neuen Passwörter stimmen nicht überein."
+            oldPassword == newPassword -> "Das neue Passwort muss sich vom alten unterscheiden."
+            else -> null
+        }
+        if (problem != null) {
+            _password.value = PasswordState(error = problem)
+            return
+        }
+        _password.value = PasswordState(saving = true)
+        viewModelScope.launch {
+            try {
+                untisClient.changePassword(s, oldPassword, newPassword)
+                if (secureCredentialStore.hasCredentialsSync(s.username)) {
+                    secureCredentialStore.saveCredentials(s.username, newPassword)
+                } else {
+                    secureCredentialStore.replaceOfflineVerifier(s.username, newPassword)
+                }
+                _password.value = PasswordState(done = true)
+            } catch (e: dev.plattnericus.pokyh.data.model.AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
+                _password.value = PasswordState(
+                    error = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message,
+                )
+            } catch (e: Exception) {
+                _password.value = PasswordState(error = "Das Passwort konnte nicht geändert werden.")
+            }
+        }
+    }
+
+    // ── Aktivität (Raster im Profil, Statistiken) ───────────────────────────
+
+    sealed interface ActivityState {
+        data object Loading : ActivityState
+        data object Unavailable : ActivityState
+        data class Failed(val reason: String) : ActivityState
+        data class Loaded(val activity: ApiAccountActivity) : ActivityState
+    }
+
+    private val _activity = MutableStateFlow<ActivityState>(ActivityState.Loading)
+    val activity: StateFlow<ActivityState> = _activity.asStateFlow()
+
+    /** The account's activity from the POKYH server; needs the POKYH account (backend token). */
+    fun loadActivity(force: Boolean = false) {
+        if (!force && _activity.value is ActivityState.Loaded) return
+        val token = appState.session.value?.apiToken
+        if (token.isNullOrEmpty()) {
+            _activity.value = ActivityState.Unavailable
+            return
+        }
+        _activity.value = ActivityState.Loading
+        viewModelScope.launch {
+            _activity.value = try {
+                ActivityState.Loaded(backendClient.accountActivity(token))
+            } catch (e: Exception) {
+                ActivityState.Failed(e.message ?: "network_error")
+            }
         }
     }
 }

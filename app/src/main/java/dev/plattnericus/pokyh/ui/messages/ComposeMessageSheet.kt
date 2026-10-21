@@ -152,7 +152,7 @@ private fun ComposeForm(
                 iconSize = 18.dp,
             )
             Text(
-                text = "Mitteilung an Lehrkraft",
+                text = if (state.isReply) "Antworten" else "Mitteilung an Lehrkraft",
                 style = PokyhType.headline,
                 color = colors.textPrimary,
                 modifier = Modifier.weight(1f).padding(horizontal = PokyhSpacing.md),
@@ -180,17 +180,27 @@ private fun ComposeForm(
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap)) {
-            SheetField(
-                label = "An",
-                value = when {
-                    state.selected.isEmpty() && state.recipientsFailed -> "Nicht verfügbar"
-                    state.selected.isEmpty() -> "Wählen"
-                    state.selected.size == 1 -> state.selected.first().name
-                    else -> "${state.selected.size} Empfänger"
-                },
-                placeholder = state.selected.isEmpty(),
-                onClick = onPickRecipients,
-            )
+            if (state.isReply) {
+                // A reply goes to the sender; WebUntis says who that is.
+                SheetField(
+                    label = "An",
+                    value = state.replyRecipient?.ifEmpty { null } ?: if (state.replyLoading) "…" else "Nicht verfügbar",
+                    placeholder = state.replyRecipient.isNullOrEmpty(),
+                    onClick = null,
+                )
+            } else {
+                SheetField(
+                    label = "An",
+                    value = when {
+                        state.selected.isEmpty() && state.recipientsFailed -> "Nicht verfügbar"
+                        state.selected.isEmpty() -> "Wählen"
+                        state.selected.size == 1 -> state.selected.first().name
+                        else -> "${state.selected.size} Empfänger"
+                    },
+                    placeholder = state.selected.isEmpty(),
+                    onClick = onPickRecipients,
+                )
+            }
 
             PokyhTextField(
                 value = state.subject,
@@ -260,18 +270,20 @@ private fun ComposeForm(
                 compact = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            PokyhSecondaryButton(
-                text = if (state.draftSaved) "Entwurf gespeichert" else "Als Entwurf speichern",
-                icon = if (state.draftSaved) PokyhIcons.check else PokyhIcons.compose,
-                onClick = viewModel::saveDraft,
-                loading = state.savingDraft,
-                enabled = !state.busy,
-                compact = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (!state.isReply) {
+                PokyhSecondaryButton(
+                    text = if (state.draftSaved) "Entwurf gespeichert" else "Als Entwurf speichern",
+                    icon = if (state.draftSaved) PokyhIcons.check else PokyhIcons.compose,
+                    onClick = viewModel::saveDraft,
+                    loading = state.savingDraft,
+                    enabled = !state.busy,
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
-        if (state.recipientsFailed) {
+        if (state.recipientsFailed && !state.isReply) {
             Text(
                 text = "Empfänger konnten gerade nicht geladen werden.",
                 style = PokyhType.footnote,
@@ -279,7 +291,7 @@ private fun ComposeForm(
             )
         }
         state.error?.let { message -> SheetBanner(text = message, color = Brand.danger) }
-        if (state.sent) SheetBanner(text = "Nachricht gesendet.", color = Brand.success)
+        if (state.sent) SheetBanner(text = if (state.isReply) "Antwort gesendet." else "Nachricht gesendet.", color = Brand.success)
     }
 }
 
@@ -425,9 +437,10 @@ private fun RecipientGroup(
     }
 }
 
-/** A tappable "label → value ›" row on the sheet's own surface (no card inside a sheet). */
+/** A "label → value ›" row on the sheet's own surface (no card inside a sheet); without
+ * [onClick] it only shows the value. */
 @Composable
-private fun SheetField(label: String, value: String, placeholder: Boolean, onClick: () -> Unit) {
+private fun SheetField(label: String, value: String, placeholder: Boolean, onClick: (() -> Unit)?) {
     val colors = PokyhTheme.colors
     Box(Modifier.fillMaxWidth().insetSurface(PokyhShapes.lg)) {
         PokyhRow(

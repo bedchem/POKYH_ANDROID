@@ -37,6 +37,7 @@ import dev.plattnericus.pokyh.ui.components.ArticleSkeleton
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhListCard
 import dev.plattnericus.pokyh.ui.components.PokyhRow
+import dev.plattnericus.pokyh.ui.components.PokyhSecondaryButton
 import dev.plattnericus.pokyh.ui.components.PokyhSection
 import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TopBarNav
@@ -60,9 +61,12 @@ import dev.plattnericus.pokyh.ui.theme.fadeIn
 fun MessageDetailScreen(
     id: Int,
     onNavigateBack: () -> Unit,
+    /** Opened from the inbox: "Antworten" is offered (WebUntis still decides in its reply form). */
+    canReply: Boolean = false,
     viewModel: MessagesViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.detail.collectAsStateWithLifecycle()
+    val composeState by viewModel.compose.collectAsStateWithLifecycle()
     LaunchedEffect(id) { viewModel.loadDetail(id) }
     val detail = ui.detail
     val context = LocalContext.current
@@ -126,6 +130,15 @@ fun MessageDetailScreen(
                     }
                 }
 
+                if (canReply) {
+                    PokyhSecondaryButton(
+                        text = "Antworten",
+                        icon = PokyhIcons.sendMessage,
+                        onClick = { viewModel.openReply(detail.id) },
+                        modifier = Modifier.fillMaxWidth().fadeIn(delayMillis = 60),
+                    )
+                }
+
                 if (detail.attachments.isNotEmpty() || ui.attachmentsLoading) {
                     PokyhSection(
                         title = "Anhänge",
@@ -172,6 +185,14 @@ fun MessageDetailScreen(
                 }
             }
         }
+    }
+
+    if (composeState.open) {
+        ComposeMessageSheet(
+            state = composeState,
+            viewModel = viewModel,
+            onDismiss = viewModel::closeCompose,
+        )
     }
 }
 

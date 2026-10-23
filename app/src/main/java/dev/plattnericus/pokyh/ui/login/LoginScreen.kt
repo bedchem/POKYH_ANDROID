@@ -48,7 +48,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.plattnericus.pokyh.ui.components.PokyhMark
+import dev.plattnericus.pokyh.core.i18n.strings
+import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextField
@@ -93,6 +94,28 @@ fun LoginScreen(
     var resettingPassword by rememberSaveable { mutableStateOf(false) }
     val passwordFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val t = strings().login
+
+    // What the mascot answers: the focused field, each key, the eye, and events.
+    var focus by remember { mutableStateOf<MascotFocus?>(null) }
+    var keys by remember { mutableStateOf(0) }
+    var showPassword by remember { mutableStateOf(false) }
+    var mascotEvent by remember { mutableStateOf<MascotEvent?>(null) }
+    // Several characters arriving at once is the phone filling the form in (autofill, a paste):
+    // one event for both fields.
+    fun typed(old: String, new: String) {
+        keys++
+        if (new.length - old.length >= 3) {
+            val last = mascotEvent
+            if (!(last?.kind == MascotEventKind.Autofill && System.currentTimeMillis() - last.n < 1500)) {
+                mascotEvent = MascotEvent(MascotEventKind.Autofill, System.currentTimeMillis())
+            }
+        }
+    }
+    // A failed attempt: the mascot wobbles.
+    LaunchedEffect(uiState.error) {
+        if (uiState.error != null) mascotEvent = MascotEvent(MascotEventKind.Error, System.currentTimeMillis())
+    }
 
     // Runs once per screen instance, so a stale error from a previous failed attempt never
     // flashes on a freshly (re)opened "Konto hinzufügen" sheet.
@@ -135,23 +158,34 @@ fun LoginScreen(
                     .padding(horizontal = PokyhSpacing.screenH),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Spacer(Modifier.height(if (isAdditional) PokyhSpacing.xxl else 72.dp))
+                Spacer(Modifier.height(if (isAdditional) PokyhSpacing.lg else 40.dp))
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
                     modifier = Modifier.fadeIn(),
                 ) {
-                    PokyhMark(size = 76.dp)
+                    // The mascot in place of the logo, as on the web's sign-in page on phones.
+                    LoginMascotBadge(
+                        state = LoginMascotState(
+                            focus = focus,
+                            username = username,
+                            showPassword = showPassword,
+                            loading = uiState.busy,
+                            keys = keys,
+                            event = mascotEvent,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Text("POKYH", style = PokyhType.wordmark, color = PokyhTheme.colors.textPrimary)
                     Text(
-                        text = "Schulapp für die LBS Brixen",
+                        text = t.tagline,
                         style = PokyhType.callout,
                         color = PokyhTheme.colors.textSecondary,
                     )
                 }
 
-                Spacer(Modifier.height(PokyhSpacing.huge))
+                Spacer(Modifier.height(PokyhSpacing.xxl))
 
                 Column(
                     modifier = Modifier.fillMaxWidth().fadeIn(delayMillis = 50),
@@ -159,10 +193,13 @@ fun LoginScreen(
                 ) {
                     PokyhTextField(
                         value = username,
-                        onValueChange = { username = it },
-                        placeholder = "Benutzername",
+                        onValueChange = { typed(username, it); username = it },
+                        placeholder = t.username,
                         leadingIcon = PokyhIcons.person,
                         modifier = Modifier.fillMaxWidth(),
+                        onFocusChange = { has ->
+                            if (has) focus = MascotFocus.User else if (focus == MascotFocus.User) focus = null
+                        },
                         keyboardOptions = KeyboardOptions(
                             autoCorrectEnabled = false,
                             keyboardType = KeyboardType.Text,
@@ -173,12 +210,26 @@ fun LoginScreen(
                     )
                     PokyhTextField(
                         value = password,
-                        onValueChange = { password = it },
-                        placeholder = "Passwort",
+                        onValueChange = { typed(password, it); password = it },
+                        placeholder = t.password,
                         leadingIcon = PokyhIcons.password,
                         isPassword = true,
+                        passwordVisible = showPassword,
                         modifier = Modifier.fillMaxWidth(),
                         focusRequester = passwordFocusRequester,
+                        onFocusChange = { has ->
+                            if (has) focus = MascotFocus.Password else if (focus == MascotFocus.Password) focus = null
+                        },
+                        trailing = {
+                            PokyhIconButton(
+                                icon = if (showPassword) PokyhIcons.hidePassword else PokyhIcons.showPassword,
+                                contentDescription = if (showPassword) t.hidePassword else t.showPassword,
+                                onClick = { showPassword = !showPassword },
+                                tint = PokyhTheme.colors.textTertiary,
+                                size = 32.dp,
+                                iconSize = 20.dp,
+                            )
+                        },
                         keyboardOptions = KeyboardOptions(
                             autoCorrectEnabled = false,
                             keyboardType = KeyboardType.Password,
@@ -205,7 +256,7 @@ fun LoginScreen(
                                     modifier = Modifier.size(20.dp),
                                 )
                                 Text(
-                                    text = "Mit Biometrie speichern",
+                                    text = t.saveBiometric,
                                     style = PokyhType.callout,
                                     color = PokyhTheme.colors.textPrimary,
                                 )
@@ -236,14 +287,14 @@ fun LoginScreen(
 
                     Spacer(Modifier.height(PokyhSpacing.xs))
                     PokyhPrimaryButton(
-                        text = if (uiState.busy) uiState.statusText.ifEmpty { "Anmelden…" } else "Anmelden",
+                        text = if (uiState.busy) uiState.statusText.ifEmpty { t.signingIn } else t.signIn,
                         onClick = { submit() },
                         enabled = username.isNotBlank() && password.isNotBlank(),
                         loading = uiState.busy,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     PokyhTextButton(
-                        text = "Passwort vergessen?",
+                        text = t.forgotPassword,
                         onClick = { resettingPassword = true },
                         modifier = Modifier.align(Alignment.CenterHorizontally),
                     )
@@ -251,7 +302,7 @@ fun LoginScreen(
 
                 Spacer(Modifier.height(PokyhSpacing.xxl))
                 Text(
-                    text = "Melde dich mit deinem WebUntis-Konto an.",
+                    text = t.hint,
                     style = PokyhType.footnote,
                     color = PokyhTheme.colors.textTertiary,
                     textAlign = TextAlign.Center,
@@ -260,14 +311,14 @@ fun LoginScreen(
                 val uriHandler = LocalUriHandler.current
                 Spacer(Modifier.height(PokyhSpacing.xs))
                 Text(
-                    text = "Wie POKYH mit deinen Daten umgeht, steht in der Datenschutzerklärung.",
+                    text = t.privacyNote,
                     style = PokyhType.footnote,
                     color = PokyhTheme.colors.textTertiary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = PokyhSpacing.xxl),
                 )
                 Text(
-                    text = "Datenschutzerklärung lesen",
+                    text = t.privacyRead,
                     style = PokyhType.footnote,
                     color = PokyhTheme.colors.accentText,
                     textAlign = TextAlign.Center,

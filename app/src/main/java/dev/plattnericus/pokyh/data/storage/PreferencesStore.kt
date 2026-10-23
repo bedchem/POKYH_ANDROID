@@ -149,12 +149,12 @@ class PreferencesStore @Inject constructor(
 
     // ── Bereits gesehene Noten-IDs (NotificationManager.checkNewGrades) ────
 
-    val seenGradeIds: Flow<Set<Int>> = context.dataStore.data.map { prefs ->
-        prefs[SEEN_GRADE_IDS]?.let { decodeOrNull(it, SetIntSerializer) } ?: emptySet()
+    val seenGradeIds: Flow<Set<Long>> = context.dataStore.data.map { prefs ->
+        prefs[SEEN_GRADE_IDS]?.let { decodeOrNull(it, SetLongSerializer) } ?: emptySet()
     }
 
-    suspend fun setSeenGradeIds(ids: Set<Int>) {
-        context.dataStore.edit { it[SEEN_GRADE_IDS] = json.encodeToString(SetIntSerializer, ids) }
+    suspend fun setSeenGradeIds(ids: Set<Long>) {
+        context.dataStore.edit { it[SEEN_GRADE_IDS] = json.encodeToString(SetLongSerializer, ids) }
     }
 
     // ── Bereits gemeldete Stundenausfälle (NotificationManager.checkTimetableChanges) ──
@@ -191,7 +191,7 @@ class PreferencesStore @Inject constructor(
     // und ein unlesbares Layout darf Home nicht blockieren.
 
     val homeLayout: Flow<HomeLayout> = context.dataStore.data.map { prefs ->
-        prefs[HOME_LAYOUT]?.let { decodeOrNull(it, HomeLayout.serializer()) } ?: HomeLayout()
+        prefs[HOME_LAYOUT]?.let { decodeOrNull(it, HomeLayout.serializer()) }?.withoutOldDefaultToday() ?: HomeLayout()
     }
 
     suspend fun setHomeLayout(layout: HomeLayout) {
@@ -258,13 +258,14 @@ data class PopupSeenEntry(val slot: Int, val count: Int, val at: Long)
 
 private val MapStringPopupSeenSerializer = MapSerializer(serializer<String>(), PopupSeenEntry.serializer())
 private val SetIntSerializer = SetSerializer(serializer<Int>())
+private val SetLongSerializer = SetSerializer(serializer<Long>())
 private val SetStringSerializer = SetSerializer(serializer<String>())
 
 /** Port of `GradeDraft` (GradeMath.swift) — local "what-if" grades per lesson (lessonId), kept
  * out of `data.model` since it's calculator-scratch state, not a WebUntis/backend domain model. */
 @kotlinx.serialization.Serializable
 data class GradeDraftEntry(
-    val removedTeacherGradeIds: List<Int> = emptyList(),
+    val removedTeacherGradeIds: List<Long> = emptyList(),
     val customGrades: List<Double> = emptyList(),
 ) {
     val isEmpty: Boolean get() = removedTeacherGradeIds.isEmpty() && customGrades.isEmpty()

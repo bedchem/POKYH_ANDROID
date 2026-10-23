@@ -215,6 +215,7 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
                         unreadMessages = rememberUnreadMessageCount(),
                         onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                         onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                        onNavigate = onNavigate,
                     )
                 },
             )

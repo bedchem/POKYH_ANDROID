@@ -64,10 +64,17 @@ fun PokyhTextField(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     focusRequester: FocusRequester? = null,
+    /** With [isPassword]: show the password in plain text (the eye button beside it). */
+    passwordVisible: Boolean = false,
+    /** Told when the field gains or loses the focus. */
+    onFocusChange: ((Boolean) -> Unit)? = null,
 ) {
     val colors = PokyhTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
+    if (onFocusChange != null) {
+        androidx.compose.runtime.LaunchedEffect(focused) { onFocusChange(focused) }
+    }
     val ringColor by animateColorAsState(
         targetValue = if (focused) Brand.accent else Color.Transparent,
         animationSpec = androidx.compose.animation.core.tween(PokyhMotion.durationFast),
@@ -108,7 +115,7 @@ fun PokyhTextField(
                     minLines = minLines,
                     textStyle = PokyhType.body.copy(color = colors.textPrimary),
                     cursorBrush = SolidColor(Brand.accent),
-                    visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+                    visualTransformation = if (isPassword && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
                     keyboardOptions = keyboardOptions,
                     keyboardActions = keyboardActions,
                     interactionSource = interactionSource,

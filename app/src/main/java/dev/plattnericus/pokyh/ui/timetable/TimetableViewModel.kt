@@ -311,7 +311,7 @@ class TimetableViewModel @Inject constructor(
                 return
             }
             if (!silent) {
-                val message = (e as? AppError)?.message ?: e.message ?: "Unbekannter Fehler."
+                val message = (e as? AppError)?.message ?: e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
                 _pages.update { it + (offset to WeekPageState.Error(message)) }
             }
         }

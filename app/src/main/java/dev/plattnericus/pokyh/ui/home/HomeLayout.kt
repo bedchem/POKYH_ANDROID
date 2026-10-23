@@ -29,7 +29,8 @@ enum class HomeSection(
 ) {
     Shortcuts("Schnellzugriff", "Noten, Abwesenheiten, Todos und Erinnerungen", PokyhIcons.decorSubjects, true),
     Exam("Nächste Schularbeit", "Der nächste Test mit Datum und Uhrzeit", PokyhIcons.exam, true),
-    Today("Heute", "Alle Stunden von heute", PokyhIcons.tabTimetable, true),
+    // No longer one of the standard widgets; it stays in "Widgets hinzufügen".
+    Today("Heute", "Alle Stunden von heute", PokyhIcons.tabTimetable, false),
     Mensa("Mensa", "Der Speiseplan der Woche", PokyhIcons.mensa, true),
     Grades("Zuletzt eingetragen", "Die drei neuesten Noten", PokyhIcons.tabGrades, true),
     NowNext("Jetzt & gleich", "Laufende und nächste Stunde mit Countdown", PokyhIcons.clock, false),
@@ -109,4 +110,14 @@ data class HomeLayout(
     }
 
     fun reset(): HomeLayout = HomeLayout()
+
+    /**
+     * "Heute" stopped being a standard widget. A layout still exactly on the old standard set
+     * (never arranged by hand) loses it like a fresh install; a Home someone arranged keeps it.
+     */
+    fun withoutOldDefaultToday(): HomeLayout =
+        if (hidden.isEmpty() && order == OldDefaultOrder) copy(order = order - HomeSection.Today.name) else this
 }
+
+/** The standard widgets while "Heute" was one of them. */
+private val OldDefaultOrder = listOf("Shortcuts", "Exam", "Today", "Mensa", "Grades")

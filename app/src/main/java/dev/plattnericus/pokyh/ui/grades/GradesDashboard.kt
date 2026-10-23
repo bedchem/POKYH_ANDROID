@@ -10,6 +10,8 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.util.GradeEntryOrder
 import kotlinx.datetime.LocalDate
 
 /**
@@ -54,7 +56,7 @@ internal data class SparkPath(val points: List<Pair<Float, Float>>)
 
 internal data class SparkPoint(val x: Float, val y: Float, val avg: Double, val label: String)
 
-internal data class RecentGradeItem(val id: Int, val subject: String, val numeric: Double, val date: Int)
+internal data class RecentGradeItem(val id: Long, val subject: String, val numeric: Double, val date: Int)
 
 /**
  * One donut arc, pre-computed in the web's 110x110 viewBox: centre (55,55), radius 29, stroke
@@ -87,9 +89,6 @@ internal object SparkGeometry {
     const val HEIGHT = 60f
 }
 
-private val MonthLabels = listOf(
-    "Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
-)
 
 /** `monthKey` — the `YYYYMM` prefix of a WebUntis `YYYYMMDD` date. */
 private fun monthKey(date: Int): String = date.toString().take(6)
@@ -186,13 +185,14 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
             x = sparkXs[i],
             y = if (avg > 0) toSparkY(avg) else 58f,
             avg = avg,
-            label = "${MonthLabels[key.substring(4, 6).toInt() - 1]} ${key.substring(2, 4)}",
+            label = "${I18n.s.common.monthsShort[key.substring(4, 6).toInt() - 1]} ${key.substring(2, 4)}",
         )
     }
 
     val recent = allGrades
         .filter { it.entry.markDisplayValue > 0 }
-        .sortedByDescending { it.entry.id }
+        // The order the grades were entered in, newest first (GradeEntryOrder) — not the exam date.
+        .sortedWith(GradeEntryOrder.comparator<Flat> { it.entry })
         .take(3)
         .map { RecentGradeItem(it.entry.id, it.subjectName, it.entry.markDisplayValue, it.entry.date) }
 
@@ -276,17 +276,7 @@ fun gradeBand(value: Double): GradeBand = when {
 }
 
 /** `fmtUntisDateLong` — "21. Mai 2026" for a `YYYYMMDD` int. */
-internal fun formatUntisDateLong(date: Int): String {
-    val s = date.toString()
-    if (s.length != 8) return s
-    val months = listOf(
-        "Januar", "Februar", "März", "April", "Mai", "Juni",
-        "Juli", "August", "September", "Oktober", "November", "Dezember",
-    )
-    val month = s.substring(4, 6).toInt()
-    if (month !in 1..12) return s
-    return "${s.substring(6, 8).toInt()}. ${months[month - 1]} ${s.substring(0, 4)}"
-}
+internal fun formatUntisDateLong(date: Int): String = dev.plattnericus.pokyh.core.util.Fmt.dateLong(date)
 
 /** Absolute delta, formatted for the trend pill. */
 internal fun absDelta(delta: Double): Double = abs(delta)

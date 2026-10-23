@@ -66,7 +66,7 @@ class LoginViewModel @Inject constructor(
             } catch (e: AppError) {
                 ResetState(error = e.message)
             } catch (e: Exception) {
-                ResetState(error = "WebUntis ist gerade nicht erreichbar.")
+                ResetState(error = dev.plattnericus.pokyh.core.i18n.I18n.s.login.resetUnreachable)
             }
         }
     }

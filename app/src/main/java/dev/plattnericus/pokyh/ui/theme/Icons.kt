@@ -205,6 +205,22 @@ object PokyhIcons {
     val markOnline = Ph.Lightning
     val markClassRegister = Ph.BookBookmark
     val markUnknown = Ph.Info
+
+    // ── Added with the web features (bell, settings, language, password, support) ──
+
+    val showPassword = Ph.Eye
+    val hidePassword = Ph.EyeSlash
+    val notifications = Ph.Bell
+    /** The streak is lit: one of the filled states (a status, like a badge). */
+    val streak = PhFill.Fire
+    val streakOut = Ph.Fire
+    val reminderSoon = PhFill.BellRinging
+    val reminderNew = Ph.BellRinging
+    val settings = Ph.GearSix
+    val language = Ph.Globe
+    val support = Ph.Coffee
+    val absenceCalculator = Ph.Calculator
+    val switchCanteen = Ph.ArrowsLeftRight
 }
 
 /**

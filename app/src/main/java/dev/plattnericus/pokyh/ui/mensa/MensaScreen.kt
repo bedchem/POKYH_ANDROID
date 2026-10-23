@@ -92,6 +92,7 @@ fun MensaScreen(
                         unreadMessages = rememberUnreadMessageCount(),
                         onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                         onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                        onNavigate = onNavigate,
                     )
                 },
             )
@@ -114,7 +115,7 @@ fun MensaScreen(
                     ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
 
                 ui.groups.isEmpty() -> EmptyStateView(
-                    icon = PokyhIcons.mensa,
+                    sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Empty,
                     title = "Kein Speiseplan",
                     subtitle = "Aktuell ist kein Menü verfügbar.",
                 )

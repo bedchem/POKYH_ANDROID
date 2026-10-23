@@ -291,7 +291,7 @@ class AppUpdater @Inject constructor(
         is java.net.UnknownHostException -> "Keine Internetverbindung."
         is java.net.SocketTimeoutException -> "Zeitüberschreitung beim Download."
         is IOException -> message?.takeIf { it.isNotBlank() } ?: "Download fehlgeschlagen."
-        else -> "Unbekannter Fehler."
+        else -> dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
     }
 
     @Serializable

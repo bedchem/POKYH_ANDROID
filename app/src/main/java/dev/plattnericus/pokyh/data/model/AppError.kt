@@ -1,5 +1,9 @@
 package dev.plattnericus.pokyh.data.model
 
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.i18n.Lang
+import dev.plattnericus.pokyh.core.i18n.stringsFor
+
 /** Mirrors `Models.swift`'s `AppError` — a typed exception carrying a backend/domain message. */
 class AppError(
     message: String,
@@ -22,7 +26,7 @@ class AppError(
 ) : Exception(message) {
     companion object {
         val sessionExpired = AppError("session_expired", isSessionExpired = true)
-        fun noConnection(message: String = "Keine Verbindung") = AppError(message, isNetwork = true)
+        fun noConnection(message: String = I18n.s.common.noConnection) = AppError(message, isNetwork = true)
 
         /**
          * Signed in offline, and this piece of data was never stored on the device.
@@ -32,8 +36,10 @@ class AppError(
          * "Ferien" in the timetable and "Noch keine Noten" for past years — and it got written
          * over the cached copy that would otherwise have been shown.
          */
-        const val OFFLINE_NOT_SAVED = "Du bist offline, und das wurde auf diesem Gerät noch nicht " +
-            "gespeichert. Sobald du wieder Internet hast, wird es geladen."
-        val offlineNotSaved: AppError get() = AppError(OFFLINE_NOT_SAVED, isNetwork = true)
+        val offlineNotSaved: AppError get() = AppError(I18n.s.common.offlineNotSaved, isNetwork = true)
+
+        /** Whether [message] is the "offline and not stored" text, in whichever language it was made. */
+        fun isOfflineNotSaved(message: String?): Boolean =
+            message != null && Lang.entries.any { stringsFor(it).common.offlineNotSaved == message }
     }
 }

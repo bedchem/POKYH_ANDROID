@@ -16,6 +16,8 @@ object PokyhDestinations {
     const val REMINDERS = "reminders"
     const val REMINDER_DETAIL = "reminders/{reminderId}"
     const val ABSENCES = "absences"
+    const val ABSENCE_CALC = "absences/calc?absent={absent}&total={total}"
+    const val SETTINGS = "settings"
     const val MESSAGES = "messages"
     const val MESSAGE_DETAIL = "messages/{id}?reply={reply}"
     const val CLASSREG_EVENTS = "classreg_events"
@@ -34,6 +36,10 @@ object PokyhDestinations {
     fun reminderDetail(reminderId: String): String = "reminders/$reminderId"
     /** [reply]: opened from the inbox, so "Antworten" is offered (sent and draft messages have none). */
     fun messageDetail(id: Int, reply: Boolean = false): String = "messages/$id?reply=$reply"
+
+    /** The calculator, filled in with the year's own numbers when there are any (hours). */
+    fun absenceCalculator(absentHours: Double? = null, totalHours: Double? = null): String =
+        "absences/calc?absent=${absentHours?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: ""}&total=${totalHours?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: ""}"
 }
 
 /** Store.swift `AppTab` — the 5 bottom-navigation roots; [route] is that tab's NavHost start destination. */

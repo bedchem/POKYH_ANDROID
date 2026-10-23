@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.plattnericus.pokyh.core.i18n.strings
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
@@ -81,11 +82,11 @@ fun TrendChart(values: List<Double>, modifier: Modifier = Modifier) {
         // Header + legend.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(PokyhIcons.gradeTrend, contentDescription = null, tint = PokyhTheme.colors.textSecondary, modifier = Modifier.size(13.dp))
-            PokyhLabel("Notenverlauf", color = PokyhTheme.colors.textSecondary)
+            PokyhLabel(strings().grades.trend, color = PokyhTheme.colors.textSecondary)
             Spacer(Modifier.weight(1f))
-            LegendDot(Brand.accent.copy(alpha = 0.6f), "Noten")
+            LegendDot(Brand.accent.copy(alpha = 0.6f), strings().grades.trendGrades)
             LegendDot(avgColor, "Ø")
-            LegendDot(Brand.orange, "Trend $trendArrow")
+            LegendDot(Brand.orange, strings().grades.trendLabel(trendArrow))
         }
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -171,9 +172,9 @@ fun TrendChart(values: List<Double>, modifier: Modifier = Modifier) {
 
         // X-Achse (Reihenfolge der Noten).
         Row(modifier = Modifier.fillMaxWidth().padding(start = 24.dp)) {
-            Text("Note 1", style = PokyhType.caption2, color = textTertiary)
+            Text(strings().grades.gradeN(1), style = PokyhType.caption2, color = textTertiary)
             Spacer(Modifier.weight(1f))
-            Text("Note ${values.size}", style = PokyhType.caption2, color = textTertiary)
+            Text(strings().grades.gradeN(values.size), style = PokyhType.caption2, color = textTertiary)
         }
     }
 }

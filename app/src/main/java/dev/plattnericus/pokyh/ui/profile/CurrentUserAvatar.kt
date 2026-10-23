@@ -60,7 +60,7 @@ fun CurrentUserAvatar(
         ) {
             Icon(
                 imageVector = PokyhIcons.profile,
-                contentDescription = "Profil",
+                contentDescription = dev.plattnericus.pokyh.core.i18n.I18n.s.profile.title,
                 tint = PokyhTheme.colors.textPrimary,
                 modifier = Modifier.size(size * 0.5f),
             )

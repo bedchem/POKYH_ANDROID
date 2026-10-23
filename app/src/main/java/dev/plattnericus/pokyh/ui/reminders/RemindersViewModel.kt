@@ -140,7 +140,7 @@ class RemindersViewModel @Inject constructor(
                 notifications.scheduleReminders(list)
                 store(list)
             }
-            .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.") } }
+            .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) } }
     }
 
     /** Retry button / pull-to-refresh — the manual fallback for a dead SSE stream. */

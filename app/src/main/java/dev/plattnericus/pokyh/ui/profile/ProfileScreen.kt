@@ -2,8 +2,6 @@
 
 package dev.plattnericus.pokyh.ui.profile
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,7 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,26 +36,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.plattnericus.pokyh.BuildConfig
-import dev.plattnericus.pokyh.core.update.AppUpdater
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.i18n.strings
 import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.ui.components.MiniBadge
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
-import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.components.PokyhRow
-import dev.plattnericus.pokyh.ui.components.PokyhRowMenuCaret
 import dev.plattnericus.pokyh.ui.components.PokyhRowSeparator
 import dev.plattnericus.pokyh.ui.components.PokyhSection
-import dev.plattnericus.pokyh.ui.components.IconTile
 import dev.plattnericus.pokyh.ui.components.PokyhSectionHeader
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextField
@@ -74,82 +67,82 @@ import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
-import dev.plattnericus.pokyh.ui.theme.PokyhThemeMode
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import dev.plattnericus.pokyh.ui.theme.popIn
 import dev.plattnericus.pokyh.ui.theme.pressable
 
-private const val LEGAL_BASE_URL = "https://pokyh.com/legal?view="
-private const val IMPRESSUM_URL = "${LEGAL_BASE_URL}impressum"
-private const val PRIVACY_URL = "${LEGAL_BASE_URL}datenschutz"
-private const val LEARN_PRIVACY_URL = "${LEGAL_BASE_URL}learn"
-private const val SUPPORT_EMAIL = "contact@pokyh.com"
-
 /**
- * Profil — a pushed full-screen route (from the header actions on every tab root).
+ * Profil — a pushed full-screen route (from the header actions on every tab root): who is signed
+ * in, their account, the activity, and the accounts saved on the device. The settings have their
+ * own page now, as on the web ([dev.plattnericus.pokyh.ui.settings.SettingsScreen]); a row near
+ * the top leads there.
  *
- * Everything settings-shaped is a grouped [PokyhCard] of [PokyhRow]s rather than one card per
- * setting, which is what the screen used to be: eleven cards stacked down the page, each with
- * its own shadow. The accounts list keeps standalone [PokyhTileRow]s, because a row there is a
- * *selectable object* with its own active state and overflow menu, not a setting.
+ * Account details are a grouped [PokyhCard] of [PokyhRow]s; the accounts list keeps standalone
+ * [PokyhTileRow]s, because a row there is a *selectable object* with its own active state and
+ * overflow menu, not a setting.
  */
 @Composable
 fun ProfileScreen(
     onNavigateUp: () -> Unit,
     onConnectionStatus: () -> Unit,
     onOpenStats: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
-    val context = LocalContext.current
+    val t = strings().profile
     val session by viewModel.session.collectAsStateWithLifecycle()
     val backendStatus by viewModel.backendStatus.collectAsStateWithLifecycle()
-    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val accountsWithPassword by viewModel.accountsWithPassword.collectAsStateWithLifecycle()
     val defaultUsername by viewModel.defaultUsername.collectAsStateWithLifecycle()
     val switchingUsername by viewModel.switchingUsername.collectAsStateWithLifecycle()
     val refreshingUsername by viewModel.refreshingUsername.collectAsStateWithLifecycle()
     val switchError by viewModel.switchError.collectAsStateWithLifecycle()
-    val clearing by viewModel.clearing.collectAsStateWithLifecycle()
-    val cacheSize by viewModel.cacheSize.collectAsStateWithLifecycle()
-    val cacheCleared by viewModel.cacheCleared.collectAsStateWithLifecycle()
-    val updateCheck by viewModel.updateCheck.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) {
-        viewModel.refreshCacheSize()
-        viewModel.clearUpdateCheckResult()
-    }
 
     var confirmLogout by remember { mutableStateOf(false) }
-    var confirmClearData by remember { mutableStateOf(false) }
     var accountToRemove by remember { mutableStateOf<SavedAccount?>(null) }
     var renameTarget by remember { mutableStateOf<SavedAccount?>(null) }
     var renameText by remember { mutableStateOf("") }
-    var changingPassword by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = PokyhTheme.colors.bg,
-        topBar = { PokyhTopBar(title = "Profil", nav = TopBarNav.Back(onNavigateUp)) },
+        topBar = {
+            PokyhTopBar(
+                title = t.title,
+                nav = TopBarNav.Back(onNavigateUp),
+                actions = {
+                    PokyhIconButton(icon = PokyhIcons.settings, contentDescription = t.settings, onClick = onOpenSettings, tinted = true)
+                },
+            )
+        },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().appBackground().padding(padding),
-            contentPadding = PaddingValues(
-                start = PokyhSpacing.screenH,
-                end = PokyhSpacing.screenH,
-                bottom = PokyhSpacing.xxxl,
-            ),
+            contentPadding = PaddingValues(start = PokyhSpacing.screenH, end = PokyhSpacing.screenH, bottom = PokyhSpacing.xxxl),
             verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
         ) {
             if (session != null) {
                 item(key = "header") { HeaderSection(session!!, Modifier.fadeIn()) }
+            }
+            item(key = "settings") {
+                PokyhCard(modifier = Modifier.fadeIn(delayMillis = 20), padding = 0.dp) {
+                    PokyhRow(
+                        title = t.settings,
+                        subtitle = t.settingsHint,
+                        leading = { RowGlyph(PokyhIcons.settings) },
+                        onClick = onOpenSettings,
+                    )
+                }
+            }
+            if (session != null) {
                 item(key = "konto") {
                     KontoSection(
                         session = session!!,
                         backendStatus = backendStatus,
                         onOpenConnectionStatus = onConnectionStatus,
-                        onChangePassword = { changingPassword = true },
                         modifier = Modifier.fadeIn(delayMillis = 30),
                     )
                 }
@@ -157,16 +150,9 @@ fun ProfileScreen(
                     ActivitySection(viewModel = viewModel, onOpenStats = onOpenStats, modifier = Modifier.fadeIn(delayMillis = 45))
                 }
             }
-            item(key = "darstellung") {
-                DarstellungSection(
-                    themeMode = themeMode,
-                    onSelect = viewModel::setThemeMode,
-                    modifier = Modifier.fadeIn(delayMillis = 60),
-                )
-            }
 
             item(key = "konten_title") {
-                PokyhSectionHeader(title = "Konten", modifier = Modifier.fadeIn(delayMillis = 80))
+                PokyhSectionHeader(title = t.accounts, modifier = Modifier.fadeIn(delayMillis = 80))
             }
             items(accounts, key = { it.username }) { acc ->
                 AccountRow(
@@ -191,120 +177,35 @@ fun ProfileScreen(
             }
             item(key = "add_account") {
                 PokyhTileRow(onClick = viewModel::addAccount, modifier = Modifier.fadeIn(delayMillis = 100)) {
-                    Icon(
-                        imageVector = PokyhIcons.addAccount,
-                        contentDescription = null,
-                        tint = PokyhTheme.colors.accentText,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Text(
-                        text = "Konto hinzufügen",
-                        style = PokyhType.body,
-                        color = PokyhTheme.colors.accentText,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Icon(imageVector = PokyhIcons.addAccount, contentDescription = null, tint = PokyhTheme.colors.accentText, modifier = Modifier.size(20.dp))
+                    Text(text = t.addAccount, style = PokyhType.body, color = PokyhTheme.colors.accentText, modifier = Modifier.weight(1f))
                 }
             }
-
-            item(key = "storage") {
-                StorageSection(
-                    clearing = clearing,
-                    cacheSize = cacheSize,
-                    cacheCleared = cacheCleared,
-                    onClearCache = viewModel::clearCache,
-                    onClearData = { confirmClearData = true },
-                    modifier = Modifier.fadeIn(delayMillis = 110),
-                )
-            }
-
+            // Signing out at the very bottom too, not only in the settings.
             if (session != null) {
                 item(key = "logout") {
-                    LogoutCard(onLogout = { confirmLogout = true }, modifier = Modifier.fadeIn(delayMillis = 115))
-                }
-            }
-
-            item(key = "about") {
-                PokyhSection(title = "Über & Rechtliches", modifier = Modifier.fadeIn(delayMillis = 120)) {
-                    PokyhCard(padding = 0.dp) {
+                    PokyhCard(modifier = Modifier.fadeIn(delayMillis = 110), padding = 0.dp) {
                         PokyhRow(
-                            title = "Impressum",
-                            leading = { RowGlyph(PokyhIcons.document) },
-                            onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(IMPRESSUM_URL))) },
-                        )
-                        PokyhRowSeparator()
-                        PokyhRow(
-                            title = "Datenschutzerklärung",
-                            leading = { RowGlyph(PokyhIcons.privacy) },
-                            onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL))) },
-                        )
-                        PokyhRowSeparator()
-                        PokyhRow(
-                            title = "Pokyh Learn · Datenschutz",
-                            leading = { RowGlyph(PokyhIcons.privacy) },
-                            onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LEARN_PRIVACY_URL))) },
-                        )
-                        PokyhRowSeparator()
-                        PokyhRow(
-                            title = "Support kontaktieren",
-                            leading = { RowGlyph(PokyhIcons.messages) },
-                            onClick = {
-                                context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$SUPPORT_EMAIL")))
-                            },
-                        )
-                        PokyhRowSeparator()
-                        PokyhRow(
-                            title = "Nach Updates suchen",
-                            leading = { RowGlyph(PokyhIcons.download) },
-                            onClick = viewModel::checkForUpdates,
-                            enabled = updateCheck != AppUpdater.ManualCheck.Checking,
+                            title = strings().settings.logout,
+                            titleColor = Brand.danger,
+                            leading = { Icon(PokyhIcons.signOut, contentDescription = null, tint = Brand.danger, modifier = Modifier.size(20.dp)) },
+                            onClick = { confirmLogout = true },
                             showChevron = false,
-                            trailing = {
-                                when (updateCheck) {
-                                    AppUpdater.ManualCheck.Checking -> CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp,
-                                        color = Brand.accent,
-                                    )
-                                    AppUpdater.ManualCheck.UpToDate ->
-                                        StatusLabel(text = "Aktuell", color = Brand.success, icon = PokyhIcons.ok)
-                                    AppUpdater.ManualCheck.Failed ->
-                                        StatusLabel(text = "Fehlgeschlagen", color = Brand.warning, icon = PokyhIcons.warningBadge)
-                                    AppUpdater.ManualCheck.Idle -> Unit
-                                }
-                            },
-                        )
-                        PokyhRowSeparator()
-                        PokyhRow(
-                            title = "Version",
-                            leading = { RowGlyph(PokyhIcons.info) },
-                            showChevron = false,
-                            trailing = {
-                                Text(
-                                    text = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                                    style = PokyhType.footnote,
-                                    color = PokyhTheme.colors.textSecondary,
-                                )
-                            },
                         )
                     }
                 }
-            }
-
-            item(key = "footer") {
-                Text(
-                    text = "POKYH · Nicht offiziell mit der LBS Brixen oder WebUntis verbunden.",
-                    style = PokyhType.caption2,
-                    color = PokyhTheme.colors.textTertiary,
-                    modifier = Modifier.fillMaxWidth().fadeIn(delayMillis = 130),
-                )
             }
         }
     }
 
     if (confirmLogout && session != null) {
-        LogoutConfirmDialog(
+        PokyhDialog(
+            title = strings().settings.logoutTitle,
+            body = strings().settings.logoutBody,
             onDismiss = { confirmLogout = false },
-            onLogoutOnly = {
+            confirmLabel = strings().settings.logout,
+            confirmColor = Brand.danger,
+            onConfirm = {
                 confirmLogout = false
                 viewModel.logoutCurrentAccount(onDone = onNavigateUp)
             },
@@ -313,24 +214,12 @@ fun ProfileScreen(
 
     accountToRemove?.let { acc ->
         PokyhDialog(
-            title = "Konto entfernen?",
-            body = "Die gespeicherten Anmeldedaten von ${acc.username} werden vom Gerät gelöscht.",
+            title = t.removeAccountTitle,
+            body = t.removeAccountBody(acc.username),
             onDismiss = { accountToRemove = null },
-            confirmLabel = "Konto entfernen",
+            confirmLabel = t.removeAccountConfirm,
             confirmColor = Brand.danger,
             onConfirm = { viewModel.removeAccount(acc.username); accountToRemove = null },
-        )
-    }
-
-    if (confirmClearData) {
-        PokyhDialog(
-            title = "Alle Daten löschen?",
-            body = "Alle Konten, gespeicherten Passwörter, Einstellungen und Offline-Daten werden von " +
-                "diesem Gerät entfernt. Du wirst abgemeldet und musst dich neu anmelden.",
-            onDismiss = { confirmClearData = false },
-            confirmLabel = "Alles löschen",
-            confirmColor = Brand.danger,
-            onConfirm = { confirmClearData = false; viewModel.clearAllData() },
         )
     }
 
@@ -339,25 +228,16 @@ fun ProfileScreen(
             onDismissRequest = { renameTarget = null },
             shape = PokyhShapes.xl,
             containerColor = PokyhTheme.colors.card,
-            title = { Text("Konto umbenennen", style = PokyhType.title3, color = PokyhTheme.colors.textPrimary) },
+            title = { Text(t.renameTitle, style = PokyhType.title3, color = PokyhTheme.colors.textPrimary) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
-                    Text(
-                        text = "Vergib einen eigenen Namen für ${target.username} (nur lokal sichtbar).",
-                        style = PokyhType.footnote,
-                        color = PokyhTheme.colors.textSecondary,
-                    )
-                    PokyhTextField(
-                        value = renameText,
-                        onValueChange = { renameText = it },
-                        placeholder = "Spitzname",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    Text(text = t.renameBody(target.username), style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
+                    PokyhTextField(value = renameText, onValueChange = { renameText = it }, placeholder = t.nickname, modifier = Modifier.fillMaxWidth())
                 }
             },
             confirmButton = {
                 PokyhTextButton(
-                    text = "Speichern",
+                    text = strings().common.save,
                     onClick = { viewModel.renameAccount(target.username, renameText); renameTarget = null },
                 )
             },
@@ -365,16 +245,12 @@ fun ProfileScreen(
                 Row {
                     if (!target.nickname.isNullOrEmpty()) {
                         PokyhTextButton(
-                            text = "Entfernen",
+                            text = t.remove,
                             color = Brand.danger,
                             onClick = { viewModel.renameAccount(target.username, null); renameTarget = null },
                         )
                     }
-                    PokyhTextButton(
-                        text = "Abbrechen",
-                        color = PokyhTheme.colors.textSecondary,
-                        onClick = { renameTarget = null },
-                    )
+                    PokyhTextButton(text = strings().common.cancel, color = PokyhTheme.colors.textSecondary, onClick = { renameTarget = null })
                 }
             },
         )
@@ -382,16 +258,12 @@ fun ProfileScreen(
 
     switchError?.let { message ->
         PokyhDialog(
-            title = "Fehler beim Kontowechsel",
+            title = t.switchErrorTitle,
             body = message,
             onDismiss = viewModel::dismissSwitchError,
-            confirmLabel = "OK",
+            confirmLabel = strings().common.ok,
             onConfirm = viewModel::dismissSwitchError,
         )
-    }
-
-    if (changingPassword) {
-        ChangePasswordSheet(viewModel = viewModel, onDismiss = { changingPassword = false })
     }
 }
 
@@ -403,33 +275,22 @@ fun ProfileScreen(
 @Composable
 fun ProfileToolbarAction(onClick: () -> Unit, viewModel: ProfileViewModel = hiltViewModel()) {
     val session by viewModel.session.collectAsStateWithLifecycle()
-    val s = session
-    if (s != null) {
-        Box(
-            modifier = Modifier.size(40.dp),
-            contentAlignment = Alignment.Center,
-        ) {
+    if (session != null) {
+        Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
             CurrentUserAvatar(size = 28.dp)
         }
     } else {
-        PokyhIconButton(
-            icon = PokyhIcons.profile,
-            contentDescription = "Profil",
-            onClick = onClick,
-            tinted = true,
-        )
+        PokyhIconButton(icon = PokyhIcons.profile, contentDescription = strings().profile.title, onClick = onClick, tinted = true)
     }
 }
 
 // ── Sections ────────────────────────────────────────────────────────────────
 
-/** The one place in the app with a centered layout: an identity block reads as a portrait, and
- * centering it is what makes the rest of the screen read as *settings about* that person.
- *
- * The portrait itself is tappable and opens at full size — a profile picture is the one image on
- * this screen, and an 88dp disc is a thumbnail of it, not the thing itself. */
+/** The one place in the app with a centered layout: an identity block reads as a portrait.
+ * The portrait itself is tappable and opens at full size. */
 @Composable
 private fun HeaderSection(session: UserSession, modifier: Modifier = Modifier) {
+    val t = strings().profile
     var avatarOpen by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
 
@@ -447,24 +308,11 @@ private fun HeaderSection(session: UserSession, modifier: Modifier = Modifier) {
             modifier = Modifier
                 .clip(PokyhShapes.pill)
                 .pressable(interactionSource)
-                .clickable(
-                    interactionSource = interactionSource,
-                    indication = null,
-                    onClickLabel = "Profilbild öffnen",
-                    onClick = { avatarOpen = true },
-                ),
+                .clickable(interactionSource = interactionSource, indication = null, onClickLabel = t.openPicture, onClick = { avatarOpen = true }),
         )
         Spacer(Modifier.size(PokyhSpacing.md))
-        Text(
-            text = session.personName ?: session.username,
-            style = PokyhType.title1,
-            color = PokyhTheme.colors.textPrimary,
-        )
-        Text(
-            text = if (session.isParent) "Erziehungsberechtigt" else "Schüler/in",
-            style = PokyhType.callout,
-            color = PokyhTheme.colors.textSecondary,
-        )
+        Text(text = session.personName ?: session.username, style = PokyhType.title1, color = PokyhTheme.colors.textPrimary)
+        Text(text = if (session.isParent) t.parent else t.student, style = PokyhType.callout, color = PokyhTheme.colors.textSecondary)
     }
 
     if (avatarOpen) {
@@ -472,13 +320,7 @@ private fun HeaderSection(session: UserSession, modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * The profile picture at full size on a dimmed backdrop.
- *
- * A [Dialog] rather than a pushed route: it is a look at one image, not a place in the app, so
- * it should not land on the back stack or get a screen's push transition. Anywhere outside the
- * portrait dismisses it, which is the gesture people already try first.
- */
+/** The profile picture at full size on a dimmed backdrop; anywhere outside the portrait dismisses it. */
 @Composable
 private fun AvatarViewerDialog(session: UserSession, onDismiss: () -> Unit) {
     val dismissSource = remember { MutableInteractionSource() }
@@ -502,11 +344,7 @@ private fun AvatarViewerDialog(session: UserSession, onDismiss: () -> Unit) {
                     cacheKey = avatarCacheKey(session.username),
                     size = 280.dp,
                 )
-                Text(
-                    text = session.personName ?: session.username,
-                    style = PokyhType.title2,
-                    color = Color.White,
-                )
+                Text(text = session.personName ?: session.username, style = PokyhType.title2, color = Color.White)
             }
         }
     }
@@ -517,45 +355,21 @@ private fun KontoSection(
     session: UserSession,
     backendStatus: BackendStatus,
     onOpenConnectionStatus: () -> Unit,
-    onChangePassword: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    PokyhSection(title = "Konto", modifier = modifier) {
+    val t = strings().profile
+    PokyhSection(title = t.account, modifier = modifier) {
         PokyhCard(padding = 0.dp) {
-            PokyhRow(
-                title = session.username,
-                subtitle = "Benutzername",
-                leading = { RowGlyph(PokyhIcons.person) },
-                showChevron = false,
-            )
+            PokyhRow(title = session.username, subtitle = t.username, leading = { RowGlyph(PokyhIcons.person) }, showChevron = false)
             if (session.klasseName.isNotEmpty()) {
                 PokyhRowSeparator()
-                PokyhRow(
-                    title = session.klasseName,
-                    subtitle = "Klasse",
-                    leading = { RowGlyph(PokyhIcons.classMembers) },
-                    showChevron = false,
-                )
+                PokyhRow(title = session.klasseName, subtitle = t.klasse, leading = { RowGlyph(PokyhIcons.classMembers) }, showChevron = false)
             }
             PokyhRowSeparator()
-            PokyhRow(
-                title = "LBS Brixen",
-                subtitle = "Schule",
-                leading = { RowGlyph(PokyhIcons.school) },
-                showChevron = false,
-            )
-            if (session.hasUntis) {
-                PokyhRowSeparator()
-                PokyhRow(
-                    title = "Passwort ändern",
-                    subtitle = "WebUntis",
-                    leading = { RowGlyph(PokyhIcons.password) },
-                    onClick = onChangePassword,
-                )
-            }
+            PokyhRow(title = t.schoolName, subtitle = t.school, leading = { RowGlyph(PokyhIcons.school) }, showChevron = false)
             PokyhRowSeparator()
             PokyhRow(
-                title = "POKYH-Konto",
+                title = t.pokyhAccount,
                 leading = { RowGlyph(PokyhIcons.info) },
                 onClick = onOpenConnectionStatus,
                 trailing = { BackendStatusBadge(backendStatus) },
@@ -567,12 +381,7 @@ private fun KontoSection(
 /** A row's leading glyph, at one size and one tint throughout the settings lists. */
 @Composable
 private fun RowGlyph(icon: ImageVector) {
-    Icon(
-        imageVector = icon,
-        contentDescription = null,
-        tint = PokyhTheme.colors.textTertiary,
-        modifier = Modifier.size(20.dp),
-    )
+    Icon(imageVector = icon, contentDescription = null, tint = PokyhTheme.colors.textTertiary, modifier = Modifier.size(20.dp))
 }
 
 @Composable
@@ -583,165 +392,6 @@ private fun BackendStatusBadge(status: BackendStatus) {
         color = if (connected) Brand.success else Brand.warning,
         icon = if (connected) PokyhIcons.ok else PokyhIcons.warningBadge,
     )
-}
-
-@Composable
-private fun DarstellungSection(
-    themeMode: PokyhThemeMode,
-    onSelect: (PokyhThemeMode) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    PokyhSection(title = "Darstellung", modifier = modifier) {
-        PokyhCard(padding = 0.dp) {
-            Box {
-                PokyhRow(
-                    title = "Erscheinungsbild",
-                    leading = { RowGlyph(PokyhIcons.appearance) },
-                    onClick = { expanded = true },
-                    // A menu, not a push — so a caret rather than PokyhRow's navigation chevron.
-                    showChevron = false,
-                    trailing = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-                        ) {
-                            StatusLabel(
-                                text = themeMode.label(),
-                                color = PokyhTheme.colors.textSecondary,
-                                icon = themeMode.icon(),
-                            )
-                            PokyhRowMenuCaret(expanded = expanded)
-                        }
-                    },
-                )
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    PokyhThemeMode.entries.forEach { mode ->
-                        DropdownMenuItem(
-                            text = { Text(mode.label(), style = PokyhType.body) },
-                            leadingIcon = { Icon(mode.icon(), contentDescription = null) },
-                            trailingIcon = {
-                                if (mode == themeMode) {
-                                    Icon(
-                                        imageVector = PokyhIcons.check,
-                                        contentDescription = null,
-                                        tint = PokyhTheme.colors.accentText,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                }
-                            },
-                            onClick = { onSelect(mode); expanded = false },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun PokyhThemeMode.label(): String = when (this) {
-    PokyhThemeMode.System -> "System"
-    PokyhThemeMode.Light -> "Hell"
-    PokyhThemeMode.Dark -> "Dunkel"
-}
-
-private fun PokyhThemeMode.icon(): ImageVector = when (this) {
-    PokyhThemeMode.System -> PokyhIcons.themeSystem
-    PokyhThemeMode.Light -> PokyhIcons.themeLight
-    PokyhThemeMode.Dark -> PokyhIcons.themeDark
-}
-
-/**
- * Two ways to free up the device, from mild to final — and the difference is the whole point.
- *
- * "Cache leeren" is harmless: stored copies go, they come back on the next load, and the user
- * stays signed in, so it runs on tap and says "Geleert" in place. "Alle Daten löschen" signs out
- * and cannot be undone, so it is red and asks first. Each row's subtitle names what it keeps or
- * costs, so nobody has to open a dialog to find out which one they want.
- */
-@Composable
-private fun StorageSection(
-    clearing: ProfileViewModel.ClearKind?,
-    cacheSize: Long?,
-    cacheCleared: Boolean,
-    onClearCache: () -> Unit,
-    onClearData: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    PokyhSection(title = "Speicher & Daten", modifier = modifier) {
-        PokyhCard(padding = 0.dp) {
-            PokyhRow(
-                title = "Cache leeren",
-                subtitle = "Offline-Kopien und Bilder · du bleibst angemeldet",
-                leading = { IconTile(icon = PokyhIcons.clearCache, color = Brand.accent, size = 38.dp) },
-                trailing = {
-                    when {
-                        clearing == ProfileViewModel.ClearKind.Cache -> CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = Brand.accent,
-                        )
-                        cacheCleared -> StatusLabel(text = "Geleert", color = Brand.success, icon = PokyhIcons.ok)
-                        cacheSize != null -> Text(
-                            text = formatBytes(cacheSize),
-                            style = PokyhType.footnote,
-                            color = PokyhTheme.colors.textSecondary,
-                        )
-                    }
-                },
-                onClick = onClearCache,
-                enabled = clearing == null,
-                showChevron = false,
-            )
-            PokyhRowSeparator()
-            PokyhRow(
-                title = "Alle Daten löschen",
-                titleColor = Brand.danger,
-                subtitle = "Konten, Passwörter und Einstellungen · meldet dich ab",
-                leading = { IconTile(icon = PokyhIcons.delete, color = Brand.danger, size = 38.dp) },
-                trailing = {
-                    if (clearing == ProfileViewModel.ClearKind.All) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = Brand.danger,
-                        )
-                    }
-                },
-                onClick = onClearData,
-                enabled = clearing == null,
-                showChevron = false,
-            )
-        }
-    }
-}
-
-/** Signing out on its own card: it is an everyday action, not a storage one. */
-@Composable
-private fun LogoutCard(onLogout: () -> Unit, modifier: Modifier = Modifier) {
-    PokyhCard(modifier = modifier, padding = 0.dp) {
-        PokyhRow(
-            title = "Abmelden",
-            titleColor = Brand.danger,
-            leading = {
-                Icon(
-                    imageVector = PokyhIcons.signOut,
-                    contentDescription = null,
-                    tint = Brand.danger,
-                    modifier = Modifier.size(20.dp),
-                )
-            },
-            onClick = onLogout,
-            showChevron = false,
-        )
-    }
-}
-
-/** `0 KB`, `840 KB`, `12,4 MB` — German decimal comma, one decimal from MB on. */
-private fun formatBytes(bytes: Long): String {
-    val kb = bytes / 1024.0
-    if (kb < 1024) return String.format(java.util.Locale.GERMAN, "%.0f KB", kb)
-    return String.format(java.util.Locale.GERMAN, "%.1f MB", kb / 1024.0)
 }
 
 // ── Accounts ────────────────────────────────────────────────────────────────
@@ -764,24 +414,15 @@ private fun AccountRow(
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val t = strings().profile
     val colors = PokyhTheme.colors
-    val secondary = if (!account.nickname.isNullOrEmpty()) {
-        "${account.username} · ${account.displayName}"
-    } else {
-        account.displayName
-    }
+    val secondary = if (!account.nickname.isNullOrEmpty()) "${account.username} · ${account.displayName}" else account.displayName
 
-    PokyhTileRow(
-        modifier = modifier,
-        onClick = if (isAnyBusy) null else onClick,
-    ) {
+    PokyhTileRow(modifier = modifier, onClick = if (isAnyBusy) null else onClick) {
         Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-            if (isActive) {
-                Box(Modifier.size(44.dp).border(2.dp, Brand.accent, PokyhShapes.pill))
-            }
+            if (isActive) Box(Modifier.size(44.dp).border(2.dp, Brand.accent, PokyhShapes.pill))
             // Only the *active* account's picture can load live — the session headers belong to the
-            // signed-in user. Other rows show the copy stored the last time they were active, or their
-            // initial if there is none.
+            // signed-in user. Other rows show the copy stored the last time they were active.
             UntisAvatar(
                 rawImageUrl = if (isActive) account.imageUrl else null,
                 name = account.title,
@@ -791,32 +432,16 @@ private fun AccountRow(
             )
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-            ) {
-                Text(
-                    text = account.title,
-                    style = PokyhType.headline,
-                    color = colors.textPrimary,
-                )
-                if (isDefault) MiniBadge("Standard", Brand.accent, icon = PokyhIcons.starFilled)
-                if (!hasPassword) MiniBadge("Passwort nötig", Brand.warning)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+                Text(text = account.title, style = PokyhType.headline, color = colors.textPrimary)
+                if (isDefault) MiniBadge(t.standard, Brand.accent, icon = PokyhIcons.starFilled)
+                if (!hasPassword) MiniBadge(t.needsPassword, Brand.warning)
             }
             Text(secondary, style = PokyhType.footnote, color = colors.textSecondary)
         }
         when {
-            isSwitching || isRefreshing -> CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
-                strokeWidth = 2.dp,
-                color = Brand.accent,
-            )
-            isActive -> Icon(
-                imageVector = PokyhIcons.ok,
-                contentDescription = "Aktives Konto",
-                tint = Brand.accent,
-                modifier = Modifier.size(22.dp),
-            )
+            isSwitching || isRefreshing -> CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Brand.accent)
+            isActive -> Icon(imageVector = PokyhIcons.ok, contentDescription = t.activeAccount, tint = Brand.accent, modifier = Modifier.size(22.dp))
         }
         AccountOverflowMenu(
             isDefault = isDefault,
@@ -842,11 +467,12 @@ private fun AccountOverflowMenu(
     onSignOut: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    val t = strings().profile
     var expanded by remember { mutableStateOf(false) }
     Box {
         PokyhIconButton(
             icon = PokyhIcons.more,
-            contentDescription = "Mehr",
+            contentDescription = strings().common.more,
             onClick = { expanded = true },
             enabled = enabled,
             tint = PokyhTheme.colors.textSecondary,
@@ -855,39 +481,29 @@ private fun AccountOverflowMenu(
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
-                text = {
-                    Text(
-                        text = if (isDefault) "Als Standard entfernen" else "Als Standard festlegen",
-                        style = PokyhType.body,
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (isDefault) PokyhIcons.starEmpty else PokyhIcons.starFilled,
-                        contentDescription = null,
-                    )
-                },
+                text = { Text(text = if (isDefault) t.unsetDefault else t.setDefault, style = PokyhType.body) },
+                leadingIcon = { Icon(imageVector = if (isDefault) PokyhIcons.starEmpty else PokyhIcons.starFilled, contentDescription = null) },
                 onClick = { expanded = false; onToggleDefault() },
             )
             DropdownMenuItem(
-                text = { Text("Konto aktualisieren", style = PokyhType.body) },
+                text = { Text(t.refreshAccount, style = PokyhType.body) },
                 leadingIcon = { Icon(PokyhIcons.refresh, contentDescription = null) },
                 onClick = { expanded = false; onRefresh() },
             )
             DropdownMenuItem(
-                text = { Text("Umbenennen", style = PokyhType.body) },
+                text = { Text(t.rename, style = PokyhType.body) },
                 leadingIcon = { Icon(PokyhIcons.edit, contentDescription = null) },
                 onClick = { expanded = false; onRename() },
             )
             if (hasPassword) {
                 DropdownMenuItem(
-                    text = { Text("Abmelden", style = PokyhType.body) },
+                    text = { Text(t.signOut, style = PokyhType.body) },
                     leadingIcon = { Icon(PokyhIcons.signOut, contentDescription = null) },
                     onClick = { expanded = false; onSignOut() },
                 )
             }
             DropdownMenuItem(
-                text = { Text("Account entfernen", style = PokyhType.body, color = Brand.danger) },
+                text = { Text(t.removeAccount, style = PokyhType.body, color = Brand.danger) },
                 leadingIcon = { Icon(PokyhIcons.delete, contentDescription = null, tint = Brand.danger) },
                 onClick = { expanded = false; onRemove() },
             )
@@ -910,7 +526,7 @@ fun PokyhDialog(
     confirmLabel: String,
     onConfirm: () -> Unit,
     confirmColor: Color = PokyhTheme.colors.accentText,
-    dismissLabel: String? = "Abbrechen",
+    dismissLabel: String? = I18n.s.common.cancel,
     extraAction: @Composable (() -> Unit)? = null,
 ) {
     AlertDialog(
@@ -924,37 +540,9 @@ fun PokyhDialog(
             Row {
                 if (extraAction != null) extraAction()
                 if (dismissLabel != null) {
-                    PokyhTextButton(
-                        text = dismissLabel,
-                        color = PokyhTheme.colors.textSecondary,
-                        onClick = onDismiss,
-                    )
+                    PokyhTextButton(text = dismissLabel, color = PokyhTheme.colors.textSecondary, onClick = onDismiss)
                 }
             }
         },
-    )
-}
-
-/**
- * Abbrechen or Abmelden — two choices, and signing out never deletes anything.
- *
- * It used to offer a third, "Abmelden & löschen", which wiped the saved credentials on the way
- * out. That put an irreversible action one mis-tap from an everyday one, in a dialog whose
- * subject is signing out, and it was redundant: removing a saved account has its own row in the
- * accounts list (with its own confirmation), and wiping everything has "Cache & Daten löschen".
- */
-@Composable
-private fun LogoutConfirmDialog(
-    onDismiss: () -> Unit,
-    onLogoutOnly: () -> Unit,
-) {
-    PokyhDialog(
-        title = "Wirklich abmelden?",
-        body = "Du wirst abgemeldet. Dein gespeichertes Konto bleibt auf dem Gerät, du kannst dich " +
-            "jederzeit wieder anmelden.",
-        onDismiss = onDismiss,
-        confirmLabel = "Abmelden",
-        confirmColor = Brand.danger,
-        onConfirm = onLogoutOnly,
     )
 }

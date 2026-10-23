@@ -60,7 +60,7 @@ class WidgetDataBridge @Inject constructor(
         val average = if (allValues.isEmpty()) 0.0 else (allValues.sum() / allValues.size * 100).roundToInt() / 100.0
         val recent = subjects
             .flatMap { s -> s.grades.filter { it.markDisplayValue > 0 }.map { g -> s.subjectName to g } }
-            .sortedByDescending { (_, g) -> g.id }
+            .sortedWith(dev.plattnericus.pokyh.core.util.GradeEntryOrder.comparator<Pair<String, dev.plattnericus.pokyh.data.model.GradeEntry>> { it.second })
             .take(8)
             .map { (subject, g) -> GradeItemSnapshot(g.id, subject, g.markDisplayValue, g.date) }
         val snapshot = GradesSnapshot(

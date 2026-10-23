@@ -642,8 +642,8 @@ class AppState @Inject constructor(
      * answering, so the message says it.
      */
     private fun errorMessage(e: Throwable): String {
-        if (e is AppError) return e.message ?: "Unbekannter Fehler."
-        if (!e.isNetworkError()) return e.message ?: "Unbekannter Fehler."
+        if (e is AppError) return e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
+        if (!e.isNetworkError()) return e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
         val down = serviceHealth.states.value.unreachable()
         return when {
             down.isEmpty() -> "Keine Verbindung. Prüfe dein WLAN oder mobiles Netz."

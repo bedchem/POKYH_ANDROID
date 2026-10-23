@@ -93,7 +93,7 @@ fun ClassregEventsScreen(onNavigateBack: () -> Unit = {}, viewModel: ClassregVie
                 loading -> ListSkeleton()
                 error != null -> ErrorStateView(message = error!!, onRetry = viewModel::retry)
                 events.isEmpty() -> EmptyStateView(
-                    icon = PokyhIcons.classRegister,
+                    sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Empty,
                     title = "Keine Einträge",
                     subtitle = "Im Klassenbuch sind für dieses Schuljahr keine Einträge vorhanden.",
                 )

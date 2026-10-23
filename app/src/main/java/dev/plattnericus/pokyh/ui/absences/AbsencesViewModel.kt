@@ -20,7 +20,12 @@ import javax.inject.Inject
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.data.model.AbsenceReason
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -108,20 +113,24 @@ private fun calcAbsenceMinutes(entry: AbsenceEntry, dateMap: Map<Int, List<DaySl
     return total
 }
 
-/** exact = true -> "Xh Ym" (0m omitted); false -> gerundete Stunden "Xh". */
+/**
+ * Missed lesson time, as the web shows it: the minutes are real clock time spent in lessons
+ * (breaks are never counted), so they are shown in 60-minute hours — Mo 07:50-16:45 minus 1h 15m
+ * of breaks is 7h 40m, not "9h 10m" in 50-minute units. exact = true -> "Xh Ym" (0m omitted);
+ * false -> rounded hours "Xh".
+ */
 fun formatAbsenceMinutes(m: Int, exact: Boolean): String {
-    if (!exact) return "${Math.round(m / 50.0)}h"
-    val h = m / 50
-    val min = m % 50
+    if (!exact) return "${Math.round(m / 60.0)}h"
+    val h = m / 60
+    val min = m % 60
     return if (min == 0) "${h}h" else "${h}h ${min}m"
 }
 
-private val monthNamesDE = listOf("Jän", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez")
-
 data class MonthGroup(val id: String, val label: String, val entries: List<AbsenceEntry>, val totalMinutes: Int)
 
-/** Gruppiert nach Jahr-Monat des Startdatums, absteigend sortiert. */
+/** Gruppiert nach Jahr-Monat des Startdatums, absteigend sortiert; "Oktober 2026" in der Sprache der App. */
 fun groupAbsencesByMonth(entries: List<AbsenceEntry>, minutesMap: Map<Int, Int>): List<MonthGroup> {
+    val months = dev.plattnericus.pokyh.core.i18n.I18n.s.common.months
     val map = linkedMapOf<String, MutableList<AbsenceEntry>>()
     for (e in entries) {
         val s = e.startDate.toString()
@@ -132,12 +141,26 @@ fun groupAbsencesByMonth(entries: List<AbsenceEntry>, minutesMap: Map<Int, Int>)
     return map.map { (key, es) ->
         val parts = key.split("-")
         val year = parts[0]
-        val month = parts[1].toIntOrNull() ?: 1
+        val month = (parts[1].toIntOrNull() ?: 1).coerceIn(1, 12)
         val total = es.sumOf { minutesMap[it.id] ?: (it.hours * 50) }
-        MonthGroup(id = key, label = "${monthNamesDE[month - 1]} $year", entries = es, totalMinutes = total)
+        val name = months[month - 1].replaceFirstChar { it.uppercase() }
+        MonthGroup(id = key, label = "$name $year", entries = es, totalMinutes = total)
     }.sortedByDescending { it.id }
 }
 
+/**
+ * The newest excuse message that covers this absence, if one was sent (the web's
+ * `sentExcuseFor`). It counts when its span overlaps the absence, so a school shortening the
+ * absence afterwards doesn't lose it.
+ */
+fun sentExcuseFor(a: AbsenceEntry, excuses: List<UntisClient.SentExcuse>): UntisClient.SentExcuse? {
+    val span = dev.plattnericus.pokyh.data.untis.ExcuseMessage.span(a)
+    var found: UntisClient.SentExcuse? = null
+    for (e in excuses) {
+        if (e.start < span.end && e.end > span.start && (found == null || e.sentAt > found.sentAt)) found = e
+    }
+    return found
+}
 /** Port of `AbsencesView`'s `@State`/`load()` (AbsencesView.swift). */
 @HiltViewModel
 class AbsencesViewModel @Inject constructor(
@@ -187,9 +210,15 @@ class AbsencesViewModel @Inject constructor(
         val metaFailed: Boolean = false,
         /** Today's first and last lesson (HHMM), when WebUntis gives no preset range. */
         val todayRange: Pair<Int, Int>? = null,
+        /** The class teachers an excuse goes to; null while loading. */
+        val teachers: List<String>? = null,
+        /** WebUntis wouldn't say who the class teachers are (the excuse may still go through). */
+        val teachersFailed: Boolean = false,
         val saving: Boolean = false,
         val error: String? = null,
         val done: Boolean = false,
+        /** What a sent excuse did: to whom, and whom it missed. */
+        val excuse: UntisClient.ExcuseResult? = null,
     )
 
     private val _form = MutableStateFlow(FormState())
@@ -200,9 +229,18 @@ class AbsencesViewModel @Inject constructor(
     private val _letter = MutableStateFlow(LetterState())
     val letter: StateFlow<LetterState> = _letter.asStateFlow()
 
+    // Excuses sent to the class teachers, from "Gesendet" (stored copy first), and those sent
+    // just now; what "Gesendet" has wins, it knows the message to open.
+    private val _excuses = MutableStateFlow<List<UntisClient.SentExcuse>>(emptyList())
+    private val _sentNow = MutableStateFlow<List<UntisClient.SentExcuse>>(emptyList())
+    val excuses: StateFlow<List<UntisClient.SentExcuse>> = combine(_excuses, _sentNow) { stored, now ->
+        stored + now.filter { n -> stored.none { it.start == n.start && it.end == n.end } }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     // After the flows above: init blocks run in declaration order.
     init {
         checkCanReport()
+        loadExcuses()
     }
 
     private fun checkCanReport() {
@@ -213,8 +251,21 @@ class AbsencesViewModel @Inject constructor(
         }
     }
 
+    /** Not needed for the list itself, so it never holds it up; without it the buttons simply stay. */
+    private fun loadExcuses() {
+        val session = appState.session.value ?: return
+        if (!session.hasUntis) return
+        viewModelScope.launch {
+            val key = "excuses-${session.studentId}"
+            val serializer = ListSerializer(UntisClient.SentExcuse.serializer())
+            runCatching { offlineStore.peek(key, serializer) }.getOrNull()?.let { _excuses.value = it.value }
+            runCatching { offlineStore.load(key, serializer) { untisClient.sentExcuses(session) } }
+                .getOrNull()?.let { _excuses.value = it.value }
+        }
+    }
+
     /** A fresh form: reasons and presets from WebUntis, today's lessons from the stored week. */
-    fun openForm() {
+    fun openForm(forExcuse: Boolean = false) {
         val session = appState.session.value ?: return
         _form.value = FormState()
         viewModelScope.launch {
@@ -230,13 +281,49 @@ class AbsencesViewModel @Inject constructor(
             val range = if (lessons.isEmpty()) null else lessons.minOf { it.startTime } to lessons.maxOf { it.endTime }
             _form.value = _form.value.copy(meta = meta, metaFailed = meta == null, todayRange = range)
         }
+        if (forExcuse) {
+            viewModelScope.launch {
+                val teachers = runCatching {
+                    untisClient.messageRecipients(session).filter { it.isClassTeacher }.distinctBy { it.id }.map { it.name }
+                }
+                _form.value = _form.value.copy(
+                    teachers = teachers.getOrNull() ?: emptyList(),
+                    teachersFailed = teachers.isFailure,
+                )
+            }
+        }
     }
 
     fun report(startDate: Int, startTime: Int, endDate: Int, endTime: Int, reasonId: Int, text: String) =
         save { session -> untisClient.reportAbsence(session, startDate, startTime, endDate, endTime, reasonId, text.trim()) }
 
-    fun excuse(absenceIds: List<Int>, reasonId: Int, text: String) =
-        save { session -> untisClient.excuseAbsences(session, absenceIds, reasonId, text.trim()) }
+    /**
+     * "Entschuldigen": a message with the reason and the note to the class teachers, in the app's
+     * language (see [UntisClient.excuseByMessage]). The sheet stays open on a partial send, so the
+     * names it missed can be read.
+     */
+    fun excuse(absences: List<AbsenceEntry>, reason: AbsenceReason, text: String) {
+        val session = appState.session.value ?: return
+        if (_form.value.saving || _form.value.done) return
+        _form.value = _form.value.copy(saving = true, error = null)
+        viewModelScope.launch {
+            try {
+                val result = untisClient.excuseByMessage(session, absences, reason, text.trim(), I18n.lang.value)
+                _form.value = _form.value.copy(saving = false, done = true, excuse = result)
+                result.excuse?.let { sent -> _sentNow.value = _sentNow.value + sent }
+                // Saved in WebUntis instead (no message allowed): the absence itself changed.
+                if (!result.viaMessage) load() else loadExcuses()
+            } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
+                _form.value = _form.value.copy(
+                    saving = false,
+                    error = if (e.isSessionExpired) I18n.s.common.sessionExpired else e.message,
+                )
+            } catch (e: Exception) {
+                _form.value = _form.value.copy(saving = false, error = I18n.s.absences.exSendFailed)
+            }
+        }
+    }
 
     /** Reports success only when WebUntis did, then reloads the list. */
     private fun save(write: suspend (UserSession) -> Unit) {
@@ -252,10 +339,10 @@ class AbsencesViewModel @Inject constructor(
                 if (e.isSessionExpired) appState.handleSessionExpired()
                 _form.value = _form.value.copy(
                     saving = false,
-                    error = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message,
+                    error = if (e.isSessionExpired) I18n.s.common.sessionExpired else e.message,
                 )
             } catch (e: Exception) {
-                _form.value = _form.value.copy(saving = false, error = "Das hat nicht geklappt. Bitte versuche es später erneut.")
+                _form.value = _form.value.copy(saving = false, error = I18n.s.common.failedLater)
             }
         }
     }
@@ -280,7 +367,7 @@ class AbsencesViewModel @Inject constructor(
                 if (e.isSessionExpired) appState.handleSessionExpired()
                 _letter.value = LetterState(error = e.message)
             } catch (e: Exception) {
-                _letter.value = LetterState(error = "Das Entschuldigungsschreiben konnte nicht geladen werden.")
+                _letter.value = LetterState(error = I18n.s.absences.letterFailed)
             }
         }
     }
@@ -363,9 +450,9 @@ class AbsencesViewModel @Inject constructor(
                 _totalPossibleMins.value = maxOf(1, possible)
             } catch (e: AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()
-                _error.value = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message
+                _error.value = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message
             } catch (e: Exception) {
-                _error.value = e.message ?: "Unbekannter Fehler."
+                _error.value = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
             } finally {
                 _loading.value = false
             }

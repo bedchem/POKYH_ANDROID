@@ -120,7 +120,7 @@ fun MessagesScreen(
                     ui.error != null && ui.messages.isEmpty() ->
                         ErrorStateView(message = ui.error!!, onRetry = viewModel::retry)
                     ui.messages.isEmpty() -> EmptyStateView(
-                        icon = PokyhIcons.emptyFolder,
+                        sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Mail,
                         title = "Keine Nachrichten",
                         subtitle = "Dieser Ordner ist leer.",
                     )

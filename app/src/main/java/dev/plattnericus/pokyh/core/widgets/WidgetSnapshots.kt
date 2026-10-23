@@ -35,7 +35,7 @@ data class TimetableSnapshot(
 
 @Serializable
 data class GradeItemSnapshot(
-    val id: Int,
+    val id: Long,
     val subject: String,
     val value: Double,
     val dateNum: Int,

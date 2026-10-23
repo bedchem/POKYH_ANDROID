@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.plattnericus.pokyh.core.i18n.strings
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextField
@@ -76,14 +77,14 @@ fun PasswordResetSheet(viewModel: LoginViewModel, initialUsername: String, onDis
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PokyhIconButton(
                     icon = PokyhIcons.close,
-                    contentDescription = "Schließen",
+                    contentDescription = strings().common.close,
                     onClick = ::dismiss,
                     tinted = true,
                     size = 36.dp,
                     iconSize = 18.dp,
                 )
                 Text(
-                    "Passwort vergessen",
+                    strings().login.resetTitle,
                     style = PokyhType.headline,
                     color = PokyhTheme.colors.textPrimary,
                     modifier = Modifier.weight(1f).padding(horizontal = PokyhSpacing.md),
@@ -98,26 +99,25 @@ fun PasswordResetSheet(viewModel: LoginViewModel, initialUsername: String, onDis
                     Box(Modifier.size(64.dp).accentSurface(PokyhShapes.xl), contentAlignment = Alignment.Center) {
                         Icon(PokyhIcons.check, null, tint = Brand.success, modifier = Modifier.size(30.dp))
                     }
-                    Text("E-Mail ist unterwegs.", style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
+                    Text(strings().login.resetSentTitle, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
                     Text(
-                        "WebUntis schickt dir einen Link, mit dem du ein neues Passwort setzt. Schau auch im Spam-Ordner nach.",
+                        strings().login.resetSentText,
                         style = PokyhType.footnote,
                         color = PokyhTheme.colors.textSecondary,
                         textAlign = TextAlign.Center,
                     )
-                    PokyhPrimaryButton(text = "Fertig", onClick = ::dismiss, modifier = Modifier.fillMaxWidth())
+                    PokyhPrimaryButton(text = strings().common.done, onClick = ::dismiss, modifier = Modifier.fillMaxWidth())
                 }
             } else {
                 Text(
-                    "Gib deinen WebUntis-Benutzernamen und die E-Mail-Adresse ein, die in WebUntis hinterlegt ist. " +
-                        "WebUntis schickt dir dann einen Link für ein neues Passwort.",
+                    strings().login.resetLead,
                     style = PokyhType.footnote,
                     color = PokyhTheme.colors.textSecondary,
                 )
                 PokyhTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = "Benutzername",
+                    label = strings().login.resetUser,
                     leadingIcon = PokyhIcons.person,
                     enabled = !state.sending,
                     keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, capitalization = KeyboardCapitalization.None),
@@ -126,7 +126,7 @@ fun PasswordResetSheet(viewModel: LoginViewModel, initialUsername: String, onDis
                 PokyhTextField(
                     value = email,
                     onValueChange = { email = it },
-                    label = "E-Mail-Adresse",
+                    label = strings().login.resetEmail,
                     leadingIcon = PokyhIcons.messages,
                     enabled = !state.sending,
                     keyboardOptions = KeyboardOptions(
@@ -138,7 +138,7 @@ fun PasswordResetSheet(viewModel: LoginViewModel, initialUsername: String, onDis
                 )
                 state.error?.let { Text(it, style = PokyhType.footnote, color = Brand.danger) }
                 PokyhPrimaryButton(
-                    text = "Link anfordern",
+                    text = strings().login.resetSend,
                     icon = PokyhIcons.sendMessage,
                     loading = state.sending,
                     enabled = username.isNotBlank() && email.isNotBlank(),

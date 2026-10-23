@@ -109,7 +109,7 @@ fun TodosScreen(onNavigateBack: () -> Unit = {}, viewModel: TodosViewModel = hil
                 ui.error != null && ui.todos.isEmpty() && ui.pending.isEmpty() ->
                     ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
                 ui.todos.isEmpty() && ui.pending.isEmpty() -> EmptyStateView(
-                    icon = PokyhIcons.todos,
+                    sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Empty,
                     title = "Keine Todos",
                     subtitle = if (hasBackend) {
                         "Lege eine Aufgabe an, um sie hier zu sehen."

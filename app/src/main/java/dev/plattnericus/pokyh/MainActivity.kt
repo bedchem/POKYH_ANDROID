@@ -20,6 +20,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.i18n.LocalStrings
+import dev.plattnericus.pokyh.core.i18n.stringsFor
 import dev.plattnericus.pokyh.core.usage.UsageReporter
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.PokyhApp
@@ -42,6 +47,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A changed phone language recreates the activity: follow it (unless one was chosen).
+        I18n.refresh()
 
         // Now actually wired up (AndroidManifest.xml launches into Theme.Pokyh.Splash, which
         // installSplashScreen() below reads): keeps the themed system splash on screen until
@@ -94,13 +101,17 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            PokyhAppTheme(themeMode) {
-                if (isReady) {
-                    PokyhApp(appState)
-                } else {
-                    // Belt-and-suspenders only — the real splash (kept via
-                    // setKeepOnScreenCondition above) already covers this gap visually.
-                    Box(androidx.compose.ui.Modifier.fillMaxSize().background(dev.plattnericus.pokyh.ui.theme.PokyhTheme.colors.bg))
+            // Every screen reads its texts from here, so choosing a language redraws them all.
+            val lang by I18n.lang.collectAsStateWithLifecycle()
+            CompositionLocalProvider(LocalStrings provides stringsFor(lang)) {
+                PokyhAppTheme(themeMode) {
+                    if (isReady) {
+                        PokyhApp(appState)
+                    } else {
+                        // Belt-and-suspenders only — the real splash (kept via
+                        // setKeepOnScreenCondition above) already covers this gap visually.
+                        Box(androidx.compose.ui.Modifier.fillMaxSize().background(dev.plattnericus.pokyh.ui.theme.PokyhTheme.colors.bg))
+                    }
                 }
             }
         }

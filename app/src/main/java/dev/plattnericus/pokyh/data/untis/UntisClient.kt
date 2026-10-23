@@ -769,13 +769,14 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             val markValue = g["mark"]["markValue"].double ?: 0.0
             if (markValue <= 0) return@mapNotNull null
             GradeEntry(
-                id = g["id"].int ?: 0,
+                id = g["id"].long ?: 0L,
                 text = g["text"].string ?: "",
                 date = g["date"].int ?: 0,
                 markName = g["mark"]["name"].string ?: "",
                 markValue = markValue,
                 markDisplayValue = g["mark"]["markDisplayValue"].double ?: markValue,
                 examType = g["examType"]["longname"].string ?: g["examType"]["name"].string ?: "",
+                enteredAt = enteredAtOf(g),
             )
         }
         val vals = entries.map { it.markDisplayValue }.filter { it > 0 }
@@ -787,6 +788,65 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             negativeCount = vals.count { it < 6 },
         )
     }
+
+    /**
+     * When the grade was entered or last changed, as epoch ms — WebUntis names it differently
+     * between versions (and not every version sends it), so the usual names are tried in turn.
+     * Accepts epoch seconds or milliseconds, YYYYMMDD, YYYYMMDDHHMM(SS) and ISO date-times.
+     */
+    private fun enteredAtOf(g: JsonDyn): Long? {
+        logGradeFields(g)
+        for (key in ENTERED_KEYS) {
+            val v = g[key]
+            if (!v.exists) continue
+            parseInstant(v.long?.toString() ?: v.string)?.let { return it }
+        }
+        return null
+    }
+
+    private fun parseInstant(raw: String?): Long? {
+        val s = raw?.trim().orEmpty()
+        if (s.isEmpty()) return null
+        if (s.all { it.isDigit() }) {
+            val n = s.toLongOrNull() ?: return null
+            val zone = java.time.ZoneId.of("Europe/Rome")
+            return when (s.length) {
+                8 -> runCatching { java.time.LocalDate.of((n / 10000).toInt(), ((n / 100) % 100).toInt(), (n % 100).toInt()).atStartOfDay(zone).toInstant().toEpochMilli() }.getOrNull()
+                12, 14 -> runCatching {
+                    java.time.LocalDateTime.parse(s.padEnd(14, '0'), java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")).atZone(zone).toInstant().toEpochMilli()
+                }.getOrNull()
+                10 -> n * 1000
+                13 -> n
+                else -> null
+            }
+        }
+        return runCatching { java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli() }.getOrNull()
+            ?: runCatching { java.time.Instant.parse(s).toEpochMilli() }.getOrNull()
+            ?: runCatching { java.time.LocalDateTime.parse(s).atZone(java.time.ZoneId.of("Europe/Rome")).toInstant().toEpochMilli() }.getOrNull()
+    }
+
+    @Volatile private var gradeFieldsLogged = false
+
+    /** Debug builds only: the *names* of a grade's fields (never their values), once per run. */
+    private fun logGradeFields(g: JsonDyn) {
+        if (!dev.plattnericus.pokyh.BuildConfig.DEBUG || gradeFieldsLogged) return
+        gradeFieldsLogged = true
+        val fields = g.dictionary.keys.sorted()
+        android.util.Log.d("PokyhGrades", "grade fields: ${fields.joinToString(", ")}")
+        // The form of the entry time (type and length only, never the value), and whether it reads.
+        val raw = g["lastUpdate"].long?.toString() ?: g["lastUpdate"].string
+        val form = when {
+            raw == null -> "absent"
+            raw.all { it.isDigit() } -> "number, ${raw.length} digits"
+            else -> "text, ${raw.length} chars, pattern ${raw.map { if (it.isDigit()) '9' else if (it.isLetter()) 'a' else it }.joinToString("")}"
+        }
+        android.util.Log.d("PokyhGrades", "lastUpdate: $form, readable=${parseInstant(raw) != null}")
+    }
+
+    private val ENTERED_KEYS = listOf(
+            "createDate", "creationDate", "createdAt", "created", "insertDate", "entryDate",
+            "lastUpdate", "lastUpdated", "lastModified", "modifiedAt", "lastChange", "timestamp",
+    )
 
     // ── Abwesenheiten / Absences ─────────────────────────────────────────────
 
@@ -914,7 +974,9 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      * Names a sent message went to, comma-joined. WebUntis lists them as `recipientPersons` /
      * `recipientGroups` (as in drafts); `recipients` / `recipient` cover older response shapes.
      */
-    private fun recipientNames(m: JsonDyn): String =
+    private fun recipientNames(m: JsonDyn): String = recipientNameList(m).joinToString(", ")
+
+    private fun recipientNameList(m: JsonDyn): List<String> =
         (m["recipientPersons"].array + m["recipientGroups"].array + m["recipients"].array +
             listOfNotNull(m["recipient"].takeIf { it.exists }))
             .mapNotNull { r ->
@@ -923,7 +985,6 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
-            .joinToString(", ")
 
     suspend fun messageDetail(session: UserSession, id: Int): MessageDetail {
         val url = "${Config.untisBase}${Config.Routes.messageDetail(id)}"
@@ -1499,6 +1560,160 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             }
         }
         failure?.let { throw AppError(it) }
+    }
+
+    // ── Entschuldigen per Nachricht an die Klassenlehrer ─────────────────────
+
+    /** An excuse sent to the class teachers, found again in "Gesendet". Times are YYYYMMDDHHMM. */
+    @kotlinx.serialization.Serializable
+    data class SentExcuse(
+        val start: Long,
+        val end: Long,
+        /** The date-time WebUntis gives the message (ISO). */
+        val sentAt: String,
+        val recipients: List<String>,
+        /** The sent message, to open it; null until "Gesendet" has it. */
+        val messageId: Int?,
+    )
+
+    /**
+     * What an excuse did: written to the class teachers ([viaMessage]), or — when the account may
+     * write to no teacher (a guardian, say) — saved on the absence in WebUntis instead.
+     */
+    data class ExcuseResult(
+        val viaMessage: Boolean,
+        val sentTo: List<String>,
+        val failed: List<String>,
+        val excuse: SentExcuse?,
+    )
+
+    /**
+     * "Entschuldigen" for absences that are over, as pokyh-backend's `/absences/excuse` does it for
+     * the web: WebUntis refuses the edit that would add a reason to a past absence, so the excuse
+     * goes to the class teachers as a WebUntis message ([ExcuseMessage]) — one each when the
+     * account's recipient option is TEACHER, which takes one recipient per message. Only absences
+     * not yet excused are named. Whether the school then counts them as excused is the class
+     * teachers' call. Throws an [AppError] with the reason in the app's language.
+     */
+    suspend fun excuseByMessage(
+        session: UserSession,
+        absences: List<AbsenceEntry>,
+        reason: AbsenceReason,
+        note: String,
+        lang: dev.plattnericus.pokyh.core.i18n.Lang,
+    ): ExcuseResult {
+        val t = dev.plattnericus.pokyh.core.i18n.I18n.s.absences
+        if (!canReportAbsence(session)) throw AppError(t.exNotAllowed)
+        val open = absences.filter { !it.isExcused }
+        if (open.isEmpty()) throw AppError(t.exAlready)
+
+        val (body, resp) = get("${Config.untisBase}${Config.Routes.messageRecipients}", session, timeoutMs = 12_000)
+        if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+        if (resp.code == 403) {
+            // WebUntis lets this account write to no teacher. Its own excuse is left: reason and
+            // note on the absence, where the school allows it.
+            runCatching { excuseAbsences(session, open.map { it.id }, reason.id, note) }
+                .onFailure { if (it is AppError && it.isSessionExpired) throw it else throw AppError(t.exForbidden) }
+            return ExcuseResult(viaMessage = false, sentTo = emptyList(), failed = emptyList(), excuse = null)
+        }
+        if (resp.code != 200) throw AppError(t.exSendFailed)
+        // One entry per person: a class teacher also appears under TEACHERS.
+        val people = JsonDyn.parse(body).array.flatMap { group ->
+            val type = (group["type"].string ?: "").uppercase()
+            group["persons"].array.mapNotNull { p ->
+                val id = p["userId"].int ?: p["id"].int ?: return@mapNotNull null
+                val name = (p["displayName"].string ?: p["name"].string ?: "").trim()
+                if (name.isEmpty()) null else Triple(id, name, type)
+            }
+        }
+        val classTeacherIds = people.filter { it.third == "CLASS_TEACHERS" }.map { it.first }.toSet()
+        val teachers = people.distinctBy { it.first }.filter { it.first in classTeacherIds }
+            .map { MessageRecipient(id = it.first, type = "CLASS_TEACHERS", name = it.second, isClassTeacher = true) }
+        if (teachers.isEmpty()) throw AppError(t.exNoTeacher)
+
+        val childName = if (session.isParent) {
+            runCatching { fetchAppData(session)?.json?.let { j -> j["data"]["user"]["students"].array.firstOrNull()?.get("displayName")?.string } }.getOrNull()
+        } else {
+            null
+        }
+        val (subject, text) = ExcuseMessage.compose(
+            absences = open,
+            lang = lang,
+            reasonName = reason.name,
+            note = note,
+            childName = childName,
+            signature = if (session.isParent) null else session.personName,
+        )
+        val html = ExcuseMessage.plainTextToHtml(text)
+        val token = freshMessageToken(session)
+        val schoolYearId = runCatching { rpc("getCurrentSchoolyear", session, "sy")["id"].int }.getOrNull()
+        val option = messagePermissions(session, token, schoolYearId).recipientOption
+        val batches = if (option == "TEACHER") teachers.map { listOf(it) } else listOf(teachers)
+
+        val sentTo = mutableListOf<String>()
+        val failed = mutableListOf<String>()
+        var expired = false
+        for (batch in batches) {
+            val names = batch.map { it.name }
+            if (expired) {
+                failed += names
+                continue
+            }
+            try {
+                sendMessage(session, subject, html, batch)
+                sentTo += names
+            } catch (e: AppError) {
+                failed += names
+                expired = e.isSessionExpired
+            } catch (e: Exception) {
+                failed += names
+            }
+        }
+        if (sentTo.isEmpty()) {
+            if (expired) throw AppError.sessionExpired
+            throw AppError(t.exSendFailed)
+        }
+        val span = ExcuseMessage.spanOf(open)
+        return ExcuseResult(
+            viaMessage = true,
+            sentTo = sentTo,
+            failed = failed,
+            excuse = SentExcuse(span.start, span.end, java.time.Instant.now().toString(), sentTo, null),
+        )
+    }
+
+    /**
+     * The excuses sent so far, found again in "Gesendet" by their subject: the absences list shows
+     * "Nachricht gesendet" on the absences they cover until the school marks them excused. Class
+     * teachers who got the same excuse are one entry, the newest sending wins. Read-only.
+     */
+    suspend fun sentExcuses(session: UserSession): List<SentExcuse> {
+        if (session.bearerToken.isEmpty()) return emptyList()
+        val (body, resp) = get("${Config.untisBase}${Config.Routes.messagesSent}?pageSize=100&start=0", session, timeoutMs = 12_000)
+        if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
+        if (resp.code != 200) return emptyList()
+        val root = JsonDyn.parse(body)
+        val list = root["sentMessages"].array.ifEmpty { root["data"]["sentMessages"].array }.ifEmpty { root["messages"].array }
+        val bySpan = LinkedHashMap<String, SentExcuse>()
+        for (m in list) {
+            val span = ExcuseMessage.parseSubject(m["subject"].string) ?: continue
+            val key = "${span.start}-${span.end}"
+            val sentAt = m["sentDateTime"].string ?: m["sentDate"].string ?: m["date"].string ?: ""
+            val id = m["id"].int?.takeIf { it > 0 }
+            val names = recipientNameList(m)
+            val old = bySpan[key]
+            bySpan[key] = if (old == null) {
+                SentExcuse(span.start, span.end, sentAt, names, id)
+            } else {
+                val newer = sentAt > old.sentAt
+                old.copy(
+                    sentAt = if (newer) sentAt else old.sentAt,
+                    messageId = if (newer && id != null) id else old.messageId,
+                    recipients = (old.recipients + names).distinct(),
+                )
+            }
+        }
+        return bySpan.values.toList()
     }
 
     /**

@@ -87,6 +87,7 @@ class GradesViewModel @Inject constructor(
                     key = "grades-${session.studentId}-${_year.value}",
                     serializer = ListSerializer(SubjectGrades.serializer()),
                 ) { untisClient.grades(session, session.studentId, requestedYear) }
+                dev.plattnericus.pokyh.core.util.GradeEntryOrder.observe(result.value)
                 _subjects.value = result.value
                 _freshness.value = Freshness(result.savedAt, result.stale)
                 // A restored copy must not overwrite the widget: its snapshot may well be newer
@@ -94,9 +95,9 @@ class GradesViewModel @Inject constructor(
                 if (!result.stale && appState.isDefaultAccountActive()) widgetDataBridge.publishGrades(result.value)
             } catch (e: AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()
-                _error.value = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message
+                _error.value = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message
             } catch (e: Exception) {
-                _error.value = e.message ?: "Unbekannter Fehler."
+                _error.value = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
             } finally {
                 _loading.value = false
             }

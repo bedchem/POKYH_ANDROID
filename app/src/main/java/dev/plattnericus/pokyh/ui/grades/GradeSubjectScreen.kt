@@ -29,6 +29,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.plattnericus.pokyh.core.i18n.GradesStrings
+import dev.plattnericus.pokyh.core.i18n.strings
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.core.util.GradeMath
 import dev.plattnericus.pokyh.data.storage.GradeDraftEntry
@@ -49,6 +51,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TagChip
 import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.home.GradeBubble
+import dev.plattnericus.pokyh.ui.pixel.PixelSprite
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
@@ -86,7 +89,7 @@ fun GradeSubjectScreen(
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
-                title = subject?.subjectName ?: "Fach",
+                title = subject?.subjectName ?: strings().grades.subject,
                 eyebrow = subject?.teacherName?.ifEmpty { null },
                 nav = TopBarNav.Back(onNavigateBack),
             )
@@ -96,7 +99,7 @@ fun GradeSubjectScreen(
             when {
                 loading -> ListSkeleton()
                 error != null -> ErrorStateView(message = error!!, onRetry = viewModel::retry)
-                subject == null -> EmptyStateView(icon = PokyhIcons.grades, title = "Fach nicht gefunden")
+                subject == null -> EmptyStateView(sprite = PixelSprite.Search, title = strings().grades.subjectNotFound)
                 else -> GradeSubjectContent(
                     subject = subject!!,
                     draft = draft,
@@ -115,7 +118,7 @@ fun GradeSubjectScreen(
 }
 
 private data class TeacherRow(
-    val id: Int,
+    val id: Long,
     val label: String,
     val date: Int,
     val value: Double,
@@ -132,7 +135,7 @@ private fun GradeSubjectContent(
     onTargetInputChange: (String) -> Unit,
     onAddCustom: () -> Unit,
     onRemoveCustom: (Int) -> Unit,
-    onToggleTeacherGrade: (Int) -> Unit,
+    onToggleTeacherGrade: (Long) -> Unit,
     onReset: () -> Unit,
 ) {
     val removedIds = remember(draft) { draft.removedTeacherGradeIds.toSet() }
@@ -206,7 +209,7 @@ private fun GradeSubjectContent(
 
         if (hasDraft) {
             PokyhDestructiveButton(
-                text = "Rechner zurücksetzen",
+                text = strings().grades.resetCalc,
                 icon = PokyhIcons.reset,
                 onClick = onReset,
                 modifier = Modifier.fillMaxWidth().fadeIn(delayMillis = 150),
@@ -230,7 +233,7 @@ private fun AverageCard(
     PokyhCard(modifier = modifier) {
         Row(verticalAlignment = Alignment.Bottom) {
             Column(modifier = Modifier.weight(1f)) {
-                PokyhLabel(if (hasDraft) "Schnitt · mit Rechner" else "Schnitt")
+                PokyhLabel(if (hasDraft) strings().grades.averageWithCalc else strings().grades.average)
                 Spacer(Modifier.size(PokyhSpacing.sm))
                 Text(
                     text = if (avg > 0) Fmt.num(avg) else "–",
@@ -242,9 +245,9 @@ private fun AverageCard(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
             ) {
-                TagChip("$positive positiv", Brand.success)
-                TagChip("$negative negativ", Brand.danger)
-                Text("$count Noten", style = PokyhType.caption2, color = colors.textTertiary)
+                TagChip(strings().grades.positiveCount(positive), Brand.success)
+                TagChip(strings().grades.negativeCount(negative), Brand.danger)
+                Text(strings().grades.gradeCount(count), style = PokyhType.caption2, color = colors.textTertiary)
             }
         }
     }
@@ -259,11 +262,11 @@ private fun GradesSection(
     newGradeInput: String,
     onNewGradeInputChange: (String) -> Unit,
     onAddCustom: () -> Unit,
-    onToggleTeacherGrade: (Int) -> Unit,
+    onToggleTeacherGrade: (Long) -> Unit,
     onRemoveCustom: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    PokyhSection(title = "Noten", modifier = modifier) {
+    PokyhSection(title = strings().grades.grades, modifier = modifier) {
         PokyhListCard(items = teacherRows) { row ->
             GradeRow(
                 value = row.value,
@@ -278,8 +281,8 @@ private fun GradesSection(
             PokyhListCard(items = customGrades.withIndex().toList()) { (idx, value) ->
                 GradeRow(
                     value = value,
-                    label = "Eigene Note",
-                    sub = "Notenrechner",
+                    label = strings().grades.ownGrade,
+                    sub = strings().grades.gradeCalc,
                     removed = false,
                     isCustom = true,
                     onAction = { onRemoveCustom(idx) },
@@ -294,12 +297,12 @@ private fun GradesSection(
             PokyhTextField(
                 value = newGradeInput,
                 onValueChange = onNewGradeInputChange,
-                placeholder = "Note (1–10)",
+                placeholder = strings().grades.gradePlaceholder,
                 modifier = Modifier.weight(1f),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             )
             PokyhPrimaryButton(
-                text = "Hinzufügen",
+                text = strings().grades.add,
                 icon = PokyhIcons.add,
                 onClick = onAddCustom,
                 enabled = GradeMath.parseGradeInput(newGradeInput) != null,
@@ -333,9 +336,9 @@ private fun GradeRow(
                     else -> PokyhIcons.close
                 },
                 contentDescription = when {
-                    isCustom -> "Eigene Note entfernen"
-                    removed -> "Note wieder einrechnen"
-                    else -> "Note aus dem Rechner nehmen"
+                    isCustom -> strings().grades.removeOwnGrade
+                    removed -> strings().grades.restoreGrade
+                    else -> strings().grades.excludeGrade
                 },
                 onClick = onAction,
                 tint = when {
@@ -361,12 +364,12 @@ private fun TargetSection(
     modifier: Modifier = Modifier,
 ) {
     val colors = PokyhTheme.colors
-    PokyhSection(title = "Zielnote", modifier = modifier) {
+    PokyhSection(title = strings().grades.targetGrade, modifier = modifier) {
         PokyhCard {
             PokyhTextField(
                 value = targetInput,
                 onValueChange = onTargetInputChange,
-                placeholder = "Zielnote (z. B. 7)",
+                placeholder = strings().grades.targetPlaceholder,
                 leadingIcon = PokyhIcons.target,
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -375,7 +378,7 @@ private fun TargetSection(
                 targetResult != null -> {
                     Spacer(Modifier.size(PokyhSpacing.md))
                     Text(
-                        text = targetText(targetResult, liveAvg),
+                        text = targetText(strings().grades, targetResult, liveAvg),
                         style = PokyhType.callout,
                         color = targetColor(targetResult),
                     )
@@ -383,7 +386,7 @@ private fun TargetSection(
                 targetInput.isNotEmpty() -> {
                     Spacer(Modifier.size(PokyhSpacing.md))
                     Text(
-                        text = "Gib eine gültige Note (1–10) ein.",
+                        text = strings().grades.invalidGrade,
                         style = PokyhType.footnote,
                         color = colors.textTertiary,
                     )
@@ -393,14 +396,10 @@ private fun TargetSection(
     }
 }
 
-private fun targetText(r: GradeMath.TargetResult, liveAvg: Double): String = when (r.status) {
-    GradeMath.TargetStatus.REACHED -> "Du hast die Zielnote ${Fmt.num(r.target)} bereits erreicht."
-    GradeMath.TargetStatus.IMPOSSIBLE -> "Die Zielnote ${Fmt.num(r.target)} ist nicht erreichbar."
-    GradeMath.TargetStatus.REACHABLE -> {
-        val verb = if (liveAvg < r.target) "mindestens" else "höchstens"
-        val noun = if (r.count == 1) "Note" else "Noten"
-        "Du brauchst ${r.count} $noun mit $verb ${Fmt.num(r.needed)}, um ${Fmt.num(r.target)} zu erreichen."
-    }
+private fun targetText(g: GradesStrings, r: GradeMath.TargetResult, liveAvg: Double): String = when (r.status) {
+    GradeMath.TargetStatus.REACHED -> g.targetReached(Fmt.num(r.target))
+    GradeMath.TargetStatus.IMPOSSIBLE -> g.targetImpossible(Fmt.num(r.target))
+    GradeMath.TargetStatus.REACHABLE -> g.targetNeed(r.count, liveAvg < r.target, Fmt.num(r.needed), Fmt.num(r.target))
 }
 
 @Composable

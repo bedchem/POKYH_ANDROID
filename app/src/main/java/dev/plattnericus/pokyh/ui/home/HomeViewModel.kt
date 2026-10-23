@@ -14,6 +14,7 @@ import dev.plattnericus.pokyh.data.model.ApiReminder
 import dev.plattnericus.pokyh.data.model.ApiTodo
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.Dish
+import dev.plattnericus.pokyh.data.model.GradeEntry
 import dev.plattnericus.pokyh.data.model.DishRatingsData
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.data.model.TimetableEntry
@@ -66,7 +67,7 @@ class HomeViewModel @Inject constructor(
 
     /** `HomeView.RecentGrade` — a flattened, most-recent-first grade entry for the "Zuletzt
      * eingetragen" section. */
-    data class RecentGrade(val id: Int, val subject: String, val value: Double, val date: Int)
+    data class RecentGrade(val id: Long, val subject: String, val value: Double, val date: Int)
 
     data class UiState(
         val session: UserSession? = null,
@@ -314,7 +315,7 @@ class HomeViewModel @Inject constructor(
                 backendJob.await()
             }
         } catch (e: Exception) {
-            _state.update { it.copy(error = e.message ?: "Unbekannter Fehler.") }
+            _state.update { it.copy(error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) }
         }
     }
 
@@ -357,10 +358,12 @@ class HomeViewModel @Inject constructor(
                 key = "grades-${session.studentId}-${SchoolDates.currentSchoolYear}",
                 serializer = ListSerializer(SubjectGrades.serializer()),
             ) { untisClient.grades(session, session.studentId, null) }.value
-            val items = subjects.flatMap { subj ->
-                subj.grades.filter { it.markDisplayValue > 0 }
-                    .map { g -> RecentGrade(id = g.id, subject = subj.subjectName, value = g.markDisplayValue, date = g.date) }
-            }.sortedByDescending { it.id }.take(3)
+            dev.plattnericus.pokyh.core.util.GradeEntryOrder.observe(subjects)
+            // The grades entered last, newest first — not the latest exam dates (GradeEntryOrder).
+            val items = subjects.flatMap { subj -> subj.grades.filter { it.markDisplayValue > 0 }.map { subj to it } }
+                .sortedWith(dev.plattnericus.pokyh.core.util.GradeEntryOrder.comparator<Pair<SubjectGrades, GradeEntry>> { it.second })
+                .take(3)
+                .map { (subj, g) -> RecentGrade(id = g.id, subject = subj.subjectName, value = g.markDisplayValue, date = g.date) }
             val values = subjects.flatMap { s -> s.grades.map { g -> g.markDisplayValue } }.filter { v -> v > 0 }
             val weakest = subjects
                 .mapNotNull { s ->

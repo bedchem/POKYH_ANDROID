@@ -92,6 +92,7 @@ class PokyhNotifications @Inject constructor(
 
     // ── Neue Noten erkennen → Hinweis ───────────────────────────────────────
     suspend fun checkNewGrades(subjects: List<SubjectGrades>) {
+        dev.plattnericus.pokyh.core.util.GradeEntryOrder.observe(subjects)
         val pairs = subjects.flatMap { s -> s.grades.filter { it.markDisplayValue > 0 }.map { s.subjectName to it } }
         val seen = prefsStore.seenGradeIds.first()
         if (seen.isNotEmpty()) {
@@ -166,7 +167,7 @@ class PokyhNotifications @Inject constructor(
         )
     }
 
-    private fun idFor(prefix: String, key: Int): Int = "$prefix-$key".hashCode()
+    private fun idFor(prefix: String, key: Any): Int = "$prefix-$key".hashCode()
 
     private fun notify(
         id: Int,

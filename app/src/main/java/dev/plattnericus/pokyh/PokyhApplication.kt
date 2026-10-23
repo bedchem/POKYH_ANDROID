@@ -38,6 +38,9 @@ class PokyhApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // The language first: notification channels and the first texts already speak it.
+        dev.plattnericus.pokyh.core.i18n.I18n.init(this)
+        dev.plattnericus.pokyh.core.util.GradeEntryOrder.init(this)
         // Leftovers of the Flutter app this version replaced (off the main thread: file I/O).
         Thread { LegacyFlutterCleanup.runIfNeeded(this) }.start()
         pokyhNotifications.ensureChannel()

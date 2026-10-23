@@ -2,6 +2,7 @@
 
 package dev.plattnericus.pokyh.ui.absences
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -35,9 +37,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.plattnericus.pokyh.core.i18n.strings
+import dev.plattnericus.pokyh.data.model.AbsenceEntry
 import dev.plattnericus.pokyh.data.model.AbsenceReason
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhLabel
@@ -46,6 +51,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhRow
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextField
 import dev.plattnericus.pokyh.ui.theme.Brand
+import dev.plattnericus.pokyh.ui.theme.PokyhDecorative
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
@@ -61,7 +67,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlinx.coroutines.launch
 
 // "Abwesenheit melden" and "Entschuldigen", the web app's two absence sheets for the phone.
@@ -73,6 +78,7 @@ import kotlinx.coroutines.launch
 /** "Abwesenheit melden": from when to when, the reason and a text. */
 @Composable
 fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
+    val t = strings().absences
     val form by viewModel.form.collectAsStateWithLifecycle()
     val today = remember { LocalDate.now() }
     var startDate by remember { mutableStateOf(today) }
@@ -100,9 +106,9 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
     }
 
     AbsenceSheetFrame(
-        title = if (pickingReason) "Grund" else "Abwesenheit melden",
+        title = if (pickingReason) t.reason else t.reportTitle,
         done = form.done,
-        doneText = "Abwesenheit gemeldet.",
+        doneText = t.reported,
         onBack = if (pickingReason) ({ pickingReason = false }) else null,
         onDismiss = onDismiss,
     ) {
@@ -115,7 +121,7 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
             )
         } else {
             DateTimeField(
-                label = "Von",
+                label = t.from,
                 date = startDate,
                 time = startTime,
                 enabled = !form.saving,
@@ -123,7 +129,7 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
                 onTime = { startTime = it },
             )
             DateTimeField(
-                label = "Bis",
+                label = t.until,
                 date = endDate,
                 time = endTime,
                 enabled = !form.saving,
@@ -134,8 +140,8 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
             PokyhTextField(
                 value = text,
                 onValueChange = { text = it.take(1000) },
-                label = "Text",
-                placeholder = "Optional, z. B. Arzttermin",
+                label = t.text,
+                placeholder = t.textPlaceholder,
                 singleLine = false,
                 minLines = 3,
                 enabled = !form.saving,
@@ -143,7 +149,7 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
             )
             form.error?.let { SheetMessage(it, Brand.danger) }
             PokyhPrimaryButton(
-                text = "Melden",
+                text = t.reportAction,
                 icon = PokyhIcons.sendMessage,
                 loading = form.saving,
                 onClick = {
@@ -151,9 +157,9 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
                     val to = endTime
                     val chosen = reason
                     when {
-                        from == null || to == null -> viewModel.formError("Bitte Beginn und Ende wählen.")
-                        !endDate.atTime(to).isAfter(startDate.atTime(from)) -> viewModel.formError("Das Ende muss nach dem Beginn liegen.")
-                        chosen == null -> viewModel.formError("Bitte einen Grund wählen.")
+                        from == null || to == null -> viewModel.formError(t.errChooseRange)
+                        !endDate.atTime(to).isAfter(startDate.atTime(from)) -> viewModel.formError(t.errEndAfterStart)
+                        chosen == null -> viewModel.formError(t.errChooseReason)
                         else -> viewModel.report(
                             startDate = yyyyMMdd(startDate),
                             startTime = from.hour * 100 + from.minute,
@@ -170,29 +176,47 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
     }
 }
 
-/** "Entschuldigen": a reason and a note for absences WebUntis already has. */
+/**
+ * "Entschuldigen" for absences that are over, as the web does it now: WebUntis takes no reason for
+ * those, so the excuse goes to the class teachers as a WebUntis message (one each), and they mark
+ * the absence excused. The absence on top, who gets it, the reason as a field whose list is a
+ * second step in the same sheet, the note, the send button, a confirmation at the end naming
+ * whom it reached. A partial send stays open, so the names it missed can be read.
+ */
 @Composable
 fun ExcuseAbsenceSheet(
     viewModel: AbsencesViewModel,
-    absenceIds: List<Int>,
+    absences: List<AbsenceEntry>,
     summary: String,
     onDismiss: () -> Unit,
 ) {
+    val t = strings().absences
+    val colors = PokyhTheme.colors
     val form by viewModel.form.collectAsStateWithLifecycle()
     var reason by remember { mutableStateOf<AbsenceReason?>(null) }
     var text by remember { mutableStateOf("") }
     var pickingReason by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { viewModel.openForm() }
+    LaunchedEffect(Unit) { viewModel.openForm(forExcuse = true) }
     LaunchedEffect(form.meta) {
         val meta = form.meta ?: return@LaunchedEffect
         if (reason == null) reason = meta.reasons.firstOrNull { it.id == meta.defaultReasonId }
     }
+    val teachers = form.teachers
+    val noTeacher = teachers != null && teachers.isEmpty() && !form.teachersFailed
+    val result = form.excuse
 
     AbsenceSheetFrame(
-        title = if (pickingReason) "Grund" else "Entschuldigen",
+        title = if (pickingReason) t.reason else t.exTitle,
         done = form.done,
-        doneText = "In WebUntis gespeichert.",
+        doneText = if (result?.viaMessage == false) t.exSavedInUntis else t.exDone,
+        doneDetail = when {
+            result == null -> null
+            !result.viaMessage -> reason?.name
+            else -> t.exDoneTo(result.sentTo.joinToString(", "))
+        },
+        doneWarning = result?.failed?.takeIf { it.isNotEmpty() }?.let { t.exPartial(it.joinToString(", ")) },
+        autoClose = result?.failed.isNullOrEmpty(),
         onBack = if (pickingReason) ({ pickingReason = false }) else null,
         onDismiss = onDismiss,
     ) {
@@ -204,51 +228,93 @@ fun ExcuseAbsenceSheet(
                 onSelect = { reason = it; pickingReason = false },
             )
         } else {
+            Text(t.exLead, style = PokyhType.footnote, color = colors.textSecondary)
             Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
-                PokyhLabel("Abwesenheit", color = PokyhTheme.colors.textSecondary)
+                PokyhLabel(t.exAbsence, color = colors.textSecondary)
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .insetSurface(PokyhShapes.lg)
-                        .padding(PokyhSpacing.md),
+                    modifier = Modifier.fillMaxWidth().insetSurface(PokyhShapes.lg).padding(PokyhSpacing.md),
                     horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(PokyhIcons.absences, contentDescription = null, tint = Brand.danger, modifier = Modifier.size(20.dp))
-                    Text(summary, style = PokyhType.body, color = PokyhTheme.colors.textPrimary)
+                    Text(summary, style = PokyhType.body, color = colors.textPrimary)
                 }
+            }
+            // Who it goes to: the class teachers WebUntis names for the class.
+            Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+                PokyhLabel(t.exTo, color = colors.textSecondary)
+                Row(
+                    modifier = Modifier.fillMaxWidth().insetSurface(PokyhShapes.lg).padding(PokyhSpacing.md),
+                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (!teachers.isNullOrEmpty()) {
+                        val tone = PokyhDecorative.periwinkle(colors.isDark)
+                        Box {
+                            teachers.take(3).forEachIndexed { i, name ->
+                                Box(
+                                    modifier = Modifier
+                                        .offset(x = (i * 22).dp)
+                                        .size(34.dp)
+                                        .clip(PokyhShapes.pill)
+                                        .background(colors.card)
+                                        .padding(2.dp)
+                                        .clip(PokyhShapes.pill)
+                                        .background(tone.fill),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(initials(name), style = PokyhType.caption.semibold(), color = tone.ink)
+                                }
+                            }
+                            Spacer(Modifier.size(width = (34 + (teachers.take(3).size - 1) * 22).dp, height = 34.dp))
+                        }
+                    } else {
+                        Icon(PokyhIcons.classMembers, contentDescription = null, tint = colors.textSecondary, modifier = Modifier.size(20.dp))
+                    }
+                    Text(
+                        text = when {
+                            teachers == null -> "…"
+                            form.teachersFailed -> t.exToSchool
+                            teachers.isNotEmpty() -> teachers.joinToString(", ")
+                            else -> strings().common.unknown
+                        },
+                        style = PokyhType.body,
+                        color = if (!teachers.isNullOrEmpty()) colors.textPrimary else colors.textTertiary,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (noTeacher) Text(t.exNoTeacher, style = PokyhType.footnote, color = Brand.danger)
             }
             ReasonField(reason = reason, enabled = !form.saving, onClick = { pickingReason = true })
             PokyhTextField(
                 value = text,
                 onValueChange = { text = it.take(1000) },
-                label = "Notiz",
-                placeholder = "Optional",
+                label = t.exNote,
+                placeholder = strings().common.optional,
                 singleLine = false,
                 minLines = 3,
                 enabled = !form.saving,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Text(
-                text = "Ob die Abwesenheit als entschuldigt gilt, entscheidet die Schule.",
-                style = PokyhType.footnote,
-                color = PokyhTheme.colors.textTertiary,
-            )
             form.error?.let { SheetMessage(it, Brand.danger) }
             PokyhPrimaryButton(
-                text = "Speichern",
-                icon = PokyhIcons.check,
+                text = if (form.saving) t.exSaving else t.exSave,
+                icon = PokyhIcons.sendMessage,
                 loading = form.saving,
+                enabled = !noTeacher,
                 onClick = {
                     val chosen = reason
-                    if (chosen == null) viewModel.formError("Bitte einen Grund wählen.")
-                    else viewModel.excuse(absenceIds, chosen.id, text)
+                    if (chosen == null) viewModel.formError(t.errChooseReason)
+                    else viewModel.excuse(absences, chosen, text)
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
     }
 }
+
+private fun initials(name: String): String =
+    name.split(Regex("[\\s,]+")).filter { it.isNotBlank() }.take(2).joinToString("") { it.first().uppercase() }
 
 // ── Sheet parts ─────────────────────────────────────────────────────────────
 
@@ -259,17 +325,21 @@ private fun AbsenceSheetFrame(
     doneText: String,
     onBack: (() -> Unit)?,
     onDismiss: () -> Unit,
+    doneDetail: String? = null,
+    doneWarning: String? = null,
+    autoClose: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    val c = strings().common
     fun dismiss() {
         scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
     }
     // Saved: the confirmation stays a moment, then the sheet leaves.
-    LaunchedEffect(done) {
-        if (done) {
-            kotlinx.coroutines.delay(1200)
+    LaunchedEffect(done, autoClose) {
+        if (done && autoClose) {
+            kotlinx.coroutines.delay(1600)
             dismiss()
         }
     }
@@ -291,7 +361,7 @@ private fun AbsenceSheetFrame(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PokyhIconButton(
                     icon = if (onBack != null) PokyhIcons.back else PokyhIcons.close,
-                    contentDescription = if (onBack != null) "Zurück" else "Schließen",
+                    contentDescription = if (onBack != null) c.back else c.close,
                     onClick = { if (onBack != null) onBack() else dismiss() },
                     tinted = true,
                     size = 36.dp,
@@ -316,6 +386,8 @@ private fun AbsenceSheetFrame(
                         Icon(PokyhIcons.check, contentDescription = null, tint = Brand.success, modifier = Modifier.size(30.dp))
                     }
                     Text(doneText, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
+                    doneDetail?.let { Text(it, style = PokyhType.callout, color = PokyhTheme.colors.textSecondary) }
+                    doneWarning?.let { Text(it, style = PokyhType.footnote.semibold(), color = Brand.danger) }
                 }
             } else {
                 content()
@@ -334,6 +406,8 @@ private fun DateTimeField(
     onDate: (LocalDate) -> Unit,
     onTime: (LocalTime) -> Unit,
 ) {
+    val t = strings().absences
+    val c = strings().common
     var pickDate by remember { mutableStateOf(false) }
     var pickTime by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
@@ -347,13 +421,13 @@ private fun DateTimeField(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             PokyhTextButton(
-                text = date.format(DayFormatter),
+                text = "${c.weekdaysShort[date.dayOfWeek.value - 1]}, ${c.dayMonthShort(date.dayOfMonth, date.monthValue)} ${date.year}",
                 icon = PokyhIcons.timetable,
                 onClick = { if (enabled) pickDate = true },
             )
             Spacer(Modifier.weight(1f))
             PokyhTextButton(
-                text = time?.format(TimeFormatter) ?: "Uhrzeit",
+                text = time?.format(TimeFormatter) ?: t.time,
                 icon = PokyhIcons.clock,
                 onClick = { if (enabled) pickTime = true },
                 color = if (time == null) PokyhTheme.colors.textTertiary else PokyhTheme.colors.accentText,
@@ -369,7 +443,7 @@ private fun DateTimeField(
             onDismissRequest = { pickDate = false },
             confirmButton = {
                 PokyhTextButton(
-                    text = "Übernehmen",
+                    text = t.apply,
                     onClick = {
                         state.selectedDateMillis?.let { onDate(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()) }
                         pickDate = false
@@ -377,7 +451,7 @@ private fun DateTimeField(
                 )
             },
             dismissButton = {
-                PokyhTextButton(text = "Abbrechen", onClick = { pickDate = false }, color = PokyhTheme.colors.textSecondary)
+                PokyhTextButton(text = c.cancel, onClick = { pickDate = false }, color = PokyhTheme.colors.textSecondary)
             },
         ) {
             DatePicker(state = state)
@@ -393,7 +467,7 @@ private fun DateTimeField(
             containerColor = PokyhTheme.colors.card,
             confirmButton = {
                 PokyhTextButton(
-                    text = "Übernehmen",
+                    text = t.apply,
                     onClick = {
                         onTime(LocalTime.of(state.hour, state.minute))
                         pickTime = false
@@ -401,7 +475,7 @@ private fun DateTimeField(
                 )
             },
             dismissButton = {
-                PokyhTextButton(text = "Abbrechen", onClick = { pickTime = false }, color = PokyhTheme.colors.textSecondary)
+                PokyhTextButton(text = c.cancel, onClick = { pickTime = false }, color = PokyhTheme.colors.textSecondary)
             },
             text = { TimePicker(state = state) },
         )
@@ -412,13 +486,14 @@ private fun DateTimeField(
 @Composable
 private fun ReasonField(reason: AbsenceReason?, enabled: Boolean, onClick: () -> Unit) {
     val colors = PokyhTheme.colors
+    val t = strings().absences
     Box(Modifier.fillMaxWidth().insetSurface(PokyhShapes.lg)) {
         PokyhRow(
-            title = "Grund",
+            title = t.reason,
             enabled = enabled,
             trailing = {
                 Text(
-                    text = reason?.name ?: "Wählen",
+                    text = reason?.name ?: t.choose,
                     style = PokyhType.subheadline,
                     color = if (reason == null) colors.textTertiary else colors.textSecondary,
                     maxLines = 1,
@@ -438,12 +513,13 @@ private fun ReasonList(
     onSelect: (AbsenceReason) -> Unit,
 ) {
     val colors = PokyhTheme.colors
+    val t = strings().absences
     if (reasons.isNullOrEmpty()) {
         Text(
             text = when {
-                failed -> "Die Gründe konnten gerade nicht geladen werden. Bitte versuche es später erneut."
-                reasons == null -> "Gründe werden geladen …"
-                else -> "WebUntis bietet keine Gründe an."
+                failed -> t.reasonsFailed
+                reasons == null -> t.reasonsLoading
+                else -> t.noReasons
             },
             style = PokyhType.footnote,
             color = colors.textTertiary,
@@ -474,7 +550,7 @@ private fun ReasonList(
                     modifier = Modifier.weight(1f),
                 )
                 if (isSelected) {
-                    Icon(PokyhIcons.ok, contentDescription = "Ausgewählt", tint = Brand.accent, modifier = Modifier.size(20.dp))
+                    Icon(PokyhIcons.ok, contentDescription = t.selected, tint = Brand.accent, modifier = Modifier.size(20.dp))
                 }
             }
         }
@@ -494,8 +570,7 @@ private fun SheetMessage(text: String, color: androidx.compose.ui.graphics.Color
     )
 }
 
-private val DayFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("EE, d. MMM yyyy", Locale.GERMAN)
-private val TimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.GERMAN)
+private val TimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 private fun yyyyMMdd(d: LocalDate): Int = d.year * 10000 + d.monthValue * 100 + d.dayOfMonth
 

@@ -169,6 +169,26 @@ fun PokyhNavHost(
         composable(PokyhDestinations.ABSENCES) {
             dev.plattnericus.pokyh.ui.absences.AbsencesScreen(
                 onNavigateBack = { navController.popBackStack() },
+                onNavigate = { route -> navController.navigate(route) },
+            )
+        }
+        composable(
+            route = PokyhDestinations.ABSENCE_CALC,
+            arguments = listOf(
+                navArgument("absent") { type = NavType.StringType; defaultValue = "" },
+                navArgument("total") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            dev.plattnericus.pokyh.ui.absences.AbsenceCalculatorScreen(
+                absent = entry.arguments?.getString("absent").orEmpty(),
+                total = entry.arguments?.getString("total").orEmpty(),
+                onNavigateBack = { navController.popBackStack() },
+            )
+        }
+        composable(PokyhDestinations.SETTINGS) {
+            dev.plattnericus.pokyh.ui.settings.SettingsScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigate = { route -> navController.navigate(route) },
             )
         }
         composable(PokyhDestinations.MESSAGES) {
@@ -207,6 +227,7 @@ fun PokyhNavHost(
                 onNavigateUp = { navController.popBackStack() },
                 onConnectionStatus = { navController.navigate(PokyhDestinations.CONNECTION_STATUS) },
                 onOpenStats = { navController.navigate(PokyhDestinations.PROFILE_STATS) },
+                onOpenSettings = { navController.navigate(PokyhDestinations.SETTINGS) },
             )
         }
         composable(PokyhDestinations.PROFILE_STATS) {

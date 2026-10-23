@@ -133,14 +133,17 @@ fun RowScope.TabRootActions(
     onMessages: () -> Unit,
     onProfile: () -> Unit,
     unreadMessages: Int = 0,
+    /** Where the bell's items lead; with it, the bell sits beside the messages (as on the web). */
+    onNavigate: ((String) -> Unit)? = null,
 ) {
+    if (onNavigate != null) dev.plattnericus.pokyh.ui.bell.NotificationBell(onNavigate = onNavigate)
     Box {
         PokyhIconButton(
             icon = PokyhIcons.messages,
             contentDescription = if (unreadMessages > 0) {
-                "Nachrichten, $unreadMessages ungelesen"
+                dev.plattnericus.pokyh.core.i18n.strings().nav.messagesUnread(unreadMessages)
             } else {
-                "Nachrichten"
+                dev.plattnericus.pokyh.core.i18n.strings().nav.messages
             },
             onClick = onMessages,
             tinted = true,

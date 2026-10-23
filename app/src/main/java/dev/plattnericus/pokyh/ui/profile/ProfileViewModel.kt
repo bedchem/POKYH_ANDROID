@@ -158,7 +158,7 @@ class ProfileViewModel @Inject constructor(
             try {
                 val creds = secureCredentialStore.getCredentials(username)
                 if (creds == null) {
-                    _switchError.value = "Kein gespeichertes Passwort für $username."
+                    _switchError.value = dev.plattnericus.pokyh.core.i18n.I18n.s.profile.noSavedPassword(username)
                 } else {
                     val fresh = untisClient.login(creds.first, creds.second)
                     val keptNickname = accounts.value.firstOrNull { it.username == username }?.nickname
@@ -172,7 +172,7 @@ class ProfileViewModel @Inject constructor(
                         )
                 }
             } catch (e: Exception) {
-                _switchError.value = e.message ?: "Konto konnte nicht aktualisiert werden."
+                _switchError.value = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.profile.refreshFailed
             } finally {
                 _refreshingUsername.value = null
             }
@@ -342,9 +342,9 @@ class ProfileViewModel @Inject constructor(
         val s = appState.session.value ?: return
         if (_password.value.saving) return
         val problem = when {
-            oldPassword.isEmpty() || newPassword.isEmpty() -> "Bitte beide Passwörter eingeben."
-            newPassword != confirm -> "Die neuen Passwörter stimmen nicht überein."
-            oldPassword == newPassword -> "Das neue Passwort muss sich vom alten unterscheiden."
+            oldPassword.isEmpty() || newPassword.isEmpty() -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.errBothPasswords
+            newPassword != confirm -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.errPasswordsDiffer
+            oldPassword == newPassword -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.errSamePassword
             else -> null
         }
         if (problem != null) {
@@ -364,10 +364,10 @@ class ProfileViewModel @Inject constructor(
             } catch (e: dev.plattnericus.pokyh.data.model.AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()
                 _password.value = PasswordState(
-                    error = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message,
+                    error = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message,
                 )
             } catch (e: Exception) {
-                _password.value = PasswordState(error = "Das Passwort konnte nicht geändert werden.")
+                _password.value = PasswordState(error = dev.plattnericus.pokyh.core.i18n.I18n.s.profile.errPasswordFailed)
             }
         }
     }
@@ -405,12 +405,12 @@ class ProfileViewModel @Inject constructor(
 
 /** ProfileView.swift/Store.swift `BackendStatus.label` — human-readable German status text. */
 internal fun BackendStatus.uiLabel(): String = when (this) {
-    is BackendStatus.Unknown -> "Unbekannt"
-    is BackendStatus.Ok -> "Verbunden"
-    is BackendStatus.NotStudent -> "Nur für Schülerkonten"
-    is BackendStatus.NoClass -> "Keine Klasse gefunden"
-    is BackendStatus.Failed -> "Nicht verbunden – $message"
-    is BackendStatus.Offline -> "Offline"
+    is BackendStatus.Unknown -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.statusUnknown
+    is BackendStatus.Ok -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.statusOk
+    is BackendStatus.NotStudent -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.statusNotStudent
+    is BackendStatus.NoClass -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.statusNoClass
+    is BackendStatus.Failed -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.statusFailed(message)
+    is BackendStatus.Offline -> dev.plattnericus.pokyh.core.i18n.I18n.s.profile.statusOffline
 }
 
 private fun BackendStatus.diagnosticLabel(): String = when (this) {

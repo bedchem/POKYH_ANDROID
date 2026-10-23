@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.plattnericus.pokyh.core.i18n.I18n
 import dev.plattnericus.pokyh.data.model.ApiAccountActivity
 import dev.plattnericus.pokyh.data.model.ApiActivityDay
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
@@ -77,7 +78,7 @@ import kotlinx.coroutines.launch
 // profile/stats): everything comes from GET /users/me/activity, which only shows what the POKYH
 // server already keeps. Time in POKYH and the most used pages need the personal usage statistics.
 
-private val German = Locale.GERMAN
+
 
 // ── Aktivität im Profil ─────────────────────────────────────────────────────
 
@@ -88,21 +89,21 @@ fun ActivitySection(viewModel: ProfileViewModel, onOpenStats: () -> Unit, modifi
     LaunchedEffect(Unit) { viewModel.loadActivity() }
     if (state is ProfileViewModel.ActivityState.Unavailable) return
 
-    PokyhSection(title = "Aktivität", modifier = modifier) {
+    PokyhSection(title = I18n.s.profile.activity, modifier = modifier) {
         PokyhCard(padding = 0.dp) {
             Column(Modifier.padding(PokyhSpacing.card), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
-                Text("An welchen Tagen du POKYH genutzt hast.", style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
+                Text(I18n.s.profile.activityLead, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
                 when (val s = state) {
                     is ProfileViewModel.ActivityState.Loaded -> {
                         ActivityGrid(days = s.activity.days)
                         Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xl)) {
-                            SmallFigure(s.activity.totals.activeDays.toString(), "Tage online")
-                            SmallFigure(s.activity.totals.logins.toString(), "Anmeldungen")
-                            SmallFigure(daysText(s.activity.totals.currentStreak), "Aktuelle Serie")
+                            SmallFigure(s.activity.totals.activeDays.toString(), I18n.s.profile.daysOnline)
+                            SmallFigure(s.activity.totals.logins.toString(), I18n.s.profile.logins)
+                            SmallFigure(daysText(s.activity.totals.currentStreak), I18n.s.profile.currentStreak)
                         }
                     }
                     is ProfileViewModel.ActivityState.Failed -> Text(
-                        "Deine Aktivität kann gerade nicht geladen werden.",
+                        I18n.s.profile.activityFailed,
                         style = PokyhType.callout,
                         color = PokyhTheme.colors.textSecondary,
                     )
@@ -111,7 +112,7 @@ fun ActivitySection(viewModel: ProfileViewModel, onOpenStats: () -> Unit, modifi
             }
             PokyhRowSeparator()
             PokyhRow(
-                title = "Mehr Statistiken",
+                title = I18n.s.profile.moreStats,
                 leading = { Icon(PokyhIcons.gradeTrend, null, tint = PokyhTheme.colors.textTertiary, modifier = Modifier.size(20.dp)) },
                 onClick = onOpenStats,
             )
@@ -170,7 +171,7 @@ fun ActivityGrid(days: List<ApiActivityDay>) {
     Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
         Row {
             Column(Modifier.padding(top = 18.dp).width(24.dp), verticalArrangement = Arrangement.spacedBy(gap)) {
-                listOf("Mo", "", "Mi", "", "Fr", "", "").forEach { label ->
+                I18n.s.common.weekdaysShort.mapIndexed { i, d -> if (i % 2 == 0 && i < 5) d else "" }.forEach { label ->
                     Box(Modifier.height(cell), contentAlignment = Alignment.CenterStart) {
                         if (label.isNotEmpty()) Text(label, style = PokyhType.caption2, color = colors.textTertiary)
                     }
@@ -181,7 +182,7 @@ fun ActivityGrid(days: List<ApiActivityDay>) {
                 weeks.forEach { week ->
                     val firstDay = week.firstNotNullOfOrNull { it?.first }
                     val monthLabel = firstDay?.takeIf { it.monthValue != lastMonth }?.also { lastMonth = it.monthValue }
-                        ?.month?.getDisplayName(TextStyle.SHORT, German)?.removeSuffix(".")
+                        ?.let { I18n.s.common.monthsShort[it.monthValue - 1] }
                     Column(verticalArrangement = Arrangement.spacedBy(gap)) {
                         Box(Modifier.height(15.dp).width(cell)) {
                             if (monthLabel != null) {
@@ -208,7 +209,7 @@ fun ActivityGrid(days: List<ApiActivityDay>) {
             }
         }
         Text(
-            text = selected?.let { (date, day) -> describeDay(date, day) } ?: "Tippe auf einen Tag für Details.",
+            text = selected?.let { (date, day) -> describeDay(date, day) } ?: I18n.s.profile.tapDay,
             style = PokyhType.caption,
             color = if (selected != null) colors.textSecondary else colors.textTertiary,
         )
@@ -216,12 +217,13 @@ fun ActivityGrid(days: List<ApiActivityDay>) {
 }
 
 private fun describeDay(date: LocalDate, day: ApiActivityDay): String {
-    val label = date.format(DateTimeFormatter.ofPattern("EE, d. MMM", German))
-    if (!day.active) return "$label · Nicht online"
+    val c = I18n.s.common
+    val label = "${c.weekdaysShort[date.dayOfWeek.value - 1]}, ${c.dayMonthShort(date.dayOfMonth, date.monthValue)}"
+    if (!day.active) return "$label · ${I18n.s.profile.notOnline}"
     val parts = mutableListOf(label)
-    if (day.logins > 0) parts += if (day.logins == 1) "1 Anmeldung" else "${day.logins} Anmeldungen"
-    if (day.activeSeconds >= 60) parts += "${durationText(day.activeSeconds.toLong())} in POKYH"
-    if (parts.size == 1) parts += "Online"
+    if (day.logins > 0) parts += I18n.s.profile.loginCount(day.logins)
+    if (day.activeSeconds >= 60) parts += I18n.s.profile.inPokyh(durationText(day.activeSeconds.toLong()))
+    if (parts.size == 1) parts += I18n.s.profile.online
     return parts.joinToString(" · ")
 }
 
@@ -230,7 +232,7 @@ private fun durationText(seconds: Long): String {
     return if (m < 60) "$m min" else "${m / 60} h ${m % 60} min"
 }
 
-private fun daysText(n: Int): String = if (n == 1) "1 Tag" else "$n Tage"
+private fun daysText(n: Int): String = I18n.s.common.days(n)
 
 // ── Statistiken ─────────────────────────────────────────────────────────────
 
@@ -244,18 +246,18 @@ fun StatsScreen(onNavigateBack: () -> Unit, viewModel: ProfileViewModel = hiltVi
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
-            PokyhTopBar(title = "Statistiken", eyebrow = "Nur für dich sichtbar", nav = TopBarNav.Back(onNavigateBack))
+            PokyhTopBar(title = I18n.s.profile.statsTitle, eyebrow = I18n.s.profile.statsOnlyYou, nav = TopBarNav.Back(onNavigateBack))
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (val s = state) {
                 is ProfileViewModel.ActivityState.Loaded -> StatsContent(s.activity)
                 is ProfileViewModel.ActivityState.Failed -> ErrorStateView(
-                    message = "Deine Aktivität kann gerade nicht geladen werden.",
+                    message = I18n.s.profile.activityFailed,
                     onRetry = { viewModel.loadActivity(force = true) },
                 )
                 is ProfileViewModel.ActivityState.Unavailable -> ErrorStateView(
-                    message = "Statistiken gibt es mit einem POKYH-Konto, das gerade verbunden ist.",
+                    message = I18n.s.profile.statsNeedAccount,
                 )
                 ProfileViewModel.ActivityState.Loading -> Column(
                     Modifier.padding(horizontal = PokyhSpacing.screenH),
@@ -276,8 +278,8 @@ fun StatsScreen(onNavigateBack: () -> Unit, viewModel: ProfileViewModel = hiltVi
 private fun StatsContent(a: ApiAccountActivity) {
     val consent = a.usageConsent
     val withTime = a.days.count { it.activeSeconds > 0 }
-    val weekdayLabels = listOf("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
-    val onlyWithConsent = "Nur mit persönlicher Nutzungsstatistik."
+    val weekdayLabels = I18n.s.common.weekdaysShort
+    val onlyWithConsent = I18n.s.profile.onlyWithConsent
 
     Column(
         modifier = Modifier
@@ -290,37 +292,35 @@ private fun StatsContent(a: ApiAccountActivity) {
         if (!consent) {
             PokyhInlineNotice(
                 icon = PokyhIcons.privacy,
-                text = "Persönliche Statistiken sind ausgeschaltet. Darum siehst du hier nur, an welchen Tagen du online " +
-                    "warst, nicht wie lange und was du am meisten öffnest. Einschalten kannst du sie auf pokyh.com " +
-                    "unter Einstellungen → Datenschutz.",
+                text = I18n.s.profile.statsOffNotice,
                 modifier = Modifier.fadeIn(),
             )
         }
 
         Column(Modifier.fadeIn(20), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
             Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
-                Figure("Tage online", a.totals.activeDays.toString(), "Aktuelle Serie: ${daysText(a.totals.currentStreak)}", Modifier.weight(1f))
-                Figure("Anmeldungen", a.totals.logins.toString(), "Längste Serie: ${daysText(a.totals.longestStreak)}", Modifier.weight(1f))
+                Figure(I18n.s.profile.daysOnline, a.totals.activeDays.toString(), I18n.s.profile.currentStreakIs(daysText(a.totals.currentStreak)), Modifier.weight(1f))
+                Figure(I18n.s.profile.logins, a.totals.logins.toString(), I18n.s.profile.longestStreakIs(daysText(a.totals.longestStreak)), Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
                 Figure(
-                    "Nutzungszeit",
+                    I18n.s.profile.usageTime,
                     if (consent) durationText(a.totals.activeSeconds) else "–",
-                    if (consent) "Besuche: ${a.totals.visits}" else onlyWithConsent,
+                    if (consent) I18n.s.profile.visits(a.totals.visits) else onlyWithConsent,
                     Modifier.weight(1f),
                 )
                 Figure(
-                    "Ø pro Tag",
+                    I18n.s.profile.perDay,
                     if (consent && withTime > 0) durationText(a.totals.activeSeconds / withTime) else "–",
-                    if (consent) "Geöffnete Seiten: ${a.totals.screens}" else null,
+                    if (consent) I18n.s.profile.screensOpened(a.totals.screens) else null,
                     Modifier.weight(1f),
                 )
             }
         }
 
-        PokyhSection(title = "Wann du online bist", modifier = Modifier.fadeIn(40)) {
+        PokyhSection(title = I18n.s.profile.whenOnline, modifier = Modifier.fadeIn(40)) {
             PokyhCard {
-                Text("Nutzungszeit nach Uhrzeit.", style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
+                Text(I18n.s.profile.whenOnlineLead, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
                 Spacer(Modifier.size(PokyhSpacing.md))
                 if (consent && a.hours.size >= 23) {
                     val values = a.hours.subList(6, 23)
@@ -335,9 +335,9 @@ private fun StatsContent(a: ApiAccountActivity) {
             }
         }
 
-        PokyhSection(title = "Wochentage", modifier = Modifier.fadeIn(60)) {
+        PokyhSection(title = I18n.s.profile.weekdays, modifier = Modifier.fadeIn(60)) {
             PokyhCard {
-                Text("An welchen Wochentagen du online warst.", style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
+                Text(I18n.s.profile.weekdaysLead, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
                 Spacer(Modifier.size(PokyhSpacing.md))
                 if (a.weekdays.size == 7) {
                     Columns(
@@ -349,24 +349,24 @@ private fun StatsContent(a: ApiAccountActivity) {
             }
         }
 
-        PokyhSection(title = "Geräte", modifier = Modifier.fadeIn(80)) {
+        PokyhSection(title = I18n.s.profile.devices, modifier = Modifier.fadeIn(80)) {
             PokyhCard {
-                Text("Tage, an denen du das jeweilige Gerät genutzt hast.", style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
+                Text(I18n.s.profile.devicesLead, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
                 Spacer(Modifier.size(PokyhSpacing.md))
                 Bars(
                     listOf(
-                        Triple("Handy", a.platforms.phone, daysText(a.platforms.phone)),
-                        Triple("Computer", a.platforms.desktop, daysText(a.platforms.desktop)),
-                        Triple("App", a.platforms.app, daysText(a.platforms.app)),
-                        Triple("Browser", a.platforms.web, daysText(a.platforms.web)),
+                        Triple(I18n.s.profile.phone, a.platforms.phone, daysText(a.platforms.phone)),
+                        Triple(I18n.s.profile.computer, a.platforms.desktop, daysText(a.platforms.desktop)),
+                        Triple(I18n.s.profile.app, a.platforms.app, daysText(a.platforms.app)),
+                        Triple(I18n.s.profile.browser, a.platforms.web, daysText(a.platforms.web)),
                     ),
                 )
             }
         }
 
-        PokyhSection(title = "Meistgenutzte Seiten", modifier = Modifier.fadeIn(100)) {
+        PokyhSection(title = I18n.s.profile.topPages, modifier = Modifier.fadeIn(100)) {
             PokyhCard {
-                Text("Auf der Website, in den letzten Wochen.", style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
+                Text(I18n.s.profile.topPagesLead, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
                 Spacer(Modifier.size(PokyhSpacing.md))
                 when {
                     !consent -> Text(onlyWithConsent, style = PokyhType.callout, color = PokyhTheme.colors.textSecondary)
@@ -376,17 +376,17 @@ private fun StatsContent(a: ApiAccountActivity) {
             }
         }
 
-        PokyhSection(title = "Was du erstellt hast", modifier = Modifier.fadeIn(120)) {
+        PokyhSection(title = I18n.s.profile.created, modifier = Modifier.fadeIn(120)) {
             PokyhCard {
                 val items = buildList {
-                    add("To-dos erledigt" to a.created.todosDone.toString())
-                    add("To-dos offen" to a.created.todosOpen.toString())
-                    add("Erinnerungen" to a.created.reminders.toString())
-                    add("Kommentare" to a.created.comments.toString())
-                    add("Mensa-Bewertungen" to a.created.ratings.toString())
+                    add(I18n.s.profile.todosDone to a.created.todosDone.toString())
+                    add(I18n.s.profile.todosOpen to a.created.todosOpen.toString())
+                    add(I18n.s.profile.reminders to a.created.reminders.toString())
+                    add(I18n.s.profile.comments to a.created.comments.toString())
+                    add(I18n.s.profile.ratings to a.created.ratings.toString())
                     a.memberSince?.let { since ->
                         runCatching { LocalDate.parse(since.take(10)) }.getOrNull()?.let {
-                            add("Dabei seit" to it.format(DateTimeFormatter.ofPattern("MMMM yyyy", German)))
+                            add(I18n.s.profile.memberSince to "${I18n.s.common.months[it.monthValue - 1].replaceFirstChar { c -> c.uppercase() }} ${it.year}")
                         }
                     }
                 }
@@ -406,7 +406,7 @@ private fun StatsContent(a: ApiAccountActivity) {
         }
 
         Text(
-            text = "Gezeigt wird, was der POKYH-Server ohnehin speichert (Datenschutzerklärung). Nur du siehst diese Übersicht.",
+            text = I18n.s.profile.statsFooter,
             style = PokyhType.caption,
             color = PokyhTheme.colors.textTertiary,
         )
@@ -477,23 +477,7 @@ private fun Bars(rows: List<Triple<String, Int, String>>) {
     }
 }
 
-/** A web page path as the name the app uses for it. */
-private fun pageName(page: String): String = when (page.trim('/')) {
-    "home" -> "Home"
-    "timetable" -> "Stundenplan"
-    "grades" -> "Noten"
-    "messages" -> "Nachrichten"
-    "absences" -> "Abwesenheiten"
-    "classregevents" -> "Klassenbuch"
-    "todos" -> "To-dos"
-    "reminders" -> "Erinnerungen"
-    "class" -> "Klasse"
-    "canteen", "mensa" -> "Mensa"
-    "school" -> "Schule"
-    "profile" -> "Profil"
-    "settings" -> "Einstellungen"
-    else -> page
-}
+private fun pageName(page: String): String = I18n.s.profile.pageNames[page.trim('/')] ?: page
 
 // ── WebUntis-Passwort ändern ────────────────────────────────────────────────
 
@@ -534,14 +518,14 @@ fun ChangePasswordSheet(viewModel: ProfileViewModel, onDismiss: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PokyhIconButton(
                     icon = PokyhIcons.close,
-                    contentDescription = "Schließen",
+                    contentDescription = I18n.s.common.close,
                     onClick = ::dismiss,
                     tinted = true,
                     size = 36.dp,
                     iconSize = 18.dp,
                 )
                 Text(
-                    "Passwort ändern",
+                    I18n.s.profile.changePassword,
                     style = PokyhType.headline,
                     color = PokyhTheme.colors.textPrimary,
                     modifier = Modifier.weight(1f).padding(horizontal = PokyhSpacing.md),
@@ -556,25 +540,25 @@ fun ChangePasswordSheet(viewModel: ProfileViewModel, onDismiss: () -> Unit) {
                     Box(Modifier.size(64.dp).accentSurface(PokyhShapes.xl), contentAlignment = Alignment.Center) {
                         Icon(PokyhIcons.check, null, tint = Brand.success, modifier = Modifier.size(30.dp))
                     }
-                    Text("Passwort geändert.", style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
+                    Text(I18n.s.profile.passwordChanged, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
                     Text(
-                        "Melde dich ab jetzt überall mit dem neuen Passwort an.",
+                        I18n.s.profile.passwordChangedText,
                         style = PokyhType.footnote,
                         color = PokyhTheme.colors.textSecondary,
                     )
                 }
             } else {
                 Text(
-                    "Das ist dein WebUntis-Passwort. Es geht nur an WebUntis, POKYH speichert es nicht auf dem Server.",
+                    I18n.s.profile.passwordLead,
                     style = PokyhType.footnote,
                     color = PokyhTheme.colors.textSecondary,
                 )
-                PokyhTextField(old, { old = it }, label = "Aktuelles Passwort", isPassword = true, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
-                PokyhTextField(new, { new = it }, label = "Neues Passwort", isPassword = true, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
-                PokyhTextField(confirm, { confirm = it }, label = "Neues Passwort wiederholen", isPassword = true, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
+                PokyhTextField(old, { old = it }, label = I18n.s.profile.currentPassword, isPassword = true, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
+                PokyhTextField(new, { new = it }, label = I18n.s.profile.newPassword, isPassword = true, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
+                PokyhTextField(confirm, { confirm = it }, label = I18n.s.profile.repeatPassword, isPassword = true, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
                 state.error?.let { Text(it, style = PokyhType.footnote, color = Brand.danger) }
                 PokyhPrimaryButton(
-                    text = "Passwort ändern",
+                    text = I18n.s.profile.changePassword,
                     icon = PokyhIcons.password,
                     loading = state.saving,
                     onClick = { viewModel.changePassword(old, new, confirm) },

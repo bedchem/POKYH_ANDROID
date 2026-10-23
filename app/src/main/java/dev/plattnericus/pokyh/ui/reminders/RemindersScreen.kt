@@ -116,12 +116,12 @@ fun RemindersScreen(
                 ui.error != null && ui.reminders.isEmpty() && ui.pending.isEmpty() ->
                     ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
                 !hasClass && !ui.offline && !ui.offlineCopy -> EmptyStateView(
-                    icon = PokyhIcons.classMembers,
+                    sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Search,
                     title = "Keine Klasse",
                     subtitle = "Du bist noch keiner Klasse beigetreten.",
                 )
                 visible.isEmpty() && ui.pending.isEmpty() -> EmptyStateView(
-                    icon = PokyhIcons.reminders,
+                    sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Bell,
                     title = "Keine Erinnerungen",
                     subtitle = if (ui.offline) {
                         "Du bist offline. Neue Erinnerungen werden gesendet, sobald du wieder Internet hast."

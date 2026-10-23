@@ -79,9 +79,9 @@ class GradeSubjectViewModel @Inject constructor(
                 _subject.value = all.firstOrNull { it.lessonId == subjectId }
             } catch (e: AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()
-                _error.value = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message
+                _error.value = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message
             } catch (e: Exception) {
-                _error.value = e.message ?: "Unbekannter Fehler."
+                _error.value = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
             } finally {
                 _loading.value = false
             }
@@ -102,7 +102,7 @@ class GradeSubjectViewModel @Inject constructor(
     }
 
     /** Toggles a teacher grade between removed/restored (row's ✕ / ↩ action). */
-    fun toggleTeacherGradeRemoved(gradeId: Int) {
+    fun toggleTeacherGradeRemoved(gradeId: Long) {
         val ids = _draft.value.removedTeacherGradeIds
         val next = if (ids.contains(gradeId)) ids - gradeId else ids + gradeId
         persist(_draft.value.copy(removedTeacherGradeIds = next))

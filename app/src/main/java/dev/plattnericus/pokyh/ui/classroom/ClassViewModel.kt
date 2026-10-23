@@ -103,7 +103,7 @@ class ClassViewModel @Inject constructor(
             } catch (e: AppError) {
                 _error.value = e.message
             } catch (e: Exception) {
-                _error.value = e.message ?: "Unbekannter Fehler."
+                _error.value = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
             } finally {
                 _loading.value = false
             }

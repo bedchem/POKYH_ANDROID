@@ -136,13 +136,15 @@ data class TimetableEntry(
 // @Serializable for the offline grades cache — see [TimetableEntry].
 @Serializable
 data class GradeEntry(
-    var id: Int,
+    var id: Long,
     var text: String,
     var date: Int,
     var markName: String,
     var markValue: Double,
     var markDisplayValue: Double,
     var examType: String,
+    /** When WebUntis says the grade was entered (epoch ms), when its answer carries it. */
+    var enteredAt: Long? = null,
 )
 
 @Serializable

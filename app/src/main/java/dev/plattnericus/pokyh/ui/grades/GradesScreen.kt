@@ -45,6 +45,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.i18n.strings
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.core.util.GradeMath
 import dev.plattnericus.pokyh.core.util.todayLocalDate
@@ -52,6 +54,7 @@ import dev.plattnericus.pokyh.data.model.GradeEntry
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.ui.components.AsOfLabel
 import dev.plattnericus.pokyh.ui.components.ErrorStateView
+import dev.plattnericus.pokyh.ui.components.PixelState
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhFittedText
 import dev.plattnericus.pokyh.ui.components.PokyhMenuButton
@@ -65,6 +68,7 @@ import dev.plattnericus.pokyh.ui.components.PokyhTopBar
 import dev.plattnericus.pokyh.ui.components.TabRootActions
 import dev.plattnericus.pokyh.ui.components.TopBarNav
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
+import dev.plattnericus.pokyh.ui.pixel.PixelSprite
 import dev.plattnericus.pokyh.ui.profile.CurrentUserAvatar
 import dev.plattnericus.pokyh.ui.profile.rememberUnreadMessageCount
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
@@ -107,14 +111,15 @@ fun GradesScreen(
     val freshness by viewModel.freshness.collectAsStateWithLifecycle()
     var yearMenuOpen by remember { mutableStateOf(false) }
 
-    val dashboard = remember(subjects) { buildGradesDashboard(subjects, todayLocalDate()) }
+    val g = strings().grades
+    val dashboard = remember(subjects, g) { buildGradesDashboard(subjects, todayLocalDate()) }
 
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
-                title = "Schuljahr $year / ${year + 1}",
+                title = g.schoolYearTitle(year),
                 nav = TopBarNav.None,
                 actions = {
                     Box {
@@ -147,6 +152,7 @@ fun GradesScreen(
                         unreadMessages = rememberUnreadMessageCount(),
                         onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                         onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                        onNavigate = onNavigate,
                     )
                 },
             )
@@ -203,6 +209,7 @@ private fun GradesContent(
         }.map { it.first to it.second }
     }
 
+    val g = strings().grades
     var expanded by remember { mutableStateOf(setOf<Int>()) }
     val allExpanded = sortedSubjects.isNotEmpty() && expanded.size == sortedSubjects.size
 
@@ -223,7 +230,7 @@ private fun GradesContent(
 
         Column(modifier = Modifier.fadeIn(160)) {
             PokyhSectionHeader(
-                title = "Fächer",
+                title = g.subjects,
                 trailing = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -231,7 +238,7 @@ private fun GradesContent(
                     ) {
                         SortMenu(sort = sort, onSortChange = onSortChange)
                         PokyhTextButton(
-                            text = if (allExpanded) "Einklappen" else "Alle",
+                            text = if (allExpanded) g.collapseAll else g.expandAll,
                             onClick = {
                                 expanded = if (allExpanded) {
                                     emptySet()
@@ -249,11 +256,7 @@ private fun GradesContent(
                 // Only reachable when WebUntis returns no lessons at all for the year — a
                 // subject with zero grades is still listed (see UntisClient.grades).
                 PokyhCard {
-                    Text(
-                        text = "WebUntis hat für dieses Schuljahr keine Fächer gemeldet.",
-                        style = PokyhType.footnote,
-                        color = PokyhTheme.colors.textTertiary,
-                    )
+                    PixelState(title = g.emptyTitle, note = g.noSubjects, sprite = PixelSprite.Empty, compact = true)
                 }
             } else {
                 PokyhCard(padding = 0.dp) {
@@ -390,7 +393,7 @@ private fun SortMenu(sort: GradesViewModel.SortMode, onSortChange: (GradesViewMo
     var open by remember { mutableStateOf(false) }
     Box {
         PokyhMenuButton(
-            label = sort.label,
+            label = sortLabel(sort),
             leadingIcon = PokyhIcons.sort,
             expanded = open,
             onClick = { open = true },
@@ -398,7 +401,7 @@ private fun SortMenu(sort: GradesViewModel.SortMode, onSortChange: (GradesViewMo
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             GradesViewModel.SortMode.entries.forEach { mode ->
                 DropdownMenuItem(
-                    text = { Text(mode.label, style = PokyhType.body) },
+                    text = { Text(sortLabel(mode), style = PokyhType.body) },
                     trailingIcon = {
                         if (sort == mode) {
                             Icon(
@@ -477,7 +480,7 @@ private fun SubjectExpandableRow(
                         .padding(horizontal = PokyhSpacing.sm, vertical = 4.dp),
                 )
                 Text(
-                    text = "${subject.grades.size} ${if (subject.grades.size == 1) "Note" else "Noten"}",
+                    text = strings().grades.gradeCount(subject.grades.size),
                     style = PokyhType.caption,
                     color = colors.textTertiary,
                     maxLines = 1,
@@ -490,7 +493,7 @@ private fun SubjectExpandableRow(
             )
             Icon(
                 imageVector = PokyhIcons.expandMenu,
-                contentDescription = if (isExpanded) "Einklappen" else "Aufklappen",
+                contentDescription = if (isExpanded) strings().grades.collapse else strings().grades.expand,
                 tint = colors.textTertiary,
                 modifier = Modifier.size(18.dp).rotate(chevronRotation),
             )
@@ -514,7 +517,7 @@ private fun SubjectExpandableRow(
             ) {
                 if (subject.grades.isEmpty()) {
                     Text(
-                        text = "Keine Einzelnoten vorhanden.",
+                        text = strings().grades.noSingleGrades,
                         style = PokyhType.footnote,
                         color = colors.textTertiary,
                         modifier = Modifier.padding(vertical = PokyhSpacing.sm),
@@ -529,7 +532,7 @@ private fun SubjectExpandableRow(
                 // aligned label-only text read as another grade row.
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     PokyhSecondaryButton(
-                        text = "Details öffnen",
+                        text = strings().grades.openDetails,
                         icon = PokyhIcons.chevronRight,
                         onClick = onOpenDetails,
                         compact = true,
@@ -571,6 +574,17 @@ private fun GradeDetailRow(grade: GradeEntry) {
     }
 }
 
+@Composable
+private fun sortLabel(mode: GradesViewModel.SortMode): String {
+    val g = strings().grades
+    return when (mode) {
+        GradesViewModel.SortMode.NAME -> g.sortName
+        GradesViewModel.SortMode.AVG_DESC -> g.sortBest
+        GradesViewModel.SortMode.AVG_ASC -> g.sortWorst
+        GradesViewModel.SortMode.RECENT -> g.sortRecent
+    }
+}
+
 /**
  * `gradeDisplay(_:)` — falls back through text -> markName -> examType -> "Prüfung", and treats a
  * label that's really just the mark again ("7", "6.5", "7/10") as no label at all, matching the
@@ -578,8 +592,8 @@ private fun GradeDetailRow(grade: GradeEntry) {
  */
 fun gradeDisplay(g: GradeEntry): String {
     val raw = g.text.ifEmpty { g.markName.ifEmpty { g.examType } }.trim()
-    if (raw.isEmpty()) return "Prüfung"
+    if (raw.isEmpty()) return I18n.s.grades.exam
     val normalized = raw.replace(',', '.').replace(Regex("[−–—]"), "-").trim()
     val gradeLike = Regex("""^(?:\d{1,2}(?:\.\d{1,2})?[+\-]?|\d{1,2}/\d{1,2})$""")
-    return if (gradeLike.matches(normalized)) "Prüfung" else raw
+    return if (gradeLike.matches(normalized)) I18n.s.grades.exam else raw
 }

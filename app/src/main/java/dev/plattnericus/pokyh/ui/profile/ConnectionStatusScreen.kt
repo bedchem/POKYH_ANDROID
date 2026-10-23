@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.plattnericus.pokyh.core.i18n.I18n
 import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.UserSession
 import dev.plattnericus.pokyh.ui.components.PokyhCard
@@ -92,7 +93,7 @@ fun ConnectionStatusScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = PokyhTheme.colors.bg,
-        topBar = { PokyhTopBar(title = "Konto & Verbindung", nav = TopBarNav.Back(onNavigateUp)) },
+        topBar = { PokyhTopBar(title = I18n.s.profile.connectionTitle, nav = TopBarNav.Back(onNavigateUp)) },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().appBackground().padding(padding),
@@ -176,39 +177,38 @@ private fun statusIcon(status: BackendStatus): ImageVector = when (status) {
 }
 
 private fun statusExplanation(status: BackendStatus): String = when (status) {
-    is BackendStatus.Ok -> "Dein POKYH-Konto ist aktiv. Todos, Erinnerungen und Klasse stehen zur Verfügung."
-    is BackendStatus.NotStudent -> "POKYH-Funktionen sind nur mit einem Schülerkonto verfügbar."
+    is BackendStatus.Ok -> I18n.s.profile.heroOk
+    is BackendStatus.NotStudent -> I18n.s.profile.heroNotStudent
     is BackendStatus.NoClass ->
-        "Deine WebUntis-Klasse konnte nicht ermittelt werden — dadurch sind Todos & Erinnerungen " +
-            "gesperrt. Tippe auf Erneut prüfen; hilft das nicht, sende die technischen Details an den Support."
-    is BackendStatus.Failed -> "Verbindung zum POKYH-Server fehlgeschlagen: ${status.message}"
-    is BackendStatus.Unknown -> "Status noch nicht ermittelt."
-    is BackendStatus.Offline -> "Du bist offline angemeldet. Todos, Erinnerungen und Klasse zeigen den zuletzt gespeicherten Stand."
+        I18n.s.profile.heroNoClass
+    is BackendStatus.Failed -> I18n.s.profile.heroFailed(status.message)
+    is BackendStatus.Unknown -> I18n.s.profile.heroUnknown
+    is BackendStatus.Offline -> I18n.s.profile.heroOffline
 }
 
 // ── Dein Konto ──────────────────────────────────────────────────────────────
 
 @Composable
 private fun AccountInfoSection(session: UserSession, modifier: Modifier = Modifier) {
-    PokyhSection(title = "Dein Konto", modifier = modifier) {
+    PokyhSection(title = I18n.s.profile.yourAccount, modifier = modifier) {
         PokyhCard(padding = 0.dp) {
-            InfoRow("Name", session.personName ?: session.username)
+            InfoRow(I18n.s.profile.name, session.personName ?: session.username)
             if (session.klasseName.isNotEmpty()) {
                 PokyhRowSeparator()
-                InfoRow("Klasse", session.klasseName)
+                InfoRow(I18n.s.profile.klasse, session.klasseName)
             }
             PokyhRowSeparator()
-            InfoRow("Schule", "LBS Brixen")
+            InfoRow(I18n.s.profile.school, I18n.s.profile.schoolName)
             PokyhRowSeparator()
-            InfoRow("Rolle", roleLabel(session))
+            InfoRow(I18n.s.profile.role, roleLabel(session))
         }
     }
 }
 
 private fun roleLabel(session: UserSession): String = when {
-    session.isParent -> "Erziehungsberechtigt"
-    session.isStudent -> "Schüler/in"
-    else -> "Lehrkraft/Verwaltung"
+    session.isParent -> I18n.s.profile.parent
+    session.isStudent -> I18n.s.profile.student
+    else -> I18n.s.profile.staff
 }
 
 @Composable
@@ -232,10 +232,10 @@ private fun DetailsSection(
     onShare: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    PokyhSection(title = "Diagnose", modifier = modifier) {
+    PokyhSection(title = I18n.s.profile.diagnosis, modifier = modifier) {
         PokyhCard(padding = 0.dp) {
             PokyhRow(
-                title = "Erneut prüfen",
+                title = I18n.s.profile.checkAgain,
                 titleColor = PokyhTheme.colors.accentText,
                 leading = {
                     if (loading) {
@@ -259,8 +259,8 @@ private fun DetailsSection(
             )
             PokyhRowSeparator()
             PokyhRow(
-                title = "Technische Details",
-                subtitle = "Für den Support",
+                title = I18n.s.profile.technicalDetails,
+                subtitle = I18n.s.profile.forSupport,
                 leading = {
                     Icon(
                         imageVector = PokyhIcons.document,
@@ -294,7 +294,7 @@ private fun DetailsSection(
                 ) {
                     SelectionContainer {
                         Text(
-                            text = diagnostics ?: "Wird geladen…",
+                            text = diagnostics ?: I18n.s.common.loading,
                             style = PokyhType.caption2.copy(fontFamily = FontFamily.Monospace),
                             color = PokyhTheme.colors.textSecondary,
                             modifier = Modifier
@@ -305,7 +305,7 @@ private fun DetailsSection(
                     }
                     if (diagnostics != null) {
                         PokyhTextButton(
-                            text = "Teilen",
+                            text = I18n.s.profile.share,
                             icon = PokyhIcons.share,
                             onClick = { onShare(diagnostics) },
                         )
@@ -325,7 +325,7 @@ private fun DetailsSection(
                     modifier = Modifier.size(14.dp),
                 )
                 Text(
-                    text = "Enthält nur deine WebUntis-Daten – keine Passwörter.",
+                    text = I18n.s.profile.detailsNote,
                     style = PokyhType.caption2,
                     color = PokyhTheme.colors.textTertiary,
                 )

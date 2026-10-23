@@ -229,6 +229,7 @@ private fun HomeContent(
                 arranging = arranging,
                 onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                 onProfile = { onNavigate(PokyhDestinations.PROFILE) },
+                onNavigate = onNavigate,
                 onToggleArrange = { onSetArranging(!arranging) },
                 modifier = Modifier.fadeIn(),
             )
@@ -506,6 +507,7 @@ private fun GreetingHeader(
     arranging: Boolean,
     onMessages: () -> Unit,
     onProfile: () -> Unit,
+    onNavigate: (String) -> Unit,
     onToggleArrange: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -543,6 +545,7 @@ private fun GreetingHeader(
                     unreadMessages = rememberUnreadMessageCount(),
                     onMessages = onMessages,
                     onProfile = onProfile,
+                    onNavigate = onNavigate,
                 )
             }
         }

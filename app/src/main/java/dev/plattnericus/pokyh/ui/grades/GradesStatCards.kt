@@ -16,7 +16,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -34,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.plattnericus.pokyh.core.i18n.strings
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.ui.components.PokyhCard
 import dev.plattnericus.pokyh.ui.components.PokyhFittedText
@@ -219,14 +228,15 @@ internal fun AverageStatCard(
     compact: Boolean = false,
 ) {
     val size = if (compact) StatSize.Compact else StatSize.Full
+    val g = strings().grades
     val colors = PokyhTheme.colors
     val improving = dashboard.delta >= 0
     val trendColor = if (improving) Brand.success else Brand.danger
 
     PokyhCard(modifier = modifier, padding = size.padding) {
         CardHeader(
-            title = "Durchschnittsnote",
-            subtitle = "Alle Fächer · gewichtet",
+            title = g.avgTitle,
+            subtitle = g.avgSub,
             size = size,
             pill = {
                 StatPill(
@@ -250,9 +260,9 @@ internal fun AverageStatCard(
             )
         }
         CardFooter(
-            leftLabel = "Vormonat",
+            leftLabel = g.prevMonth,
             leftValue = if (dashboard.hasGrades) Fmt.num(dashboard.previousMonthAvg) else "–",
-            rightLabel = "Beste Note",
+            rightLabel = g.bestGrade,
             rightValue = if (dashboard.bestGrade > 0) Fmt.num(dashboard.bestGrade) else "—",
             size = size,
         )
@@ -351,11 +361,12 @@ internal fun RatioStatCard(
     compact: Boolean = false,
 ) {
     val size = if (compact) StatSize.Compact else StatSize.Full
+    val g = strings().grades
     val colors = PokyhTheme.colors
     PokyhCard(modifier = modifier, padding = size.padding) {
         CardHeader(
-            title = "Notenverhältnis",
-            subtitle = "Genügend · Ungenügend",
+            title = g.ratioTitle,
+            subtitle = g.ratioSub,
             size = size,
             pill = { StatPill("${dashboard.passRate.roundToInt()} %") },
         )
@@ -383,10 +394,10 @@ internal fun RatioStatCard(
         }
         Spacer(Modifier.size(PokyhSpacing.md))
         CardFooter(
-            leftLabel = "über 6.0",
+            leftLabel = g.above6,
             leftValue = "${dashboard.pos}",
             leftValueColor = Brand.success,
-            rightLabel = "unter 6.0",
+            rightLabel = g.below6,
             rightValue = "${dashboard.neg}",
             rightValueColor = Brand.danger,
             size = size,
@@ -435,10 +446,11 @@ internal fun DistributionStatCard(
     compact: Boolean = false,
 ) {
     val size = if (compact) StatSize.Compact else StatSize.Full
+    val g = strings().grades
     PokyhCard(modifier = modifier, padding = size.padding) {
         CardHeader(
-            title = "Notenverteilung",
-            subtitle = "Häufigkeit pro Note",
+            title = g.distTitle,
+            subtitle = g.distSub,
             size = size,
             pill = { StatPill("σ ${Fmt.num(dashboard.sigma)}") },
         )
@@ -465,9 +477,9 @@ internal fun DistributionStatCard(
         }
         Spacer(Modifier.size(PokyhSpacing.md))
         CardFooter(
-            leftLabel = "Modus",
+            leftLabel = g.mode,
             leftValue = if (dashboard.hasGrades) "${dashboard.mode}" else "—",
-            rightLabel = "Median",
+            rightLabel = g.median,
             rightValue = if (dashboard.hasGrades) Fmt.num(dashboard.median) else "—",
             size = size,
         )
@@ -483,13 +495,39 @@ private fun DistributionDonut(
     val colors = PokyhTheme.colors
     val measurer = rememberTextMeasurer()
     val segments = dashboard.donutSegments
+    // The grade whose arc was tapped: it stays bright, the others fade, and its count sits in
+    // the hole of the ring — the web's hover, as a tap. Tapping it again (or beside the ring)
+    // lets go.
+    var selected by remember(segments) { mutableStateOf<Int?>(null) }
+    val hint = strings().grades.distHint
 
-    Canvas(modifier = modifier) {
+    Canvas(
+        modifier = modifier
+            .semantics { contentDescription = hint }
+            .pointerInput(segments) {
+                detectTapGestures { pos ->
+                    val scale = minOf(size.width, size.height) / DonutGeometry.VIEWPORT
+                    val dx = pos.x - DonutGeometry.CX * scale
+                    val dy = pos.y - DonutGeometry.CY * scale
+                    // The hit band is wider than the ring (the web's 24-unit hit stroke).
+                    val r = kotlin.math.hypot(dx, dy) / scale
+                    if (r < DonutGeometry.RADIUS - 14 || r > DonutGeometry.RADIUS + 14) {
+                        selected = null
+                        return@detectTapGestures
+                    }
+                    var a = kotlin.math.atan2(dy, dx)
+                    if (a < -kotlin.math.PI.toFloat() / 2) a += 2 * kotlin.math.PI.toFloat()
+                    val hit = segments.firstOrNull { a >= it.startAngle - 0.02f && a <= it.startAngle + it.sweep + 0.02f }
+                    selected = if (hit == null || hit.grade == selected) null else hit.grade
+                }
+            },
+    ) {
         val scale = size.minDimension / DonutGeometry.VIEWPORT
         fun p(xy: Pair<Float, Float>) = Offset(xy.first * scale, xy.second * scale)
         val center = Offset(DonutGeometry.CX * scale, DonutGeometry.CY * scale)
         val radius = DonutGeometry.RADIUS * scale
         val stroke = DonutGeometry.STROKE * scale
+        fun alphaOf(grade: Int) = if (selected == null || selected == grade) 1f else 0.35f
 
         if (segments.isEmpty()) {
             // Empty state: the full ring in the inset tone, so the card keeps the donut's
@@ -504,7 +542,7 @@ private fun DistributionDonut(
         }
 
         segments.forEach { seg ->
-            val color = distributionColor(seg.grade)
+            val color = distributionColor(seg.grade).copy(alpha = alphaOf(seg.grade))
             drawArc(
                 color = color,
                 startAngle = Math.toDegrees(seg.startAngle.toDouble()).toFloat(),
@@ -516,10 +554,24 @@ private fun DistributionDonut(
             )
         }
 
+        // The tapped grade's count in the hole: "4×", in its colour.
+        segments.firstOrNull { it.grade == selected }?.let { seg ->
+            val layout = measurer.measure(
+                text = "${seg.count}×",
+                style = TextStyle(
+                    fontFamily = PokyhFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = maxOf(14f * scale, 13.dp.toPx()).toSp(),
+                    color = distributionColor(seg.grade),
+                ),
+            )
+            drawText(layout, topLeft = Offset(center.x - layout.size.width / 2f, center.y - layout.size.height / 2f))
+        }
+
         // Leader line + grade number, only where the segment is wide enough to label.
         if (!showLabels) return@Canvas
         segments.filter { it.sweep >= DonutGeometry.LABEL_MIN_SWEEP }.forEach { seg ->
-            val color = distributionColor(seg.grade)
+            val color = distributionColor(seg.grade).copy(alpha = alphaOf(seg.grade))
             drawLine(
                 color = color.copy(alpha = 0.8f),
                 start = p(seg.tickStart),
@@ -558,17 +610,18 @@ internal fun RecentStatCard(
     compact: Boolean = false,
 ) {
     val size = if (compact) StatSize.Compact else StatSize.Full
+    val g = strings().grades
     val colors = PokyhTheme.colors
     PokyhCard(modifier = modifier, padding = size.padding) {
         CardHeader(
-            title = "Kürzlich hinzugefügt",
-            subtitle = "Letzte ${dashboard.recent.size} Einträge",
+            title = g.recentTitle,
+            subtitle = g.recentSub(dashboard.recent.size),
             size = size,
         )
         if (dashboard.recent.isEmpty()) {
             CardBody(size) {
                 Text(
-                    text = "Noch keine Noten erfasst.",
+                    text = g.recentEmpty,
                     style = PokyhType.footnote,
                     color = colors.textTertiary,
                     modifier = Modifier.fillMaxWidth(),
@@ -656,15 +709,12 @@ internal fun RecentStatCard(
 /** A compact label for the screen header's eyebrow. */
 @Composable
 internal fun DashboardEyebrow(dashboard: GradesDashboard) {
+    val g = strings().grades
     val text = if (dashboard.hasGrades) {
-        val stand = if (dashboard.latestGradeDate > 0) {
-            formatUntisDateLong(dashboard.latestGradeDate)
-        } else {
-            "—"
-        }
-        "Stand $stand · ${dashboard.subjectCount} Fächer · ${dashboard.allCount} Noten"
+        val stand = if (dashboard.latestGradeDate > 0) formatUntisDateLong(dashboard.latestGradeDate) else "—"
+        g.summary(stand, dashboard.subjectCount, dashboard.allCount)
     } else {
-        "Noch keine Noten in diesem Schuljahr"
+        g.noGradesYear
     }
     PokyhLabel(text)
 }

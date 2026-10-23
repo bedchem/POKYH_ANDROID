@@ -10,6 +10,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 
 /**
  * Lightweight dynamic JSON access — mirrors `JSON.swift`'s defensive navigation
@@ -48,6 +49,19 @@ class JsonDyn private constructor(private val element: JsonElement?) {
             if (prim is JsonNull) return null
             prim.intOrNull?.let { return it }
             return if (prim.isString) prim.content.toIntOrNull() else null
+        }
+
+    /**
+     * A whole number of any size, as JavaScript reads it: `4711`, `"4711"` or `4711.0`. [int]
+     * gives null for an id beyond 32 bits, which would make every such id the same.
+     */
+    val long: Long?
+        get() {
+            val prim = element as? JsonPrimitive ?: return null
+            if (prim is JsonNull) return null
+            prim.longOrNull?.let { return it }
+            val d = prim.content.toDoubleOrNull() ?: return null
+            return if (d.isFinite() && d == kotlin.math.floor(d)) d.toLong() else null
         }
 
     val double: Double?

@@ -104,7 +104,7 @@ class ReminderDetailViewModel @Inject constructor(
                     it.copy(loading = false, error = if (r == null) "Erinnerung nicht gefunden." else null, reminder = r ?: it.reminder)
                 }
             }
-            .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.") } }
+            .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) } }
     }
 
     private suspend fun loadComments(classId: String, token: String) {

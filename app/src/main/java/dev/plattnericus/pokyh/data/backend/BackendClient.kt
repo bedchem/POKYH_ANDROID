@@ -634,6 +634,17 @@ class BackendClient @Inject constructor(
     suspend fun accountActivity(token: String): ApiAccountActivity =
         decode(request(Config.Routes.myActivity, token = token))
 
+    /** Which of the bell's notifications the account has seen and cleared, on any device. */
+    @Serializable
+    data class BellMarks(val seen: List<String> = emptyList(), val cleared: List<String> = emptyList())
+
+    suspend fun bellMarks(token: String): BellMarks = decode(request("/users/me/bell", token = token))
+
+    /** Marks more of them (identifiers only, kept 30 days); nothing is unmarked. */
+    suspend fun markBell(marks: BellMarks, token: String) {
+        request("/users/me/bell", method = "POST", token = token, jsonBody = json.encodeToString(BellMarks.serializer(), marks))
+    }
+
     // ── Authentifizierte Requests ───────────────────────────────────────────
 
     private suspend fun request(

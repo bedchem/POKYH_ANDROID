@@ -84,11 +84,11 @@ class MessagesViewModel @Inject constructor(
                 _list.update {
                     it.copy(
                         loadingFolders = it.loadingFolders - folder,
-                        error = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message,
+                        error = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message,
                     )
                 }
             } catch (e: Exception) {
-                _list.update { it.copy(loadingFolders = it.loadingFolders - folder, error = e.message ?: "Unbekannter Fehler.") }
+                _list.update { it.copy(loadingFolders = it.loadingFolders - folder, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) }
             }
         }
     }
@@ -163,10 +163,10 @@ class MessagesViewModel @Inject constructor(
                 }
             } catch (e: AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()
-                val msg = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message
+                val msg = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message
                 _detail.value = DetailUiState(loading = false, error = msg)
             } catch (e: Exception) {
-                _detail.value = DetailUiState(loading = false, error = e.message ?: "Unbekannter Fehler.")
+                _detail.value = DetailUiState(loading = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError)
             }
         }
     }
@@ -246,7 +246,7 @@ class MessagesViewModel @Inject constructor(
                 _compose.update {
                     it.copy(
                         replyLoading = false,
-                        error = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message,
+                        error = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message,
                     )
                 }
             } catch (e: Exception) {
@@ -358,11 +358,11 @@ class MessagesViewModel @Inject constructor(
                     it.copy(
                         sending = false,
                         savingDraft = false,
-                        error = if (e.isSessionExpired) "Sitzung abgelaufen. Bitte erneut anmelden." else e.message,
+                        error = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message,
                     )
                 }
             } catch (e: Exception) {
-                _compose.update { it.copy(sending = false, savingDraft = false, error = e.message ?: "Unbekannter Fehler.") }
+                _compose.update { it.copy(sending = false, savingDraft = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) }
             }
         }
     }

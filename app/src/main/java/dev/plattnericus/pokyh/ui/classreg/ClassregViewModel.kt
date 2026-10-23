@@ -66,12 +66,12 @@ class ClassregViewModel @Inject constructor(
                 if (e.isSessionExpired) {
                     // Same handling as ClassregEventsView.swift's `app.handleSessionExpired()`.
                     appState.handleSessionExpired()
-                    _error.value = "Sitzung abgelaufen. Bitte erneut anmelden."
+                    _error.value = dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired
                 } else {
                     _error.value = e.message
                 }
             } catch (e: Exception) {
-                _error.value = e.message ?: "Unbekannter Fehler."
+                _error.value = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
             } finally {
                 _loading.value = false
             }

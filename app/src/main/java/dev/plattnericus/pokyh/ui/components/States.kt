@@ -9,127 +9,183 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.plattnericus.pokyh.core.i18n.strings
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.BackendStatus
+import dev.plattnericus.pokyh.ui.pixel.PixelArt
+import dev.plattnericus.pokyh.ui.pixel.PixelSprite
+import dev.plattnericus.pokyh.ui.pixel.stateScene
 import dev.plattnericus.pokyh.ui.theme.Brand
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
+import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 
+/** A pixel scene on its own, [width] wide (see [PixelSprite]). */
+@Composable
+fun PixelSpriteArt(sprite: PixelSprite, modifier: Modifier = Modifier, width: Dp = 160.dp) {
+    PixelArt(scene = stateScene(sprite), modifier = modifier.width(width))
+}
+
 /**
- * Every "there is nothing here" screen, built from one layout so they're interchangeable: a
- * tinted glyph disc, a title, a line of explanation, and at most one action.
- *
- * The disc is the empty state's whole visual identity — it reuses [IconTile]'s "semantic color
- * at low alpha" idea at hero size, so an empty list looks like the same product as the rows
- * that would have been in it. No decorative illustration: an empty state's job is to explain,
- * and a flourish that only appears when something is missing reads as an apology.
+ * A state where something went wrong or there is nothing to show — the web's `PixelState`: a
+ * small pixel scene drawn like the Mensa plate (square pixels, outlines, light from the top left,
+ * dithered shadows, animated in steps), the plain sentence below it, a second sentence for
+ * people, the technical reason in small type, and at most one action.
  */
 @Composable
-private fun StateLayout(
-    icon: ImageVector,
-    tint: Color,
+fun PixelState(
     title: String,
-    message: String?,
     modifier: Modifier = Modifier,
-    action: @Composable (() -> Unit)? = null,
+    sprite: PixelSprite = PixelSprite.Unplugged,
+    note: String? = null,
+    detail: String? = null,
+    compact: Boolean = false,
+    action: (@Composable () -> Unit)? = null,
 ) {
+    val colors = PokyhTheme.colors
     Column(
         modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = PokyhSpacing.xxxl)
+            .fillMaxWidth()
+            .padding(horizontal = PokyhSpacing.lg, vertical = if (compact) PokyhSpacing.xl else 40.dp)
             .fadeIn(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(88.dp)
-                .background(tint.copy(alpha = 0.12f), PokyhShapes.pill),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(38.dp))
-        }
-        Spacer(Modifier.size(PokyhSpacing.xl))
+        PixelSpriteArt(sprite, width = if (compact) 120.dp else 160.dp)
+        Spacer(Modifier.size(if (compact) PokyhSpacing.lg else PokyhSpacing.xl))
         Text(
             text = title,
-            style = PokyhType.title2,
-            color = PokyhTheme.colors.textPrimary,
+            style = (if (compact) PokyhType.callout else PokyhType.headline).semibold(),
+            color = colors.textPrimary,
             textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 340.dp),
         )
-        if (message != null) {
-            Spacer(Modifier.size(PokyhSpacing.sm))
+        if (note != null) {
+            Spacer(Modifier.size(6.dp))
             Text(
-                text = message,
+                text = note,
                 style = PokyhType.callout,
-                color = PokyhTheme.colors.textSecondary,
+                color = colors.textSecondary,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.widthIn(max = 320.dp),
+                modifier = Modifier.widthIn(max = 360.dp),
+            )
+        }
+        if (detail != null) {
+            Spacer(Modifier.size(6.dp))
+            Text(
+                text = detail,
+                style = PokyhType.caption.copy(fontFamily = FontFamily.Monospace),
+                color = colors.textTertiary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.widthIn(max = 380.dp),
             )
         }
         if (action != null) {
-            Spacer(Modifier.size(PokyhSpacing.xxl))
+            Spacer(Modifier.size(PokyhSpacing.xl))
             action()
         }
     }
 }
 
+/** A whole screen's state, centred in the space it has (scrolls when the text is long). */
+@Composable
+private fun StateLayout(
+    sprite: PixelSprite,
+    title: String,
+    note: String?,
+    modifier: Modifier = Modifier,
+    detail: String? = null,
+    action: @Composable (() -> Unit)? = null,
+) {
+    Box(
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        contentAlignment = Alignment.Center,
+    ) {
+        PixelState(
+            title = title,
+            sprite = sprite,
+            note = note,
+            detail = detail,
+            action = action,
+            modifier = Modifier.padding(horizontal = PokyhSpacing.lg),
+        )
+    }
+}
+
+@Composable
+private fun RetryButton(onRetry: () -> Unit) {
+    PokyhSecondaryButton(text = strings().common.retry, onClick = onRetry, icon = PokyhIcons.refresh)
+}
+
 /** Nothing to show, and that's fine. */
 @Composable
 fun EmptyStateView(
-    icon: ImageVector,
     title: String,
     modifier: Modifier = Modifier,
+    sprite: PixelSprite = PixelSprite.Empty,
     subtitle: String? = null,
     action: @Composable (() -> Unit)? = null,
 ) {
-    StateLayout(
-        icon = icon,
-        tint = Brand.accent,
-        title = title,
-        message = subtitle,
-        modifier = modifier,
-        action = action,
-    )
+    StateLayout(sprite = sprite, title = title, note = subtitle, modifier = modifier, action = action)
 }
+
+private enum class ErrorKind { Session, Offline, Generic }
+
+/** What kind of failure a message describes, the way the web's ErrorView reads it. */
+private fun classify(message: String): ErrorKind {
+    val m = message.lowercase()
+    val session = listOf("session", "sitzung", "sessione", "login", "auth", "unauthorized", "angemeldet", "anmelden", "accedi", "sign in")
+    val offline = listOf("network", "fetch", "offline", "verbindung", "connessione", "connection", "timeout", "econnrefused", "internet")
+    return when {
+        session.any { it in m } -> ErrorKind.Session
+        offline.any { it in m } -> ErrorKind.Offline
+        else -> ErrorKind.Generic
+    }
+}
+
+/** The raw reason, without addresses and kept short. */
+private fun technicalReason(message: String): String =
+    message.replace(Regex("https?://\\S+"), "").replace(Regex("\\s+"), " ").trim().take(140)
 
 /** Something went wrong and retrying is the answer. */
 @Composable
 fun ErrorStateView(message: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
     // Offline with nothing stored is not a failure — say that it is the connection, not the app.
-    if (message == AppError.OFFLINE_NOT_SAVED) {
+    if (AppError.isOfflineNotSaved(message)) {
         OfflineStateView(message = message, modifier = modifier, onRetry = onRetry)
         return
     }
+    val c = strings().common
+    val (sprite, title, detail) = when (classify(message)) {
+        ErrorKind.Session -> Triple(PixelSprite.Lock, c.errSessionTitle, c.errSessionDetail)
+        ErrorKind.Offline -> Triple(PixelSprite.Unplugged, c.errOfflineTitle, c.errOfflineDetail)
+        ErrorKind.Generic -> Triple(PixelSprite.Unplugged, c.errGenericTitle, c.errGenericDetail)
+    }
     StateLayout(
-        icon = PokyhIcons.warningSign,
-        tint = Brand.warning,
-        title = "Da ist etwas schiefgelaufen",
-        message = message,
+        sprite = sprite,
+        title = title,
+        note = detail,
+        detail = technicalReason(message).ifEmpty { null },
         modifier = modifier,
-        action = onRetry?.let {
-            {
-                PokyhSecondaryButton(
-                    text = "Erneut versuchen",
-                    onClick = it,
-                    icon = PokyhIcons.refresh,
-                )
-            }
-        },
+        action = onRetry?.let { { RetryButton(it) } },
     )
 }
 
@@ -138,24 +194,15 @@ fun ErrorStateView(message: String, modifier: Modifier = Modifier, onRetry: (() 
 fun OfflineStateView(
     message: String,
     modifier: Modifier = Modifier,
-    title: String = "Offline nicht verfügbar",
+    title: String = strings().common.offlineTitle,
     onRetry: (() -> Unit)? = null,
 ) {
     StateLayout(
-        icon = PokyhIcons.offline,
-        tint = Brand.warning,
+        sprite = PixelSprite.Unplugged,
         title = title,
-        message = message,
+        note = if (AppError.isOfflineNotSaved(message)) strings().common.offlineNotSaved else message,
         modifier = modifier,
-        action = onRetry?.let {
-            {
-                PokyhSecondaryButton(
-                    text = "Erneut versuchen",
-                    onClick = it,
-                    icon = PokyhIcons.refresh,
-                )
-            }
-        },
+        action = onRetry?.let { { RetryButton(it) } },
     )
 }
 
@@ -182,36 +229,31 @@ fun LoadingStateView(modifier: Modifier = Modifier, label: String? = null) {
  */
 @Composable
 fun BackendUnavailableView(feature: String, status: BackendStatus, modifier: Modifier = Modifier) {
-    val (icon, tint) = when (status) {
-        is BackendStatus.NotStudent -> PokyhIcons.notAStudent to Brand.warning
-        is BackendStatus.NoClass -> PokyhIcons.noClass to Brand.warning
-        is BackendStatus.Failed -> PokyhIcons.serverUnreachable to Brand.danger
-        is BackendStatus.Offline -> PokyhIcons.offline to Brand.warning
-        else -> PokyhIcons.locked to Brand.warning
+    val s = strings().states
+    val sprite = when (status) {
+        is BackendStatus.Failed, is BackendStatus.Offline -> PixelSprite.Unplugged
+        is BackendStatus.NoClass -> PixelSprite.Search
+        else -> PixelSprite.Lock
     }
     val title = when (status) {
-        is BackendStatus.NotStudent -> "Nur für Schülerkonten"
-        is BackendStatus.NoClass -> "Keine Klasse gefunden"
-        is BackendStatus.Failed -> "Verbindungsfehler"
-        is BackendStatus.Offline -> "Offline nicht verfügbar"
-        else -> "Nicht verfügbar"
+        is BackendStatus.NotStudent -> s.notStudentTitle
+        is BackendStatus.NoClass -> s.noClassTitle
+        is BackendStatus.Failed -> s.failedTitle
+        is BackendStatus.Offline -> strings().common.offlineTitle
+        else -> s.unavailableTitle
     }
     val message = when (status) {
-        is BackendStatus.NotStudent -> "$feature ist nur mit einem Schülerkonto verfügbar."
-        is BackendStatus.NoClass ->
-            "Für $feature wird deine WebUntis-Klasse benötigt — sie konnte für dein Konto nicht ermittelt werden."
-        is BackendStatus.Failed -> "$feature konnte nicht geladen werden:\n${status.message}"
-        is BackendStatus.Offline ->
-            "Du bist offline, und $feature wurde auf diesem Gerät noch nicht gespeichert. " +
-                "Sobald du wieder Internet hast, wird es geladen."
-        else -> "$feature benötigt ein POKYH-Konto."
+        is BackendStatus.NotStudent -> s.notStudent(feature)
+        is BackendStatus.NoClass -> s.noClass(feature)
+        is BackendStatus.Failed -> s.failed(feature, status.message)
+        is BackendStatus.Offline -> s.offline(feature)
+        else -> s.needsAccount(feature)
     }
 
     StateLayout(
-        icon = icon,
-        tint = tint,
+        sprite = sprite,
         title = title,
-        message = message,
+        note = message,
         modifier = modifier,
         action = if (status is BackendStatus.NoClass) {
             {
@@ -220,11 +262,7 @@ fun BackendUnavailableView(feature: String, status: BackendStatus, modifier: Mod
                         .background(PokyhTheme.colors.accentTint, PokyhShapes.pill)
                         .padding(horizontal = PokyhSpacing.lg, vertical = PokyhSpacing.sm),
                 ) {
-                    Text(
-                        text = "Profil → POKYH-Konto öffnen",
-                        style = PokyhType.caption,
-                        color = PokyhTheme.colors.accentText,
-                    )
+                    Text(text = s.openAccount, style = PokyhType.caption, color = PokyhTheme.colors.accentText)
                 }
             }
         } else {
@@ -247,6 +285,27 @@ fun PokyhInlineNotice(
 ) {
     PokyhTileRow(modifier = modifier) {
         IconTile(icon = icon, color = tint, size = 38.dp)
+        Text(
+            text = text,
+            style = PokyhType.callout,
+            color = PokyhTheme.colors.textSecondary,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * The same notice with a pixel scene beside it instead of an icon: for a block of the home screen
+ * that has nothing to show ("Heute kein Unterricht"), so an empty block still looks like POKYH.
+ */
+@Composable
+fun PokyhPixelNotice(
+    sprite: PixelSprite,
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    PokyhTileRow(modifier = modifier) {
+        PixelSpriteArt(sprite, width = 72.dp)
         Text(
             text = text,
             style = PokyhType.callout,

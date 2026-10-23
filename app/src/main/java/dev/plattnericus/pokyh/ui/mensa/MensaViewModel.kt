@@ -183,7 +183,7 @@ class MensaViewModel @Inject constructor(
                         if (it.groups.isNotEmpty()) {
                             it.copy(loading = false)
                         } else {
-                            it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.")
+                            it.copy(loading = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError)
                         }
                     }
                     // The stored menu is on screen — give it its stored stars, or say they are
@@ -326,7 +326,7 @@ class DishDetailViewModel @Inject constructor(
                 val dish = list.firstOrNull { it.id == dishId }
                 _ui.update { it.copy(loading = false, dish = dish, error = if (dish == null) "Gericht nicht gefunden." else null) }
             }
-            .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: "Unbekannter Fehler.") } }
+            .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) } }
     }
 
     private suspend fun loadRatingsAndComments(token: String) {

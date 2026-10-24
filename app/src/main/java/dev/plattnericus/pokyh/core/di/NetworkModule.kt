@@ -5,6 +5,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dev.plattnericus.pokyh.core.status.ServiceHealthInterceptor
+import dev.plattnericus.pokyh.data.backend.DeviceInterceptor
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
@@ -22,7 +23,7 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(healthInterceptor: ServiceHealthInterceptor): OkHttpClient =
+    fun provideOkHttpClient(healthInterceptor: ServiceHealthInterceptor, deviceInterceptor: DeviceInterceptor): OkHttpClient =
         OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
@@ -31,5 +32,7 @@ object NetworkModule {
             // rather than in the clients means no request can forget to make one. See
             // [ServiceHealthInterceptor].
             .addInterceptor(healthInterceptor)
+            // Backend requests only: which device this is, for the account's device list.
+            .addInterceptor(deviceInterceptor)
             .build()
 }

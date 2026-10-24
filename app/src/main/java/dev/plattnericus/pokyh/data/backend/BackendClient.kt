@@ -75,6 +75,12 @@ class BackendClient @Inject constructor(
         data object NoClass : UntisLoginResult
         /** HTTP-/Netzwerkfehler (Meldung). */
         data class Failed(val message: String) : UntisLoginResult
+        /**
+         * Dieses Gerät wurde von woanders abgemeldet (Website → Geräte & Anmeldungen, ein Admin).
+         * Nur bei einer automatischen Anmeldung ([loginWithUntis] mit `renewal`): die Person
+         * muss sich neu anmelden.
+         */
+        data class Revoked(val message: String) : UntisLoginResult
     }
 
     @Serializable
@@ -85,12 +91,18 @@ class BackendClient @Inject constructor(
      * Das Backend legt bei gültiger klasseId automatisch ein Konto an. Bei `role = "parent"`
      * wird ein Elternkonto erstellt (eigene Todos, sieht nur den Klassennamen, keine
      * Erinnerungen, unsichtbares Mitglied). Für Eltern ist die klasseId die des Kindes.
+     *
+     * [renewal]: die App meldet sich mit dem gespeicherten Passwort selbst wieder an (Start,
+     * Fingerabdruck, Wiederverbinden) — keine Anmeldung durch die Person. Sie zählt nicht im
+     * Anmeldeverlauf, und für ein von woanders abgemeldetes Gerät lehnt das Backend sie ab
+     * ([UntisLoginResult.Revoked]).
      */
     suspend fun loginWithUntis(
         username: String,
         klasseId: Int,
         klasseName: String,
         role: String = "student",
+        renewal: Boolean = false,
     ): UntisLoginResult {
         if (klasseId <= 0) return UntisLoginResult.NoClass
         val body = buildJsonObject {
@@ -98,6 +110,7 @@ class BackendClient @Inject constructor(
             put("klasseId", klasseId)
             put("klasseName", klasseName)
             put("role", role)
+            put("renewal", renewal)
         }
         val request = Request.Builder()
             .url(Config.backendURL + Config.Routes.authLogin)
@@ -114,8 +127,9 @@ class BackendClient @Inject constructor(
         return response.use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                val message = runCatching { json.decodeFromString<ApiErrorBody>(text).error }.getOrNull()
-                return@use UntisLoginResult.Failed(message ?: "HTTP ${resp.code}")
+                val body = runCatching { json.decodeFromString<ApiErrorBody>(text) }.getOrNull()
+                if (body?.code == "session_revoked") return@use UntisLoginResult.Revoked(body.error)
+                return@use UntisLoginResult.Failed(body?.error ?: "HTTP ${resp.code}")
             }
             val parsed = runCatching { json.decodeFromString<UntisLoginResponse>(text) }.getOrNull()
                 ?: return@use UntisLoginResult.Failed("Ungültige Antwort")

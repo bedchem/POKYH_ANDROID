@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -144,6 +145,39 @@ class AppState @Inject constructor(
      * flash on a freshly (re)opened "Konto hinzufügen" sheet. */
     fun clearError() {
         _error.value = null
+    }
+
+    /**
+     * A sign-in waiting for the code of the authenticator app (two-factor sign-in): the password
+     * was right, WebUntis wants the code too. Kept **in memory only** while the code dialog
+     * ([dev.plattnericus.pokyh.ui.TwoFactorDialog]) is open; a stored-password sign-in (unlock,
+     * relaunch) ends up here as well, since such an account cannot sign itself in.
+     */
+    data class TwoFactorRequest(val username: String, val password: String, val save: Boolean, val wrongCode: Boolean)
+
+    private val _twoFactor = MutableStateFlow<TwoFactorRequest?>(null)
+    val twoFactor: StateFlow<TwoFactorRequest?> = _twoFactor.asStateFlow()
+
+    /** The code from the dialog: signs in again with it. */
+    fun submitTwoFactorCode(code: String) {
+        val request = _twoFactor.value ?: return
+        val digits = code.filter { it.isDigit() }
+        if (digits.length != 6) return
+        _twoFactor.value = null
+        scope.launch { performLogin(request.username, request.password, request.save, allowOffline = false, fresh = true, token = digits) }
+    }
+
+    fun cancelTwoFactor() {
+        _twoFactor.value = null
+        _busy.value = false
+        _statusText.value = ""
+    }
+
+    /** True when [e] was WebUntis asking for the code; the dialog then opens instead of an error. */
+    private fun askForCode(e: Throwable, username: String, password: String, save: Boolean): Boolean {
+        if (e !is dev.plattnericus.pokyh.data.untis.TwoFactorRequiredException) return false
+        _twoFactor.value = TwoFactorRequest(username, password, save, e.wrongCode)
+        return true
     }
 
     private val _selectedTab = MutableStateFlow(AppTab.Home)
@@ -266,8 +300,11 @@ class AppState @Inject constructor(
         loginSaved(target)
     }
 
-    /** [fresh]: the password was just typed in, not taken from the store (a first sign-in). */
-    private suspend fun performLogin(username: String, password: String, save: Boolean, allowOffline: Boolean = false, fresh: Boolean = false) {
+    /**
+     * [fresh]: the password was just typed in, not taken from the store (a first sign-in).
+     * [token]: the authenticator app's code, for an account with two-factor sign-in.
+     */
+    private suspend fun performLogin(username: String, password: String, save: Boolean, allowOffline: Boolean = false, fresh: Boolean = false, token: String? = null) {
         // Started from the add-account/re-auth sheet? Then the sheet-dismiss sequencing in
         // [finalize] applies (Store.swift `viaSheet`).
         val viaSheet = _showAddAccount.value
@@ -281,7 +318,9 @@ class AppState @Inject constructor(
         networkMonitor.awaitSettled()
         val startedAt = System.currentTimeMillis()
         val untisAnswered = java.util.concurrent.atomic.AtomicBoolean(false)
-        val loginDeferred = backgroundScope.async { buildSession(username, password, untisAnswered) }
+        // Only a password just typed in is the person signing in; the stored one is the app
+        // renewing its own sign-in (refused by the backend for a device signed out elsewhere).
+        val loginDeferred = backgroundScope.async { buildSession(username, password, untisAnswered, renewal = !fresh, token = token) }
 
         if (snap == null) {
             // No offline candidate → just wait for the real answer, however long it takes.
@@ -291,7 +330,9 @@ class AppState @Inject constructor(
                 // Say which of the two it was. “Keine Verbindung” on an account that simply
                 // has no stored copy yet reads as a bug in the app; the real answer is that
                 // there is nothing to open offline until it has been opened online once.
-                _error.value = if (e.isNetworkError() && !allowOffline) {
+                if (askForCode(e, username, password, save)) {
+                    // The code dialog takes over.
+                } else _error.value = if (e.isNetworkError() && !allowOffline) {
                     "Ohne Internet lässt sich nur ein Konto öffnen, das auf diesem Gerät schon " +
                         "einmal angemeldet war — mit dem dort gespeicherten Passwort."
                 } else {
@@ -318,7 +359,9 @@ class AppState @Inject constructor(
             enterOffline(snap, viaSheet, startedAt)
             offlineLogin = OfflineLogin(snap.username, password, save)
             reconnectJob = backgroundScope.launch {
-                runCatching { loginDeferred.await() }.getOrNull()?.let { upgradeFromBackground(it, save, password) }
+                runCatching { loginDeferred.await() }
+                    .onFailure { askForCode(it, username, password, save) }
+                    .getOrNull()?.let { upgradeFromBackground(it, save, password) }
             }
             return
         }
@@ -326,7 +369,9 @@ class AppState @Inject constructor(
             onSuccess = { s -> finalize(s, save, password, viaSheet, fresh) },
             onFailure = { e ->
                 // Fast network failure (e.g. airplane mode) + cache → also go offline.
-                if (e.isNetworkError()) {
+                if (askForCode(e, username, password, save)) {
+                    // The code dialog takes over.
+                } else if (e.isNetworkError()) {
                     enterOffline(snap, viaSheet, startedAt)
                     offlineLogin = OfflineLogin(snap.username, password, save)
                 } else {
@@ -343,13 +388,18 @@ class AppState @Inject constructor(
         username: String,
         password: String,
         untisAnswered: java.util.concurrent.atomic.AtomicBoolean? = null,
+        renewal: Boolean = true,
+        token: String? = null,
     ): UserSession {
         var s: UserSession
         var backendOnly = false
         try {
-            s = untisClient.login(username, password)
+            s = untisClient.login(username, password, token)
             untisAnswered?.set(true)
         } catch (untisError: Throwable) {
+            // WebUntis wants the authenticator app's code: the password was right, nothing to
+            // try with a POKYH-only account.
+            if (untisError is dev.plattnericus.pokyh.data.untis.TwoFactorRequiredException) throw untisError
             // No (working) WebUntis account → try a direct POKYH-backend login with the same
             // credentials (the backend also knows pure-POKYH accounts).
             s = try {
@@ -370,7 +420,7 @@ class AppState @Inject constructor(
         if (!backendOnly) {
             s = if (s.isStudent || s.isParent) {
                 val role = if (s.isParent) "parent" else "student"
-                when (val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role)) {
+                when (val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role, renewal)) {
                     is BackendClient.UntisLoginResult.Ok -> {
                         var upgraded = s.copy(apiToken = outcome.token, apiRefresh = outcome.refresh)
                         runCatching { backendClient.me(outcome.token) }.getOrNull()?.let { user ->
@@ -386,6 +436,12 @@ class AppState @Inject constructor(
                     is BackendClient.UntisLoginResult.Failed -> {
                         _backendStatus.value = BackendStatus.Failed(outcome.message)
                         s
+                    }
+                    is BackendClient.UntisLoginResult.Revoked -> {
+                        // Signed out from another device: the saved password goes, so this
+                        // phone asks for it again instead of signing itself back in.
+                        withContext(Dispatchers.Main) { logout(username) }
+                        throw AppError(outcome.message)
                     }
                 }
             } else {
@@ -587,7 +643,12 @@ class AppState @Inject constructor(
         if (_session.value?.username != login.username) return
         if (reconnectJob?.isActive == true) return
         reconnectJob = backgroundScope.launch {
-            runCatching { buildSession(login.username, login.password) }.getOrNull()
+            runCatching { buildSession(login.username, login.password) }
+                .onFailure {
+                    // Needs the authenticator app's code: ask once instead of retrying forever.
+                    if (askForCode(it, login.username, login.password, login.save)) offlineLogin = null
+                }
+                .getOrNull()
                 ?.let { upgradeFromBackground(it, login.save, login.password) }
         }
     }

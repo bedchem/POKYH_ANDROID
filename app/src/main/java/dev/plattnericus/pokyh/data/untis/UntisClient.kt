@@ -34,6 +34,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.plus
 import kotlinx.datetime.todayIn
 import okhttp3.CookieJar
+import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -45,6 +46,7 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -62,6 +64,12 @@ import javax.inject.Singleton
  * authenticates as, since — unlike the singleton-session iOS app — one client instance may serve
  * more than one signed-in account.
  */
+/**
+ * WebUntis wants the 6-digit code of the authenticator app (two-factor sign-in): the password
+ * was right. [wrongCode]: a code was sent and it was wrong or expired.
+ */
+class TwoFactorRequiredException(val wrongCode: Boolean) : Exception("two_factor_required")
+
 @Singleton
 class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
@@ -127,11 +135,18 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
     // ── Login ────────────────────────────────────────────────────────────────
 
-    suspend fun login(username: String, password: String): UserSession {
+    /**
+     * [token]: the 6-digit code of the authenticator app, for an account with two-factor
+     * sign-in — asked for after a [TwoFactorRequiredException].
+     */
+    suspend fun login(username: String, password: String, token: String? = null): UserSession {
         val user = username.trim().lowercase()
         if (user.isEmpty() || password.isEmpty()) {
             throw AppError("Benutzername und Passwort erforderlich.")
         }
+
+        // With the code: only WebUntis' own sign-in form takes it.
+        if (token != null) return loginWithForm(user, password, token)
 
         // 1. JSON-RPC authenticate
         val rpcUrl = "${Config.untisBase}${Config.Routes.jsonRpc}?school=${Config.school}"
@@ -163,11 +178,121 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
         val json = JsonDyn.parse(authBody)
         if (json["error"].exists) {
+            // An account with two-factor sign-in cannot sign in through JSON-RPC; WebUntis'
+            // sign-in form tells whether that is why (and then the code is asked for). Not
+            // after a plain wrong password (-8504): that would count every typo twice
+            // towards WebUntis' lock-out.
+            if (json["error"]["code"].int != -8504) {
+                when (val form = formLogin(user, password, null)) {
+                    is FormLogin.Ok -> return completeFormLogin(user, form.sessionId)
+                    FormLogin.CodeRequired -> throw TwoFactorRequiredException(wrongCode = false)
+                    else -> Unit
+                }
+            }
             throw AppError(json["error"]["message"].string ?: "Anmeldung fehlgeschlagen.")
         }
         val studentId = json["result"]["personId"].int ?: throw AppError("Anmeldung fehlgeschlagen.")
         val klasseId0 = json["result"]["klasseId"].int ?: 0
         val personType = json["result"]["personType"].int
+        return completeLogin(user, sessionId, studentId, klasseId0, personType)
+    }
+
+    /** What WebUntis' sign-in form (POST /j_spring_security_check) answered. */
+    private sealed interface FormLogin {
+        data class Ok(val sessionId: String) : FormLogin
+        data object CodeRequired : FormLogin
+        data object CodeWrong : FormLogin
+        data object BadCredentials : FormLogin
+        data object Refused : FormLogin
+        data object Unavailable : FormLogin
+    }
+
+    /**
+     * Signs in through WebUntis' own sign-in form, as its website does — the way that knows the
+     * second factor. It wants an anonymous session and its CSRF token first, which the school's
+     * sign-in page hands out.
+     */
+    private suspend fun formLogin(user: String, password: String, token: String?): FormLogin = withContext(Dispatchers.IO) {
+        try {
+            val page = Request.Builder()
+                .url("${Config.untisBase}/?school=${Config.school}")
+                .header("Accept", "text/html")
+                .build()
+            val pageResponse = noCookieClient.newCall(page).execute()
+            val pageBody = pageResponse.use { it.body?.string().orEmpty() }
+            val anonymous = pageResponse.headers("Set-Cookie")
+                .firstNotNullOfOrNull { Regex("JSESSIONID=([^;]+)").find(it)?.groupValues?.get(1) }
+                ?: return@withContext FormLogin.Unavailable
+            val csrf = Regex("\"csrfToken\"\\s*:\\s*\"([^\"]+)\"").find(pageBody)?.groupValues?.get(1)
+            val tenant = Regex("\"tenantId\"\\s*:\\s*\"?([0-9A-Za-z-]+)\"?").find(pageBody)?.groupValues?.get(1)
+
+            val form = FormBody.Builder()
+                .add("school", Config.school)
+                .add("j_username", user)
+                .add("j_password", password)
+                .apply { if (token != null) add("token", token) }
+                .build()
+            val request = Request.Builder()
+                .url("${Config.untisBase}/j_spring_security_check")
+                .header("Cookie", cookieHeader(anonymous))
+                .header("Accept", "application/json")
+                .apply {
+                    if (csrf != null) header("X-CSRF-TOKEN", csrf)
+                    if (tenant != null) header("Tenant-Id", tenant)
+                }
+                .post(form)
+                .build()
+            val response = noCookieClient.newBuilder().followRedirects(false).build().newCall(request).execute()
+            val body = response.use { it.body?.string().orEmpty() }
+            val answer = runCatching { JSONObject(body) }.getOrNull()
+                ?: return@withContext if (response.code >= 500) FormLogin.Unavailable else FormLogin.Refused
+            when (answer.optString("state")) {
+                "SUCCESS" -> FormLogin.Ok(
+                    response.headers("Set-Cookie")
+                        .firstNotNullOfOrNull { Regex("JSESSIONID=([^;]+)").find(it)?.groupValues?.get(1) }
+                        ?: anonymous,
+                )
+                "TOKEN_REQUIRED" ->
+                    if (token != null || answer.optBoolean("invalidToken")) FormLogin.CodeWrong else FormLogin.CodeRequired
+                "LOGIN_ERROR" -> FormLogin.BadCredentials
+                else -> FormLogin.Refused
+            }
+        } catch (e: IOException) {
+            FormLogin.Unavailable
+        }
+    }
+
+    private suspend fun loginWithForm(user: String, password: String, token: String): UserSession =
+        when (val form = formLogin(user, password, token)) {
+            is FormLogin.Ok -> completeFormLogin(user, form.sessionId)
+            FormLogin.CodeRequired, FormLogin.CodeWrong -> throw TwoFactorRequiredException(wrongCode = true)
+            FormLogin.BadCredentials -> throw AppError("Benutzername oder Passwort ist falsch.")
+            FormLogin.Refused -> throw AppError("WebUntis hat die Anmeldung abgelehnt.")
+            FormLogin.Unavailable -> throw AppError.noConnection()
+        }
+
+    /** The sign-in form names no person: the app data does (`user.person.id`). */
+    private suspend fun completeFormLogin(user: String, sessionId: String): UserSession {
+        val bare = UserSession(
+            sessionId = sessionId, bearerToken = "", studentId = 0, klasseId = 0,
+            klasseName = "", username = user, personName = null, personType = null, isParent = false,
+            apiToken = null, apiRefresh = null, stableUid = null, classId = null, imageUrl = null,
+        )
+        val bearer = runCatching { fetchToken(bare) }.getOrDefault("")
+        val appData = runCatching { fetchAppData(bare.copy(bearerToken = bearer)) }.getOrNull()
+        val personId = appData?.let { personIdRaw(it.raw) } ?: 0
+        if (personId <= 0) throw AppError("Anmeldung fehlgeschlagen.")
+        return completeLogin(user, sessionId, personId, 0, null)
+    }
+
+    private fun personIdRaw(raw: Any?): Int? {
+        val root = raw as? JSONObject ?: return null
+        val userNode = (root.optJSONObject("data") ?: root).optJSONObject("user") ?: root.optJSONObject("user")
+        return rawInt(userNode?.optJSONObject("person")?.opt("id")) ?: rawInt(userNode?.opt("personId"))
+    }
+
+    /** Everything after WebUntis signed the account in: bearer token, class, student list, app data. */
+    private suspend fun completeLogin(user: String, sessionId: String, studentId: Int, klasseId0: Int, personType: Int?): UserSession {
 
         var bearerToken = ""
         var klasseName = ""

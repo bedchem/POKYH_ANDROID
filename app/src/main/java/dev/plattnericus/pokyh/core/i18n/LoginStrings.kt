@@ -27,6 +27,12 @@ class LoginStrings(
     val resetSentTitle: String,
     val resetSentText: String,
     val resetUnreachable: String,
+    /** Two-factor sign-in: the code of the authenticator app. */
+    val codeTitle: String,
+    val codeHint: String,
+    val codeWrong: String,
+    val codeLabel: String,
+    val codeConfirm: String,
 )
 
 val LoginDe = LoginStrings(
@@ -55,6 +61,11 @@ val LoginDe = LoginStrings(
     resetSentTitle = "E-Mail ist unterwegs.",
     resetSentText = "WebUntis schickt dir einen Link, mit dem du ein neues Passwort setzt. Schau auch im Spam-Ordner nach.",
     resetUnreachable = "WebUntis ist gerade nicht erreichbar.",
+    codeTitle = "Code eingeben",
+    codeHint = "Dein Konto ist mit Zwei-Faktor-Anmeldung geschützt. Gib den 6-stelligen Code aus deiner Authenticator-App ein.",
+    codeWrong = "Der Code stimmt nicht oder ist abgelaufen. Nimm den neuen Code aus der App.",
+    codeLabel = "Code",
+    codeConfirm = "Anmelden",
 )
 
 val LoginIt = LoginStrings(
@@ -83,6 +94,11 @@ val LoginIt = LoginStrings(
     resetSentTitle = "L’e-mail è in arrivo.",
     resetSentText = "WebUntis ti invia un link per impostare una nuova password. Controlla anche lo spam.",
     resetUnreachable = "WebUntis non è raggiungibile al momento.",
+    codeTitle = "Inserisci il codice",
+    codeHint = "Il tuo account è protetto con l’accesso a due fattori. Inserisci il codice a 6 cifre della tua app di autenticazione.",
+    codeWrong = "Il codice non è corretto o è scaduto. Usa il nuovo codice dell’app.",
+    codeLabel = "Codice",
+    codeConfirm = "Accedi",
 )
 
 val LoginEn = LoginStrings(
@@ -111,4 +127,9 @@ val LoginEn = LoginStrings(
     resetSentTitle = "The e-mail is on its way.",
     resetSentText = "WebUntis sends you a link to set a new password. Check your spam folder too.",
     resetUnreachable = "WebUntis can't be reached right now.",
+    codeTitle = "Enter code",
+    codeHint = "Your account is protected with two-factor sign-in. Enter the 6-digit code from your authenticator app.",
+    codeWrong = "The code is wrong or has expired. Use the new code from the app.",
+    codeLabel = "Code",
+    codeConfirm = "Sign in",
 )

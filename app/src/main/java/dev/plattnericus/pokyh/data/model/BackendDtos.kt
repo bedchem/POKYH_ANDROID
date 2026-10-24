@@ -96,6 +96,8 @@ data class RefreshResponse(
 @Serializable
 data class ApiErrorBody(
     val error: String,
+    /** A machine-readable reason, where the backend gives one (e.g. "session_revoked"). */
+    val code: String? = null,
 )
 
 // ── Cafeteria ────────────────────────────────────────────────────────────

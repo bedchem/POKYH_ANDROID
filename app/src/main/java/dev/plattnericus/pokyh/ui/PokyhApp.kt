@@ -131,6 +131,9 @@ fun PokyhApp(appState: AppState) {
         val updateState by updateViewModel.updater.state.collectAsStateWithLifecycle()
         UpdateDialogHost(updateViewModel)
 
+        // The authenticator app's code (two-factor sign-in), whichever screen asked for it.
+        TwoFactorDialog(appState)
+
         // The privacy notice after a first sign-in, or "aktualisiert" (AppState.checkPrivacyNotice):
         // a banner where the offline notice sits, which never shows at the same time — the
         // check skips an offline session.

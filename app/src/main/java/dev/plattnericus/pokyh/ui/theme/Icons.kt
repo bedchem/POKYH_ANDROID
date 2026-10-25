@@ -118,6 +118,8 @@ object PokyhIcons {
     val privacy = Ph.HandPalm
     val security = Ph.ShieldCheck
     val shield = Ph.Shield
+    /** "Am Computer anmelden": the website's QR code. */
+    val webSignIn = Ph.QrCode
 
     // ── Messages ─────────────────────────────────────────────────────────────
 

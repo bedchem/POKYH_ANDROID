@@ -149,10 +149,11 @@ fun SettingsScreen(
                     }
                 }
             }
-            if (session?.hasUntis == true) {
+            if (session != null) {
                 item(key = "account") {
                     PokyhSection(title = t.accountSecurity, modifier = Modifier.fadeIn(30)) {
                         PokyhCard(padding = 0.dp) {
+                            if (session?.hasUntis == true) {
                             PokyhRow(
                                 title = t.changePassword,
                                 subtitle = t.changePasswordHint,
@@ -173,6 +174,9 @@ fun SettingsScreen(
                                 leading = { RowGlyph(PokyhIcons.person) },
                                 onClick = { onNavigate(PokyhDestinations.PROFILE) },
                             )
+                            PokyhRowSeparator()
+                            }
+                            WebSignInRow(appState = viewModel.appState, leading = { RowGlyph(PokyhIcons.webSignIn) })
                         }
                     }
                 }

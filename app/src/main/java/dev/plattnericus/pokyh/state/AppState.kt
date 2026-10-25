@@ -9,6 +9,8 @@ import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.data.model.MessageFolder
 import dev.plattnericus.pokyh.data.model.SavedAccount
 import dev.plattnericus.pokyh.data.model.UserSession
+import dev.plattnericus.pokyh.data.network.Config
+import dev.plattnericus.pokyh.core.i18n.I18n
 import dev.plattnericus.pokyh.core.status.PokyhService
 import dev.plattnericus.pokyh.core.status.NetworkMonitor
 import dev.plattnericus.pokyh.core.status.ServiceHealth
@@ -576,6 +578,63 @@ class AppState @Inject constructor(
         _session.value = null
         _isOffline.value = false
         _phase.value = if (_accounts.value.isEmpty()) Phase.Login else Phase.Lock
+    }
+
+    // ── Am Computer anmelden (QR-Code der Website) ───────────────────────────
+    // The website shows a QR code (pokyh.com/login → "Mit der POKYH-App anmelden"); the app scans
+    // it, shows where that computer is and, once confirmed, lets it sign in as this account.
+
+    /** The computer waiting for this code (device, place, address); `null` when the code ran out. */
+    suspend fun webSignInInfo(code: String): BackendClient.QrLoginInfo? =
+        withFreshApiToken { token -> backendClient.qrLoginInfo(code, token) }
+
+    /**
+     * Signs the computer in: hands over the app's WebUntis session, which the website takes over
+     * (so no authenticator code is asked there), and the saved password where there is one, which
+     * renews the website's sign-in later. `false`: the code ran out meanwhile.
+     */
+    suspend fun approveWebSignIn(code: String): Boolean {
+        val s = _session.value ?: throw AppError.sessionExpired
+        val password = credentialStore.getCredentials(s.username)?.second
+        val school = if (s.hasUntis) Config.school to java.net.URI(Config.untisBase).host else null
+        return withFreshApiToken { token ->
+            backendClient.approveQrLogin(
+                code = code,
+                token = token,
+                username = s.username,
+                password = password,
+                sessionId = s.sessionId.takeIf { s.hasUntis && it.isNotBlank() },
+                school = school,
+            )
+        }
+    }
+
+    /** The POKYH access token lasts an hour: after a 401 the app signs in to the backend again, as at start, and tries once more. */
+    private suspend fun <T> withFreshApiToken(block: suspend (String) -> T): T {
+        val s = _session.value ?: throw AppError.sessionExpired
+        // No POKYH token: offline, or the backend was not reachable at sign-in.
+        val token = s.apiToken ?: throw AppError(if (_isOffline.value) I18n.s.common.noConnection else I18n.s.common.failedLater, isNetwork = _isOffline.value)
+        return try {
+            block(token)
+        } catch (e: AppError) {
+            if (e.httpCode != 401) throw e
+            block(renewApiToken(s) ?: throw e)
+        }
+    }
+
+    private suspend fun renewApiToken(s: UserSession): String? {
+        val fresh: Pair<String, String> = if (s.hasUntis) {
+            if (!(s.isStudent || s.isParent)) return null
+            val role = if (s.isParent) "parent" else "student"
+            val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role, renewal = true)
+            (outcome as? BackendClient.UntisLoginResult.Ok)?.let { it.token to it.refresh } ?: return null
+        } else {
+            val password = credentialStore.getCredentials(s.username)?.second ?: return null
+            runCatching { backendClient.login(s.username, password) }.getOrNull()?.let { it.token to it.refreshToken } ?: return null
+        }
+        val current = _session.value
+        if (current?.username == s.username) _session.value = current.copy(apiToken = fresh.first, apiRefresh = fresh.second)
+        return fresh.first
     }
 
     /** Switch into offline mode: show the cached (token-less) session. */

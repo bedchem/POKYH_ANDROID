@@ -156,6 +156,58 @@ class BackendClient @Inject constructor(
 
     suspend fun me(token: String): ApiUser = decode(request(Config.Routes.authMe, token = token))
 
+    // ── Am Computer anmelden (QR-Code der Website, backend services/qrLogin.ts) ──
+
+    /** The website waiting for a scanned code: its device, place and address, as the backend saw them. */
+    @Serializable
+    data class QrLoginInfo(
+        val label: String = "",
+        val client: String = "web",
+        val platform: String = "other",
+        val ip: String? = null,
+        val place: String = "",
+        val expiresAt: String = "",
+    )
+
+    /** `null`: the code ran out (two minutes) or was used already. */
+    suspend fun qrLoginInfo(code: String, token: String): QrLoginInfo? = try {
+        decode(request("/auth/qr/${code.urlEncoded()}", token = token))
+    } catch (e: AppError) {
+        if (e.httpCode == 404) null else throw e
+    }
+
+    /**
+     * Lets the website sign in as this account. [sessionId]: the app's own WebUntis session, which
+     * the website takes over (no authenticator code needed); [password], where the app keeps it,
+     * renews the website's sign-in later. `false`: the code ran out meanwhile.
+     */
+    suspend fun approveQrLogin(
+        code: String,
+        token: String,
+        username: String,
+        password: String?,
+        sessionId: String?,
+        school: Pair<String, String>?,
+    ): Boolean {
+        val body = buildJsonObject {
+            put("username", username)
+            if (!password.isNullOrEmpty()) put("password", password)
+            if (!sessionId.isNullOrBlank()) put("sessionId", sessionId)
+            if (school != null) {
+                put("school", buildJsonObject {
+                    put("loginName", school.first)
+                    put("server", school.second)
+                })
+            }
+        }
+        return try {
+            request("/auth/qr/${code.urlEncoded()}/approve", method = "POST", token = token, jsonBody = body.toString())
+            true
+        } catch (e: AppError) {
+            if (e.httpCode == 404) false else throw e
+        }
+    }
+
     // ── Todos ────────────────────────────────────────────────────────────────
 
     suspend fun todos(username: String, token: String): List<ApiTodo> =

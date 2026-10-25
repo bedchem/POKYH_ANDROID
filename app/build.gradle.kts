@@ -147,6 +147,8 @@ dependencies {
     implementation(libs.fragment.ktx)
     implementation(libs.datastore.preferences)
     implementation(libs.work.runtime.ktx)
+    // "Am Computer anmelden": scanning the website's QR code.
+    implementation(libs.play.services.code.scanner)
 
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)

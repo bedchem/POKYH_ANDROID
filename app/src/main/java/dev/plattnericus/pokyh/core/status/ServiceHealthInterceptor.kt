@@ -42,7 +42,7 @@ class ServiceHealthInterceptor @Inject constructor(
             // Any HTTP answer, even an error page, means the phone itself is online.
             network.reportReachable()
             if (response.code >= 500) {
-                health.reportDown(service, "Server antwortet mit Fehler ${response.code}")
+                health.reportDown(service, dev.plattnericus.pokyh.core.i18n.I18n.s.system.serverError(response.code))
             } else {
                 health.reportOk(service)
             }
@@ -58,13 +58,14 @@ class ServiceHealthInterceptor @Inject constructor(
     private fun serviceFor(host: String): PokyhService? = when (host) {
         untisHost -> PokyhService.UNTIS
         backendHost -> PokyhService.BACKEND
-        else -> null
+        // Every school's WebUntis server, not only the default one's.
+        else -> if (host.endsWith(".webuntis.com")) PokyhService.UNTIS else null
     }
 
     private fun describe(e: IOException): String = when (e) {
-        is UnknownHostException -> "Keine Verbindung"
-        is SocketTimeoutException -> "Zeitüberschreitung"
-        else -> e.message?.takeIf { it.isNotBlank() } ?: "Nicht erreichbar"
+        is UnknownHostException -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.noConn
+        is SocketTimeoutException -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.timeout
+        else -> e.message?.takeIf { it.isNotBlank() } ?: dev.plattnericus.pokyh.core.i18n.I18n.s.system.notReachable
     }
 
     private val untisHost: String? by lazy { Config.untisBase.toHttpUrlOrNull()?.host }

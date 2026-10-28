@@ -91,8 +91,8 @@ fun OfflineNotice(
     // what an app usually does — is what sends people to re-check a Wi-Fi that was never the
     // problem.
     val cause: String? = when {
-        !deviceOnline -> "Keine Internetverbindung"
-        down.isNotEmpty() -> names + " antwortet nicht"
+        !deviceOnline -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.noConnection
+        down.isNotEmpty() -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.notAnswering(names)
         else -> null
     }
 
@@ -102,10 +102,10 @@ fun OfflineNotice(
     // which half of the app to distrust — and either half still working looks like proof that
     // the warning was wrong.
     val affected: String = when {
-        down.size > 1 -> "Alle Daten stammen aus dem Zwischenspeicher"
-        down.singleOrNull() == PokyhService.UNTIS -> "Stundenplan und Noten evtl. nicht aktuell"
-        down.singleOrNull() == PokyhService.BACKEND -> "Mensa, Todos und Erinnerungen evtl. nicht aktuell"
-        else -> "Gespeicherte Daten werden angezeigt"
+        down.size > 1 -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.allCached
+        down.singleOrNull() == PokyhService.UNTIS -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.untisStale
+        down.singleOrNull() == PokyhService.BACKEND -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.backendStale
+        else -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.savedShown
     }
 
     // The situation, as one comparable value. Everything downstream keys off this: a new key is a
@@ -115,20 +115,20 @@ fun OfflineNotice(
         // whether the phone or the server is at fault is the reason for it, and goes below.
         isOffline -> NoticeState(
             key = "session:" + (if (deviceOnline) "net" else "nonet") + ":" + downKey,
-            headline = "Offline angemeldet",
+            headline = dev.plattnericus.pokyh.core.i18n.I18n.s.system.offlineSignedIn,
             detail = if (cause != null) "$cause \u00b7 $affected" else affected,
             services = down,
         )
         !deviceOnline -> NoticeState(
             key = "device",
-            headline = "Keine Internetverbindung",
-            detail = "Dein Gerät ist offline · " + affected,
+            headline = dev.plattnericus.pokyh.core.i18n.I18n.s.system.noConnection,
+            detail = dev.plattnericus.pokyh.core.i18n.I18n.s.system.deviceOffline + " · " + affected,
             services = down,
         )
         down.isNotEmpty() -> NoticeState(
             key = "down:" + downKey,
-            headline = names + " nicht erreichbar",
-            detail = "Dein Internet funktioniert · " + affected,
+            headline = dev.plattnericus.pokyh.core.i18n.I18n.s.system.unreachable(names),
+            detail = dev.plattnericus.pokyh.core.i18n.I18n.s.system.internetWorks + " · " + affected,
             services = down,
         )
         else -> null
@@ -151,11 +151,11 @@ fun OfflineNotice(
                 shown = NoticeState(
                     key = "back:" + was.key,
                     headline = if (was.services.isEmpty()) {
-                        "Wieder online"
+                        dev.plattnericus.pokyh.core.i18n.I18n.s.system.backOnline
                     } else {
-                        was.services.joinToString(" & ") { it.label } + " wieder erreichbar"
+                        dev.plattnericus.pokyh.core.i18n.I18n.s.system.reachableAgain(was.services.joinToString(" & ") { it.label })
                     },
-                    detail = "Verbindung steht — Daten sind wieder aktuell",
+                    detail = dev.plattnericus.pokyh.core.i18n.I18n.s.system.connected,
                     services = was.services,
                     recovered = true,
                 )
@@ -182,7 +182,7 @@ fun OfflineNotice(
             .mapNotNull { states[it]?.lastOkAt?.takeIf { at -> at > 0L } }
             .maxOrNull() ?: 0L
         val detail = if (!card.recovered && lastOkAt > 0L) {
-            card.detail + " · Stand " + asOfText(lastOkAt)
+            card.detail + " · " + dev.plattnericus.pokyh.core.i18n.I18n.s.system.asOf(asOfText(lastOkAt))
         } else {
             card.detail
         }
@@ -227,7 +227,7 @@ fun OfflineNotice(
             }
             PokyhIconButton(
                 icon = PokyhIcons.close,
-                contentDescription = "Hinweis schließen",
+                contentDescription = dev.plattnericus.pokyh.core.i18n.I18n.s.system.closeNotice,
                 onClick = { dismissedKey = card.key },
                 iconSize = 16.dp,
             )
@@ -251,7 +251,7 @@ private data class NoticeState(
  * gets its date, where the arithmetic is the point.
  */
 fun asOfText(epochMillis: Long): String {
-    if (epochMillis <= 0L) return "unbekannt"
+    if (epochMillis <= 0L) return dev.plattnericus.pokyh.core.i18n.I18n.s.system.unknownTime
     val then = Calendar.getInstance().apply { timeInMillis = epochMillis }
     val now = Calendar.getInstance()
     val time = String.format(
@@ -262,17 +262,12 @@ fun asOfText(epochMillis: Long): String {
     )
     val sameDay = then.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
         then.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)
-    if (sameDay) return "heute, $time"
+    if (sameDay) return dev.plattnericus.pokyh.core.i18n.I18n.s.system.todayAt(time)
     val yesterday = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
     val wasYesterday = then.get(Calendar.YEAR) == yesterday.get(Calendar.YEAR) &&
         then.get(Calendar.DAY_OF_YEAR) == yesterday.get(Calendar.DAY_OF_YEAR)
-    if (wasYesterday) return "gestern, $time"
-    val date = String.format(
-        Locale.GERMAN,
-        "%02d.%02d.",
-        then.get(Calendar.DAY_OF_MONTH),
-        then.get(Calendar.MONTH) + 1,
-    )
+    if (wasYesterday) return dev.plattnericus.pokyh.core.i18n.I18n.s.system.yesterdayAt(time)
+    val date = dev.plattnericus.pokyh.core.i18n.I18n.s.common.dayMonthShort(then.get(Calendar.DAY_OF_MONTH), then.get(Calendar.MONTH) + 1)
     return "$date, $time"
 }
 
@@ -297,7 +292,7 @@ fun AsOfLabel(savedAt: Long, stale: Boolean, modifier: Modifier = Modifier) {
             modifier = Modifier.size(12.dp),
         )
         Text(
-            text = "Stand ${asOfText(savedAt)}",
+            text = dev.plattnericus.pokyh.core.i18n.I18n.s.system.asOf(asOfText(savedAt)),
             style = PokyhType.caption2,
             color = PokyhTheme.colors.textTertiary,
             maxLines = 1,

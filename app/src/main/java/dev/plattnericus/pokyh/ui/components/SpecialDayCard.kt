@@ -23,10 +23,18 @@ import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
+import androidx.compose.foundation.clickable
 
 /** One entry of the `DayKind` config table — icon/color/title/subtitle for a whole special day
  * (holiday, weekend, all-cancelled, all-replacement, full-day event). */
-data class SpecialDaySpec(val icon: ImageVector, val color: Color, val title: String, val subtitle: String)
+data class SpecialDaySpec(
+    val icon: ImageVector,
+    val color: Color,
+    val title: String,
+    val subtitle: String,
+    /** The day's pixel scene (the web's `SpecialDayCard`); without one, the glyph in its disc. */
+    val sprite: dev.plattnericus.pokyh.ui.pixel.PixelSprite? = null,
+)
 
 /**
  * Shown instead of a lesson list when a whole day has no normal lessons.
@@ -48,11 +56,13 @@ fun SpecialDayCard(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     plate: Boolean = false,
+    onClick: (() -> Unit)? = null,
 ) {
     val isDark = PokyhTheme.colors.isDark
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(if (compact) 14.dp else 28.dp)).clickable(onClick = onClick) else Modifier)
             .let { if (!compact) it.height(340.dp) else it }
             .then(
                 if (plate) {
@@ -71,18 +81,26 @@ fun SpecialDayCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(if (compact) PokyhSpacing.sm else PokyhSpacing.lg),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(if (compact) 30.dp else 72.dp)
-                    .background(spec.color.copy(alpha = 0.14f), PokyhShapes.pill),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = spec.icon,
-                    contentDescription = null,
-                    tint = spec.color,
-                    modifier = Modifier.size(if (compact) 16.dp else 32.dp),
-                )
+            if (spec.sprite != null) {
+                // As on the web: min(80px, 85%) in a week-grid column, min(120px, 80%) on its own.
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    val w = if (compact) minOf(80.dp, maxWidth * 0.85f) else minOf(120.dp, maxWidth * 0.8f)
+                    PixelSpriteArt(spec.sprite, width = w)
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(if (compact) 30.dp else 72.dp)
+                        .background(spec.color.copy(alpha = 0.14f), PokyhShapes.pill),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = spec.icon,
+                        contentDescription = null,
+                        tint = spec.color,
+                        modifier = Modifier.size(if (compact) 16.dp else 32.dp),
+                    )
+                }
             }
             Text(
                 text = spec.title,

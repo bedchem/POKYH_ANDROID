@@ -26,6 +26,22 @@ import androidx.compose.ui.unit.dp
  */
 private const val RegularWidthBreakpointDp = 600
 
+/** From here (tablets in landscape, large foldables, wide phones on their side) the tabs move to a side bar. */
+private const val ExpandedWidthBreakpointDp = 840
+
+/** How much room the window gives: phones, small tablets and phones on their side, wide windows. */
+enum class WidthClass { Compact, Medium, Expanded }
+
+@Composable
+fun widthClass(): WidthClass {
+    val w = LocalConfiguration.current.screenWidthDp
+    return when {
+        w >= ExpandedWidthBreakpointDp -> WidthClass.Expanded
+        w >= RegularWidthBreakpointDp -> WidthClass.Medium
+        else -> WidthClass.Compact
+    }
+}
+
 @Composable
 private fun isRegularWidthClass(): Boolean =
     LocalConfiguration.current.screenWidthDp >= RegularWidthBreakpointDp
@@ -38,6 +54,17 @@ private fun isRegularWidthClass(): Boolean =
 @Composable
 fun Modifier.readableContent(): Modifier = if (isRegularWidthClass()) {
     this.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 760.dp)
+} else {
+    this
+}
+
+/**
+ * The wide measure, for screens laid out in columns where there is room — Home, the timetable,
+ * the Mensa (the web's "wide" page): capped at 1240dp and centered, a no-op on phones.
+ */
+@Composable
+fun Modifier.wideContent(): Modifier = if (isRegularWidthClass()) {
+    this.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 1240.dp)
 } else {
     this
 }

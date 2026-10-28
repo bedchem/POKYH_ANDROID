@@ -50,6 +50,10 @@ class RemindersViewModel @Inject constructor(
         val error: String? = null,
         val reminders: List<ApiReminder> = emptyList(),
         val submitting: Boolean = false,
+        val addError: String? = null,
+        /** May delete anyone's reminder (moderation). */
+        val isAdmin: Boolean = false,
+        val stableUid: String? = null,
         /** Signed in offline and [reminders] is the copy stored on this device (read-only). */
         val offlineCopy: Boolean = false,
         /** Signed in offline: new Erinnerungen go to the outbox instead of the server. */
@@ -132,8 +136,17 @@ class RemindersViewModel @Inject constructor(
             }
     }
 
+    private var adminAsked = false
+
+    fun clearAddError() = _ui.update { it.copy(addError = null) }
+
     private suspend fun load(classId: String, token: String) {
         _ui.update { it.copy(loading = it.reminders.isEmpty(), error = null) }
+        if (!adminAsked) {
+            adminAsked = true
+            runCatching { backendClient.me(token) }.onSuccess { me -> _ui.update { it.copy(isAdmin = me.isAdmin) } }
+        }
+        _ui.update { it.copy(stableUid = session.value?.stableUid) }
         runCatching { backendClient.reminders(classId, token) }
             .onSuccess { list ->
                 _ui.update { it.copy(loading = false, error = null, reminders = list, offlineCopy = false) }
@@ -165,12 +178,16 @@ class RemindersViewModel @Inject constructor(
         }
         val classId = s.classId ?: return
         viewModelScope.launch {
-            _ui.update { it.copy(submitting = true) }
+            _ui.update { it.copy(submitting = true, addError = null) }
             val failure = runCatching { backendClient.createReminder(classId, title, body, remindAt, token) }
                 .exceptionOrNull()
             // The connection dropped mid-request: don't lose what was typed.
             if (failure is AppError && failure.isNetwork) {
                 outbox.enqueue(OutboxItem.Kind.Reminder, s.username, title, body, remindAt)
+            } else if (failure != null) {
+                // Refused: the sheet stays open with what was typed, and says so (as the web).
+                _ui.update { it.copy(submitting = false, addError = failure.message?.takeIf { m -> m.isNotBlank() } ?: dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.saveFailed) }
+                return@launch
             }
             _ui.update { it.copy(submitting = false) }
             onDone()

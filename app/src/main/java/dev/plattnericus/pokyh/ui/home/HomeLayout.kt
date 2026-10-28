@@ -3,6 +3,7 @@ package dev.plattnericus.pokyh.ui.home
 import androidx.compose.ui.graphics.vector.ImageVector
 import dev.plattnericus.pokyh.ui.theme.PokyhIcons
 import kotlinx.serialization.Serializable
+import dev.plattnericus.pokyh.core.i18n.I18n
 
 /**
  * One block (widget) of the Home screen.
@@ -21,24 +22,60 @@ import kotlinx.serialization.Serializable
  * rearranges somebody's Home on its own.
  */
 enum class HomeSection(
-    val title: String,
-    /** One line for the "Widgets hinzufügen" list — what the widget is *for*. */
-    val description: String,
     val glyph: ImageVector,
     val defaultVisible: Boolean,
 ) {
-    Shortcuts("Schnellzugriff", "Noten, Abwesenheiten, Todos und Erinnerungen", PokyhIcons.decorSubjects, true),
-    Exam("Nächste Schularbeit", "Der nächste Test mit Datum und Uhrzeit", PokyhIcons.exam, true),
+    // The web's dashboard, in its order: quick links, the next exam, the latest grades, the
+    // messages, the Mensa.
+    Shortcuts(PokyhIcons.decorSubjects, true),
+    Exam(PokyhIcons.exam, true),
+    Grades(PokyhIcons.tabGrades, true),
+    Messages(PokyhIcons.messages, true),
+    Mensa(PokyhIcons.mensa, true),
     // No longer one of the standard widgets; it stays in "Widgets hinzufügen".
-    Today("Heute", "Alle Stunden von heute", PokyhIcons.tabTimetable, false),
-    Mensa("Mensa", "Der Speiseplan der Woche", PokyhIcons.mensa, true),
-    Grades("Zuletzt eingetragen", "Die drei neuesten Noten", PokyhIcons.tabGrades, true),
-    NowNext("Jetzt & gleich", "Laufende und nächste Stunde mit Countdown", PokyhIcons.clock, false),
-    Changes("Vertretungen & Entfälle", "Änderungen im Stundenplan für heute und morgen", PokyhIcons.absences, false),
-    Average("Notenschnitt", "Dein Gesamtschnitt und das schwächste Fach", PokyhIcons.gradeTrend, false),
-    OpenTodos("Offene Todos", "Deine nächsten offenen Aufgaben", PokyhIcons.todos, false),
-    UpcomingReminders("Anstehende Erinnerungen", "Die nächsten Termine deiner Klasse", PokyhIcons.reminders, false),
+    Today(PokyhIcons.tabTimetable, false),
+    NowNext(PokyhIcons.clock, false),
+    Changes(PokyhIcons.absences, false),
+    Average(PokyhIcons.gradeTrend, false),
+    OpenTodos(PokyhIcons.todos, false),
+    UpcomingReminders(PokyhIcons.reminders, false),
     ;
+
+    /** The widget's name, in the language in use. */
+    val title: String
+        get() = I18n.s.home.let { t ->
+            when (this) {
+                Shortcuts -> t.sectionShortcuts
+                Exam -> t.sectionExam
+                Today -> t.sectionToday
+                Mensa -> t.sectionMensa
+                Grades -> t.sectionGrades
+                Messages -> t.sectionMessages
+                NowNext -> t.sectionNowNext
+                Changes -> t.sectionChanges
+                Average -> t.sectionAverage
+                OpenTodos -> t.sectionTodos
+                UpcomingReminders -> t.sectionReminders
+            }
+        }
+
+    /** One line for the "Widgets hinzufügen" list — what the widget is *for*. */
+    val description: String
+        get() = I18n.s.home.let { t ->
+            when (this) {
+                Shortcuts -> t.sectionShortcutsInfo
+                Exam -> t.sectionExamInfo
+                Today -> t.sectionTodayInfo
+                Mensa -> t.sectionMensaInfo
+                Grades -> t.sectionGradesInfo
+                Messages -> t.sectionMessagesInfo
+                NowNext -> t.sectionNowNextInfo
+                Changes -> t.sectionChangesInfo
+                Average -> t.sectionAverageInfo
+                OpenTodos -> t.sectionTodosInfo
+                UpcomingReminders -> t.sectionRemindersInfo
+            }
+        }
 
     companion object {
         /** The layout a fresh install gets: the day in the order it happens, quick links on top. */
@@ -115,9 +152,16 @@ data class HomeLayout(
      * "Heute" stopped being a standard widget. A layout still exactly on the old standard set
      * (never arranged by hand) loses it like a fresh install; a Home someone arranged keeps it.
      */
-    fun withoutOldDefaultToday(): HomeLayout =
-        if (hidden.isEmpty() && order == OldDefaultOrder) copy(order = order - HomeSection.Today.name) else this
+    fun withoutOldDefaultToday(): HomeLayout = when {
+        hidden.isEmpty() && order == OldDefaultOrder -> HomeLayout()
+        // Never rearranged since the last standard: it becomes the web's dashboard.
+        hidden.isEmpty() && order == PreviousDefaultOrder -> HomeLayout()
+        else -> this
+    }
 }
 
 /** The standard widgets while "Heute" was one of them. */
 private val OldDefaultOrder = listOf("Shortcuts", "Exam", "Today", "Mensa", "Grades")
+
+/** The standard widgets before the messages joined them. */
+private val PreviousDefaultOrder = listOf("Shortcuts", "Exam", "Mensa", "Grades")

@@ -71,13 +71,13 @@ private fun NextLessonContent(snapshot: TimetableSnapshot) {
             .clickable(actionStartActivity<MainActivity>()),
     ) {
         Text(
-            "Nächste Stunde",
+            dev.plattnericus.pokyh.core.i18n.I18n.s.system.widgetNext,
             style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ColorProvider(Brand.accent)),
         )
         Spacer(GlanceModifier.height(8.dp))
         if (upcoming.isEmpty()) {
             Text(
-                "Keine weiteren Stunden",
+                dev.plattnericus.pokyh.core.i18n.I18n.s.system.widgetNoMore,
                 style = TextStyle(fontSize = 14.sp, color = GlanceTheme.colors.onSurfaceVariant),
             )
         } else {
@@ -104,7 +104,7 @@ private fun LessonRow(lesson: LessonSnapshot, current: Boolean) {
         Spacer(GlanceModifier.width(10.dp))
         Column(modifier = GlanceModifier.defaultWeight()) {
             Text(
-                lesson.subject.ifEmpty { "Veranstaltung" },
+                lesson.subject.ifEmpty { dev.plattnericus.pokyh.core.i18n.I18n.s.system.widgetEvent },
                 maxLines = 1,
                 style = TextStyle(
                     fontSize = if (current) 16.sp else 14.sp,

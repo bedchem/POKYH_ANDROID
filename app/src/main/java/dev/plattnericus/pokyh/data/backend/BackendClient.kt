@@ -103,6 +103,10 @@ class BackendClient @Inject constructor(
         klasseName: String,
         role: String = "student",
         renewal: Boolean = false,
+        /** The WebUntis school the account was checked at; the default one is left out (the backend's own). */
+        school: dev.plattnericus.pokyh.data.model.School? = null,
+        /** "office": signed in with the app key (Office 365), for the account's sign-ins. */
+        method: String? = null,
     ): UntisLoginResult {
         if (klasseId <= 0) return UntisLoginResult.NoClass
         val body = buildJsonObject {
@@ -111,6 +115,12 @@ class BackendClient @Inject constructor(
             put("klasseName", klasseName)
             put("role", role)
             put("renewal", renewal)
+            if (method != null) put("method", method)
+            if (school != null && school != dev.plattnericus.pokyh.data.model.School.Default) {
+                put("school", school.loginName)
+                put("schoolName", school.name)
+                put("schoolServer", school.server)
+            }
         }
         val request = Request.Builder()
             .url(Config.backendURL + Config.Routes.authLogin)
@@ -122,7 +132,7 @@ class BackendClient @Inject constructor(
         val response = try {
             execute(request)
         } catch (e: IOException) {
-            return UntisLoginResult.Failed("Keine Verbindung")
+            return UntisLoginResult.Failed(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.noConnection)
         }
         return response.use { resp ->
             val text = resp.body?.string().orEmpty()
@@ -132,7 +142,7 @@ class BackendClient @Inject constructor(
                 return@use UntisLoginResult.Failed(body?.error ?: "HTTP ${resp.code}")
             }
             val parsed = runCatching { json.decodeFromString<UntisLoginResponse>(text) }.getOrNull()
-                ?: return@use UntisLoginResult.Failed("Ungültige Antwort")
+                ?: return@use UntisLoginResult.Failed(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.badAnswer)
             UntisLoginResult.Ok(parsed.token, parsed.refreshToken)
         }
     }
@@ -155,6 +165,82 @@ class BackendClient @Inject constructor(
     }
 
     suspend fun me(token: String): ApiUser = decode(request(Config.Routes.authMe, token = token))
+
+    // ── Datenschutz (backend routes/privacy.ts, users/me/export) ──
+
+    @Serializable
+    data class PrivacyStatus(
+        val acknowledgedVersion: String? = null,
+        val acknowledgedAt: String? = null,
+        val usageStats: Boolean = false,
+        val usageStatsAt: String? = null,
+    )
+
+    suspend fun privacyStatus(token: String): PrivacyStatus = decode(request("/privacy/status", token = token))
+
+    /** Gives or withdraws the consent to the personal usage statistics. */
+    suspend fun setUsageStats(enabled: Boolean, token: String) {
+        request("/privacy/usage-stats", method = "PUT", token = token, jsonBody = buildJsonObject { put("enabled", enabled) }.toString())
+    }
+
+    /** Everything POKYH keeps about the account, as one JSON file. */
+    suspend fun exportData(token: String): String = request("/users/me/export", token = token)
+
+    // ── Geräte & Anmeldungen (backend routes/auth.ts /sessions, /login-history) ──
+
+    /** A device signed in to the account. */
+    @Serializable
+    data class DeviceSession(
+        val id: String,
+        val current: Boolean = false,
+        val client: String = "other",
+        val platform: String = "other",
+        val os: String = "",
+        val browser: String = "",
+        val model: String = "",
+        val ip: String? = null,
+        val country: String = "",
+        val region: String? = null,
+        val city: String? = null,
+        val createdAt: String = "",
+        val lastUsedAt: String = "",
+    )
+
+    /** One sign-in of the account. */
+    @Serializable
+    data class LoginEntry(
+        val id: String,
+        val at: String = "",
+        val method: String = "",
+        val client: String = "other",
+        val platform: String = "other",
+        val os: String = "",
+        val browser: String = "",
+        val model: String = "",
+        val ip: String? = null,
+        val country: String = "",
+        val region: String? = null,
+        val city: String? = null,
+    )
+
+    @Serializable
+    private data class DeviceSessions(val sessions: List<DeviceSession> = emptyList())
+
+    @Serializable
+    data class LoginHistory(val logins: List<LoginEntry> = emptyList(), val keptDays: Int = 0)
+
+    suspend fun deviceSessions(token: String): List<DeviceSession> =
+        decode<DeviceSessions>(request("/auth/sessions", token = token)).sessions
+
+    suspend fun signOutDevice(id: String, token: String) {
+        request("/auth/sessions/" + id.urlEncoded(), method = "DELETE", token = token)
+    }
+
+    suspend fun signOutOtherDevices(token: String) {
+        request("/auth/sessions/sign-out-others", method = "POST", token = token)
+    }
+
+    suspend fun loginHistory(token: String): LoginHistory = decode(request("/auth/login-history", token = token))
 
     // ── Am Computer anmelden (QR-Code der Website, backend services/qrLogin.ts) ──
 
@@ -224,14 +310,28 @@ class BackendClient @Inject constructor(
         )
     }
 
-    suspend fun updateTodo(username: String, id: String, done: Boolean, token: String) {
-        val body = buildJsonObject { put("done", done) }
+    suspend fun updateTodo(username: String, id: String, done: Boolean, token: String, doneAt: String? = null) {
+        val body = buildJsonObject {
+            put("done", done)
+            // When it was ticked off, as the web sends it: done items leave the list a day later.
+            put("doneAt", doneAt?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
+        }
         request(
             Config.Routes.todos(username.urlEncoded()) + "/" + id,
             method = "PATCH",
             token = token,
             jsonBody = body.toString(),
         )
+    }
+
+    /** Changes a to-do's title, details and due time; every device of the account sees it at once (SSE). */
+    suspend fun editTodo(username: String, id: String, title: String, details: String, dueAt: String?, token: String) {
+        val body = buildJsonObject {
+            put("title", title)
+            put("details", details)
+            put("dueAt", dueAt?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
+        }
+        request(Config.Routes.todos(username.urlEncoded()) + "/" + id, method = "PATCH", token = token, jsonBody = body.toString())
     }
 
     suspend fun deleteTodo(username: String, id: String, token: String) {
@@ -264,6 +364,17 @@ class BackendClient @Inject constructor(
         )
     }
 
+    /** Changes a reminder (its creator or an admin); the whole class sees it at once (SSE). */
+    suspend fun editReminder(classId: String, id: String, title: String, body: String, remindAt: String, token: String): ApiReminder =
+        decode(
+            request(
+                Config.Routes.reminders(classId) + "/" + id,
+                method = "PATCH",
+                token = token,
+                jsonBody = buildJsonObject { put("title", title); put("body", body); put("remindAt", remindAt) }.toString(),
+            ),
+        )
+
     suspend fun deleteReminder(classId: String, id: String, token: String) {
         request(Config.Routes.reminders(classId) + "/" + id, method = "DELETE", token = token)
     }
@@ -284,6 +395,16 @@ class BackendClient @Inject constructor(
             ),
         )
     }
+
+    suspend fun updateReminderComment(classId: String, reminderId: String, commentId: String, body: String, token: String): ApiComment =
+        decode(
+            request(
+                Config.Routes.reminders(classId) + "/" + reminderId + "/comments/" + commentId,
+                method = "PATCH",
+                token = token,
+                jsonBody = buildJsonObject { put("body", body) }.toString(),
+            ),
+        )
 
     suspend fun deleteReminderComment(classId: String, reminderId: String, commentId: String, token: String) {
         request(
@@ -310,6 +431,16 @@ class BackendClient @Inject constructor(
         )
     }
 
+    suspend fun updateDishComment(dishId: String, commentId: String, body: String, token: String): ApiComment =
+        decode(
+            request(
+                Config.Routes.dishComments + "/" + dishId.urlEncoded() + "/" + commentId,
+                method = "PATCH",
+                token = token,
+                jsonBody = buildJsonObject { put("body", body) }.toString(),
+            ),
+        )
+
     suspend fun deleteDishComment(dishId: String, commentId: String, token: String) {
         request(Config.Routes.dishComments + "/" + dishId.urlEncoded() + "/" + commentId, method = "DELETE", token = token)
     }
@@ -333,9 +464,29 @@ class BackendClient @Inject constructor(
     // [Dish] ein reines Domänenmodell ohne Serialisierungs-Annotationen, und Gelesenes läuft
     // durch exakt denselben Parser wie eine frische Antwort.
     private val dishCache = TtlCache<String, List<Dish>>(ttlMillis = 300_000L)
-    private val dishKey = "dishes"
+
+    /**
+     * The menu is the signed-in account's school's (backend `menuContext`): the request carries
+     * the account's token, and what is cached is kept per school. Without one, the default
+     * school's, as every client got before schools existed. Set by AppState.
+     */
+    @Volatile private var menuToken: String? = null
+    @Volatile private var menuSchool: String = ""
+
+    fun setMenuAccount(token: String?, school: String) {
+        if (school != menuSchool) dishCache.removeAll()
+        menuToken = token
+        menuSchool = school
+    }
+
+    private val dishKey get() = "dishes-$menuSchool"
     private val dishMutex = Mutex()
-    private val dishDiskKey = "mensa-dishes-v1"
+    private val dishDiskKey get() = if (menuSchool.isEmpty()) "mensa-dishes-v1" else "mensa-dishes-v1-" + menuSchool.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+    private val _mensaAvailable = kotlinx.coroutines.flow.MutableStateFlow<Boolean?>(null)
+
+    /** Whether the account's school has a menu; null until the menu has been read once. */
+    val mensaAvailable: kotlinx.coroutines.flow.StateFlow<Boolean?> = _mensaAvailable
 
     /** Leert alle In-Memory-Caches dieses Clients (z. B. „Cache leeren"). */
     fun clearCaches() {
@@ -406,25 +557,26 @@ class BackendClient @Inject constructor(
             .url(Config.backendURL + Config.Routes.dishes)
             .header("Accept", "application/json")
             .header("X-API-Key", BuildConfig.BACKEND_API_KEY)
+            .apply { menuToken?.let { header("Authorization", "Bearer $it") } }
             .get()
             .build()
         val response = try {
             execute(request)
         } catch (e: IOException) {
             dishesFallback()?.let { return it }
-            throw AppError.noConnection("Mensa nicht ladbar (keine Verbindung).")
+            throw AppError.noConnection(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.mensaOffline)
         }
         return response.use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
                 dishesFallback()?.let { return@use it }
                 val message = runCatching { json.decodeFromString<ApiErrorBody>(text).error }.getOrNull()
-                throw AppError(message ?: "Mensa nicht ladbar (HTTP ${resp.code}).")
+                throw AppError(message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.errors.mensa(resp.code))
             }
             val dishes = parseDishes(text)
                 ?: run {
                     dishesFallback()?.let { return@use it }
-                    throw AppError("Mensa nicht ladbar (ungültige Antwort).")
+                    throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.mensaInvalid)
                 }
             dishCache.set(dishKey, dishes)
             diskCache.write(dishDiskKey, text, String.serializer())
@@ -435,6 +587,7 @@ class BackendClient @Inject constructor(
     private fun parseDishes(rawJson: String): List<Dish>? =
         runCatching { json.decodeFromString<MenuResponse>(rawJson) }
             .getOrNull()
+            ?.also { _mensaAvailable.value = it.available }
             ?.menu
             ?.dishes
             ?.map { it.toDomain(Config.backendURL) }
@@ -710,6 +863,101 @@ class BackendClient @Inject constructor(
     suspend fun markBell(marks: BellMarks, token: String) {
         request("/users/me/bell", method = "POST", token = token, jsonBody = json.encodeToString(BellMarks.serializer(), marks))
     }
+
+    // ── Schulsuche (GET /webuntis/schools) ──────────────────────────────────
+
+    @Serializable
+    private data class SchoolsAnswer(val schools: List<dev.plattnericus.pokyh.data.model.School>? = null, val reason: String? = null)
+
+    /** What the school search answered: schools, or why not (the web's reasons). */
+    sealed interface SchoolSearch {
+        data class Done(val schools: List<dev.plattnericus.pokyh.data.model.School>) : SchoolSearch
+        data object Short : SchoolSearch
+        data object TooMany : SchoolSearch
+        data object Rate : SchoolSearch
+        data object Failed : SchoolSearch
+    }
+
+    /** Any school on WebUntis, by name, town or postcode (public, no account needed). */
+    /** How the school's people sign in (read from its own WebUntis page): Office 365, a password, both. */
+    @Serializable
+    data class LoginOptions(val office365: Boolean = false, val password: Boolean = true)
+
+    suspend fun loginOptions(school: dev.plattnericus.pokyh.data.model.School): LoginOptions? = runCatching {
+        decode<LoginOptions>(request("/webuntis/login-options?school=${school.loginName.urlEncoded()}&server=${school.server.urlEncoded()}"))
+    }.getOrNull()
+
+    suspend fun searchSchools(query: String): SchoolSearch {
+        val q = query.trim()
+        if (q.length < 3) return SchoolSearch.Short
+        return try {
+            val answer = decode<SchoolsAnswer>(request("/webuntis/schools?q=${q.urlEncoded()}"))
+            answer.schools?.let { SchoolSearch.Done(it) } ?: SchoolSearch.Failed
+        } catch (e: AppError) {
+            when (e.httpCode) {
+                400 -> SchoolSearch.Short
+                422 -> SchoolSearch.TooMany
+                429 -> SchoolSearch.Rate
+                else -> SchoolSearch.Failed
+            }
+        }
+    }
+
+    // ── Rückblicke (pokyh-backend /recaps) ──────────────────────────────────
+    // An admin-made look back at a period, told as a story (ui/recap). The backend decides who
+    // gets one and answers its POKYH figures; the WebUntis figures are worked out on the device.
+
+    @Serializable
+    data class Recap(
+        val id: String,
+        val title: String,
+        /** YYYY-MM-DD, both included. */
+        val periodFrom: String,
+        val periodTo: String,
+        val endsAt: String? = null,
+        val sections: List<String> = emptyList(),
+        val openedAt: String? = null,
+        val finishedAt: String? = null,
+    )
+
+    @Serializable data class RecapList(val recaps: List<Recap> = emptyList())
+    @Serializable data class RecapSpan(val from: String = "", val to: String = "")
+    @Serializable data class RecapTotals(
+        val activeDays: Int = 0, val logins: Int = 0, val activeSeconds: Long = 0, val visits: Int = 0, val screens: Int = 0, val longestStreak: Int = 0,
+    )
+    @Serializable data class RecapCreated(val todos: Int = 0, val todosDone: Int = 0, val reminders: Int = 0, val comments: Int = 0, val ratings: Int = 0)
+    @Serializable data class RecapDishName(val de: String = "", val it: String = "", val en: String = "")
+    @Serializable data class RecapDish(val name: RecapDishName = RecapDishName(), val stars: Double = 0.0)
+    @Serializable data class RecapRank(val topPercent: Int = 100, val group: Int = 0)
+
+    /** The account's POKYH figures for a recap's period (services/recaps.ts). */
+    @Serializable
+    data class RecapPokyh(
+        val covered: RecapSpan? = null,
+        val usageConsent: Boolean = false,
+        val memberSince: String? = null,
+        val totals: RecapTotals? = null,
+        /** Active days per weekday, Monday first. */
+        val weekdays: List<Int> = emptyList(),
+        /** Foreground seconds by starting hour (with consent only). */
+        val hours: List<Int>? = null,
+        val created: RecapCreated? = null,
+        val favouriteDish: RecapDish? = null,
+        val rank: RecapRank? = null,
+    )
+
+    @Serializable data class RecapDetail(val recap: Recap, val pokyh: RecapPokyh? = null)
+    @Serializable data class RecapView(val openedAt: String? = null, val finishedAt: String? = null)
+
+    /** The recaps the account may open now, the newest period first. */
+    suspend fun recaps(token: String): List<Recap> = decode<RecapList>(request("/recaps", token = token)).recaps
+
+    /** One recap with the account's POKYH figures for its period. */
+    suspend fun recap(id: String, token: String): RecapDetail = decode(request("/recaps/${id.urlEncoded()}", token = token))
+
+    /** Notes that the story was opened (and, [finished], watched to its end) on every device. */
+    suspend fun markRecapView(id: String, finished: Boolean, token: String): RecapView =
+        decode(request("/recaps/${id.urlEncoded()}/view", method = "POST", token = token, jsonBody = """{"finished":$finished}"""))
 
     // ── Authentifizierte Requests ───────────────────────────────────────────
 

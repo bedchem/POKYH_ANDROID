@@ -29,12 +29,13 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.pressHighlight
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /** How [PokyhTopBar] presents its leading (left) slot. */
 sealed interface TopBarNav {
     data object None : TopBarNav
     data class Back(val onClick: () -> Unit) : TopBarNav
-    data class Close(val onClick: () -> Unit, val label: String = "Abbrechen") : TopBarNav
+    data class Close(val onClick: () -> Unit, val label: String = dev.plattnericus.pokyh.core.i18n.I18n.s.common.cancel) : TopBarNav
 }
 
 /**
@@ -85,7 +86,7 @@ fun PokyhTopBar(
                 is TopBarNav.None -> Unit
                 is TopBarNav.Back -> PokyhIconButton(
                     icon = PokyhIcons.back,
-                    contentDescription = "Zurück",
+                    contentDescription = dev.plattnericus.pokyh.core.i18n.strings().common.back,
                     onClick = nav.onClick,
                     tinted = true,
                     modifier = Modifier.offset(x = -ControlOpticalInset),
@@ -133,11 +134,30 @@ fun RowScope.TabRootActions(
     onMessages: () -> Unit,
     onProfile: () -> Unit,
     unreadMessages: Int = 0,
-    /** Where the bell's items lead; with it, the bell sits beside the messages (as on the web). */
+    /** Where the bell's items and the account menu lead; with it, the bell sits beside the
+     * messages and the picture opens the account menu (as on the web). */
     onNavigate: ((String) -> Unit)? = null,
 ) {
-    if (onNavigate != null) dev.plattnericus.pokyh.ui.bell.NotificationBell(onNavigate = onNavigate)
-    Box {
+    if (onNavigate != null) {
+        PokyhIconButton(
+            icon = PokyhIcons.search,
+            contentDescription = dev.plattnericus.pokyh.core.i18n.strings().search.title,
+            onClick = { onNavigate(dev.plattnericus.pokyh.ui.navigation.PokyhDestinations.SEARCH) },
+            tinted = true,
+            iconSize = 19.dp,
+        )
+        // The recap beside the bell, while there is one (on phones the web shows only its circle).
+        dev.plattnericus.pokyh.ui.recap.RecapHeaderButton()
+        dev.plattnericus.pokyh.ui.bell.NotificationBell(onNavigate = onNavigate)
+    }
+    // WebUntis keeps the messages: an account without it has no envelope, as on the web.
+    val hasUntis = if (onNavigate != null) {
+        androidx.hilt.navigation.compose.hiltViewModel<dev.plattnericus.pokyh.ui.profile.ProfileViewModel>()
+            .session.collectAsStateWithLifecycle().value?.hasUntis != false
+    } else {
+        true
+    }
+    if (hasUntis) Box {
         PokyhIconButton(
             icon = PokyhIcons.messages,
             contentDescription = if (unreadMessages > 0) {
@@ -155,6 +175,11 @@ fun RowScope.TabRootActions(
                 modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp),
             )
         }
+    }
+    // The picture opens the account menu, dropping down from it as on the web.
+    if (onNavigate != null) {
+        dev.plattnericus.pokyh.ui.profile.AccountMenuButton(onNavigate = onNavigate)
+        return
     }
     val interactionSource = remember { MutableInteractionSource() }
     Box(

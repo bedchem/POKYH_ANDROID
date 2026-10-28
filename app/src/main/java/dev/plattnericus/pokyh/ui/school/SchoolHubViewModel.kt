@@ -21,14 +21,30 @@ class SchoolHubViewModel @Inject constructor(
     private val appState: AppState,
 ) : ViewModel() {
 
-    data class UiState(val isParent: Boolean = false)
+    data class UiState(
+        val isParent: Boolean = false,
+        val hasUntis: Boolean = true,
+        /** "4BFS · LBS Brixen", as the web's hub subtitle. */
+        val subtitle: String = "",
+    )
 
-    private val _state = MutableStateFlow(UiState(isParent = appState.session.value?.isParent ?: false))
+    private val _state = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _state.asStateFlow()
 
     init {
         viewModelScope.launch {
-            appState.session.collect { s -> _state.update { it.copy(isParent = s?.isParent ?: false) } }
+            appState.session.collect { s ->
+                _state.update {
+                    it.copy(
+                        isParent = s?.isParent ?: false,
+                        hasUntis = s?.hasUntis != false,
+                        subtitle = listOfNotNull(
+                            s?.klasseName?.takeIf { n -> n.isNotBlank() },
+                            s?.schoolRef?.let { r -> r.name.ifEmpty { r.loginName } },
+                        ).joinToString(" · "),
+                    )
+                }
+            }
         }
     }
 

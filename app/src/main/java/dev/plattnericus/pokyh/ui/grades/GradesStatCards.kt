@@ -58,6 +58,12 @@ import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
 import dev.plattnericus.pokyh.ui.theme.bandColor
 import dev.plattnericus.pokyh.ui.theme.distributionColor
 import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import dev.plattnericus.pokyh.ui.theme.PokyhType.bold
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 
 /**
  * The four dashboard cards from the web app's Noten page, rebuilt for the phone.
@@ -302,7 +308,19 @@ private fun Sparkline(
     modifier: Modifier = Modifier,
 ) {
     val points = dashboard.spark.points
-    Canvas(modifier = modifier) {
+    // A tap on the line shows that month and the average so far (web tooltip).
+    var picked by androidx.compose.runtime.remember(dashboard) { androidx.compose.runtime.mutableStateOf<SparkPoint?>(null) }
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+    val boxW = maxWidth
+    Canvas(
+        modifier = Modifier.matchParentSize().pointerInput(dashboard) {
+            detectTapGestures { tap ->
+                val sx = size.width / SparkGeometry.WIDTH
+                val hit = dashboard.sparkPoints.minByOrNull { kotlin.math.abs(it.x * sx - tap.x) }
+                picked = if (hit == picked) null else hit
+            }
+        },
+    ) {
         val sx = size.width / SparkGeometry.WIDTH
         val sy = size.height / SparkGeometry.HEIGHT
         fun px(p: Pair<Float, Float>) = Offset(p.first * sx, p.second * sy)
@@ -346,8 +364,23 @@ private fun Sparkline(
             style = Stroke(width = 1.5f * sy, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round),
         )
         dashboard.sparkPoints.forEach { p ->
-            drawCircle(color = lineColor.copy(alpha = 0.45f), radius = 2f * sy, center = Offset(p.x * sx, p.y * sy))
+            drawCircle(color = lineColor.copy(alpha = if (p == picked) 1f else 0.45f), radius = (if (p == picked) 3.5f else 2f) * sy, center = Offset(p.x * sx, p.y * sy))
         }
+    }
+    picked?.let { p ->
+        val x = boxW * (p.x / SparkGeometry.WIDTH)
+        Text(
+            p.label + " · Ø " + dev.plattnericus.pokyh.core.util.Fmt.num(p.avg),
+            style = PokyhType.caption2.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+            color = PokyhTheme.colors.textPrimary,
+            maxLines = 1,
+            modifier = Modifier
+                .offset(x = (x - 60.dp).coerceIn(0.dp, (boxW - 120.dp).coerceAtLeast(0.dp)), y = (-4).dp)
+                .width(120.dp)
+                .background(PokyhTheme.colors.nested, PokyhShapes.sm)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
     }
 }
 
@@ -602,6 +635,17 @@ private fun DistributionDonut(
 
 // ── 4. Kürzlich hinzugefügt ─────────────────────────────────────────────────
 
+/** The web's tones for a recent mark: sage for a pass, butter below, blush when critical. */
+@Composable
+private fun recentTone(band: GradeBand): dev.plattnericus.pokyh.ui.theme.DecorativeTone {
+    val dark = PokyhTheme.colors.isDark
+    return when (band) {
+        GradeBand.Excellent, GradeBand.Positive -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.sage(dark)
+        GradeBand.Negative -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.butter(dark)
+        GradeBand.Critical -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.blush(dark)
+    }
+}
+
 /** The three newest entries, by grade id (entry order) rather than by date — same as the web. */
 @Composable
 internal fun RecentStatCard(
@@ -646,10 +690,10 @@ internal fun RecentStatCard(
         val shown = dashboard.recent.take(RecentCount)
         Column(modifier = if (compact) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth()) {
             shown.forEachIndexed { index, item ->
+                // The web's rows stand apart by space alone.
                 if (index > 0) {
-                    if (!compact) Spacer(Modifier.size(PokyhSpacing.md))
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(colors.separator))
-                    if (!compact) Spacer(Modifier.size(PokyhSpacing.md))
+                    if (compact) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.separator))
+                    else Spacer(Modifier.size(PokyhSpacing.xs))
                 }
                 Row(
                     modifier = if (compact) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
@@ -688,12 +732,33 @@ internal fun RecentStatCard(
                             )
                         }
                     }
-                    Text(
-                        text = Fmt.num(item.numeric),
-                        style = (if (compact) PokyhType.footnote.semibold() else PokyhType.title3).monospacedDigits(),
-                        color = bandColor(gradeBand(item.numeric)),
-                        maxLines = 1,
-                    )
+                    if (compact) {
+                        Text(
+                            text = Fmt.num(item.numeric),
+                            style = PokyhType.footnote.semibold().monospacedDigits(),
+                            color = bandColor(gradeBand(item.numeric)),
+                            maxLines = 1,
+                        )
+                    } else {
+                        // The mark in its tone, as the web's .recent-row .grade.
+                        val tone = recentTone(gradeBand(item.numeric))
+                        Box(
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 44.dp)
+                                .height(34.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .background(tone.fill)
+                                .padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = Fmt.num(item.numeric),
+                                style = PokyhType.subheadline.bold().monospacedDigits(),
+                                color = tone.ink,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
             }
             // Fewer than three entries still take one band each from the top: the empty bands

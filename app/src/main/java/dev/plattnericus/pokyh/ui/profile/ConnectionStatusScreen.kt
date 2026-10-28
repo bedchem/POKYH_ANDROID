@@ -198,7 +198,7 @@ private fun AccountInfoSection(session: UserSession, modifier: Modifier = Modifi
                 InfoRow(I18n.s.profile.klasse, session.klasseName)
             }
             PokyhRowSeparator()
-            InfoRow(I18n.s.profile.school, I18n.s.profile.schoolName)
+            InfoRow(I18n.s.profile.school, session.schoolRef.name.ifEmpty { session.schoolRef.loginName })
             PokyhRowSeparator()
             InfoRow(I18n.s.profile.role, roleLabel(session))
         }

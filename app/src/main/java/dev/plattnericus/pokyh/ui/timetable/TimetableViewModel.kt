@@ -32,9 +32,10 @@ import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 import kotlinx.datetime.todayIn
+import kotlinx.coroutines.flow.first
 
 /** `TimetableView.Mode` (Woche/Tag segmented control). */
-enum class TimetableMode(val label: String) { WEEK("Woche"), DAY("Tag") }
+enum class TimetableMode { WEEK, DAY }
 
 /** One week page's load state — mirrors `WeekTimetablePage`'s `entries/loading/error` triple,
  * but cached per [weekOffset] here so paging never re-shows a spinner for an already-loaded week. */
@@ -62,8 +63,6 @@ data class TimetableUiState(
 const val TIMETABLE_PAGE_SPAN = 220
 const val TIMETABLE_PAGE_COUNT = TIMETABLE_PAGE_SPAN * 2 + 1
 
-private val DAY_LABELS = listOf("Mo", "Di", "Mi", "Do", "Fr", "Sa")
-private val MONTH_ABBR = listOf("Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez")
 
 /**
  * Port of `TimetableView` + `WeekTimetablePage`'s state/data logic (TimetableView.swift). The
@@ -84,6 +83,19 @@ class TimetableViewModel @Inject constructor(
 
     private val _pages = MutableStateFlow<Map<Int, WeekPageState>>(emptyMap())
     val pages: StateFlow<Map<Int, WeekPageState>> = _pages.asStateFlow()
+
+    // ── Other timetables ("Weitere Stundenpläne") ───────────────────────────
+
+    private val _source = MutableStateFlow<dev.plattnericus.pokyh.data.model.TimetableSource?>(null)
+
+    /** The class (teacher, room) shown instead of the own timetable; null: the own one. */
+    val source: StateFlow<dev.plattnericus.pokyh.data.model.TimetableSource?> = _source.asStateFlow()
+
+    /** Per kind: the list, or null while it loads; a kind in [filtersFailed] couldn't be read. */
+    private val _filters = MutableStateFlow<Map<String, List<dev.plattnericus.pokyh.data.model.TimetableResource>>>(emptyMap())
+    val filters: StateFlow<Map<String, List<dev.plattnericus.pokyh.data.model.TimetableResource>>> = _filters.asStateFlow()
+    private val _filtersFailed = MutableStateFlow<Set<String>>(emptySet())
+    val filtersFailed: StateFlow<Set<String>> = _filtersFailed.asStateFlow()
 
     /**
      * This student's Abwesenheiten per school year, for the Vorentschuldigung / Entschuldigt /
@@ -126,8 +138,8 @@ class TimetableViewModel @Inject constructor(
     /** Monday of the CURRENT calendar week (ISO-8601, Monday-first) — every [weekOffset] is
      * relative to this, exactly like iOS's `thisMonday`. */
     private val thisMonday: LocalDate by lazy {
-        val today = Clock.System.todayIn(TimeZone.currentSystemDefault())
-        today.minus(DatePeriod(days = today.dayOfWeek.isoDayNumber - 1))
+        // The school week: from Saturday 17:00 the coming one, as on the web.
+        dev.plattnericus.pokyh.core.util.schoolWeekMonday()
     }
 
     init {
@@ -135,14 +147,25 @@ class TimetableViewModel @Inject constructor(
         ensureWeek(0)
         prefetchAdjacent(0)
         viewModelScope.launch { _subjectImageKeys.value = backendClient.subjectImageKeys() }
+        // The school's breaks by name, kept on the device for offline weeks.
+        viewModelScope.launch {
+            val s = appState.session.value?.takeIf { it.hasUntis } ?: return@launch
+            val key = "holidays-${s.schoolRef.loginName}"
+            val serializer = kotlinx.serialization.builtins.ListSerializer(dev.plattnericus.pokyh.core.util.SchoolHoliday.serializer())
+            runCatching { offlineStore.peek(key, serializer) }.getOrNull()?.let { dev.plattnericus.pokyh.core.util.SchoolHolidays.set(it.value) }
+            runCatching { offlineStore.load(key, serializer) { untisClient.holidays(s) } }
+                .onSuccess { dev.plattnericus.pokyh.core.util.SchoolHolidays.set(it.value) }
+        }
         loadWeekAbsences(0)
         loadAbsences(SchoolDates.currentSchoolYear)
         // "Im Stundenplan ansehen" from the Abwesenheiten screen: go to that date's week and day.
         viewModelScope.launch {
             appState.timetableJump.collect { dateNum ->
                 if (dateNum != null) {
+                    val lesson = appState.takeJumpLesson()
                     appState.consumeTimetableJump()
                     goToDate(dateNum)
+                    if (lesson != null) openWhenLoaded(dateNum, lesson)
                 }
             }
         }
@@ -179,7 +202,7 @@ class TimetableViewModel @Inject constructor(
     fun dateNumOf(date: LocalDate): Int = date.year * 10000 + date.monthNumber * 100 + date.dayOfMonth
     fun dateNumOf(offset: Int, dayIndex: Int): Int = dateNumOf(dateOf(offset, dayIndex))
     fun todayDateNum(): Int = dateNumOf(Clock.System.todayIn(TimeZone.currentSystemDefault()))
-    val dayLabels: List<String> get() = DAY_LABELS
+    val dayLabels: List<String> get() = dev.plattnericus.pokyh.core.i18n.I18n.s.common.weekdaysShort.take(6).map { it.replaceFirstChar(Char::titlecase) }
 
     fun entriesForDay(entries: List<TimetableEntry>, offset: Int, dayIndex: Int): List<TimetableEntry> {
         val num = dateNumOf(offset, dayIndex)
@@ -205,16 +228,21 @@ class TimetableViewModel @Inject constructor(
 
     val availableSchoolYears: List<Int> get() = SchoolDates.availableYears
 
-    /** Year picker: the current school year goes back to today, any other one to its first week. */
+    /**
+     * Year picker, as on the web: the current school year goes back to today, any other one to the
+     * same week of the school year shifted into that year.
+     */
     fun selectSchoolYear(year: Int) {
+        val shownYear = schoolYearOf(_ui.value.weekOffset)
+        if (year == shownYear) return
         if (year == SchoolDates.currentSchoolYear) {
             goToday()
             return
         }
-        var start = LocalDate(year, 9, 1)
-        if (start.dayOfWeek.isoDayNumber >= 6) start = start.plus(DatePeriod(days = 8 - start.dayOfWeek.isoDayNumber))
-        val offset = ((mondayOfWeek(start).toEpochDays() - thisMonday.toEpochDays()) / 7).toInt()
-        _ui.update { it.copy(selectedDay = 0) }
+        val shown = mondayOf(_ui.value.weekOffset)
+        val y = shown.year + (year - shownYear)
+        val target = runCatching { LocalDate(y, shown.monthNumber, shown.dayOfMonth) }.getOrElse { LocalDate(y, shown.monthNumber, 28) }
+        val offset = ((mondayOfWeek(target).toEpochDays() - thisMonday.toEpochDays()) / 7).toInt()
         setWeekOffset(offset.coerceIn(-TIMETABLE_PAGE_SPAN, TIMETABLE_PAGE_SPAN))
     }
 
@@ -230,8 +258,9 @@ class TimetableViewModel @Inject constructor(
     fun rangeText(offset: Int): String {
         val start = mondayOf(offset)
         val end = dateOf(offset, 5)
-        val startStr = "${start.dayOfMonth}. ${MONTH_ABBR[start.monthNumber - 1]}"
-        val endStr = "${end.dayOfMonth}. ${MONTH_ABBR[end.monthNumber - 1]} ${end.year}"
+        val c = dev.plattnericus.pokyh.core.i18n.I18n.s.common
+        val startStr = c.dayMonthShort(start.dayOfMonth, start.monthNumber)
+        val endStr = "${c.dayMonthShort(end.dayOfMonth, end.monthNumber)} ${end.year}"
         return "$startStr \u2013 $endStr"
     }
 
@@ -280,8 +309,31 @@ class TimetableViewModel @Inject constructor(
     }
 
     /** `tt-<studentId>-<monday>` — one file per week per account, so switching accounts or
-     * paging back never serves someone else's week. */
-    private fun weekCacheKey(studentId: Int, offset: Int) = "tt-$studentId-${mondayOf(offset)}"
+     * paging back never serves someone else's week. Another timetable has its own. */
+    private fun weekCacheKey(studentId: Int, offset: Int) = _source.value?.let { "tt-${it.type}${it.id}-${mondayOf(offset)}" }
+        ?: "tt-$studentId-${mondayOf(offset)}"
+
+
+    fun loadFilters(type: String, force: Boolean = false) {
+        if (!force && (type in _filters.value)) return
+        val session = appState.session.value ?: return
+        _filtersFailed.update { it - type }
+        viewModelScope.launch {
+            runCatching { untisClient.timetableFilters(session, type) }
+                .onSuccess { list -> _filters.update { it + (type to list) } }
+                .onFailure { _filtersFailed.update { it + type } }
+        }
+    }
+
+    /** Shows another timetable (or, with null, the own one again) from the same week on. */
+    fun chooseSource(next: dev.plattnericus.pokyh.data.model.TimetableSource?) {
+        if (next == _source.value) return
+        _source.value = next
+        _pages.value = emptyMap()
+        val offset = _ui.value.weekOffset
+        ensureWeek(offset)
+        prefetchAdjacent(offset)
+    }
 
     private suspend fun fetchWeek(offset: Int, silent: Boolean) {
         val session = appState.session.value ?: return
@@ -290,17 +342,28 @@ class TimetableViewModel @Inject constructor(
             return
         }
         val key = weekCacheKey(session.studentId, offset)
-        try {
-            val result = offlineStore.load(key, ListSerializer(TimetableEntry.serializer())) {
-                untisClient.timetable(session, session.studentId, mondayOf(offset).toString())
+        // The stored week on screen straight away; the fresh one replaces it when it lands.
+        if (!silent) {
+            runCatching { offlineStore.peek(key, ListSerializer(TimetableEntry.serializer())) }.getOrNull()?.let { stored ->
+                if (_pages.value[offset] !is WeekPageState.Data) {
+                    _pages.update { it + (offset to WeekPageState.Data(stored.value, stored.savedAt, stale = false)) }
+                }
             }
+        }
+        try {
+            val shownSource = _source.value
+            val result = offlineStore.load(key, ListSerializer(TimetableEntry.serializer())) {
+                untisClient.timetable(session, session.studentId, mondayOf(offset).toString(), shownSource)
+            }
+            // An answer for a timetable no longer shown is dropped.
+            if (shownSource != _source.value) return
             val entries = result.value
             _pages.update { it + (offset to WeekPageState.Data(entries, result.savedAt, result.stale)) }
             // Only a live answer is worth telling the rest of the app about: reporting subjects
             // from a restored week would ask the backend to generate images it was already asked
             // for, and republishing it to the widget would overwrite a fresher snapshot with an
             // older one just because this screen happened to open offline.
-            if (!result.stale) {
+            if (!result.stale && shownSource == null) {
                 reportSubjects(entries)
                 // Current week of the default account → widget stays fresh (WidgetBridge.publish).
                 if (offset == 0 && appState.isDefaultAccountActive()) widgetDataBridge.publishTimetable(entries)
@@ -438,7 +501,33 @@ class TimetableViewModel @Inject constructor(
 
     // ── Detail sheet ─────────────────────────────────────────────────────────
 
+    /** Opens a lesson's detail once its week is in (the exam from Home's card). */
+    private fun openWhenLoaded(dateNum: Int, lessonId: Int) {
+        val offset = _ui.value.weekOffset
+        viewModelScope.launch {
+            val page = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                _pages.first { it[offset] is WeekPageState.Data }[offset] as WeekPageState.Data
+            } ?: return@launch
+            val slot = dev.plattnericus.pokyh.data.untis.TimetableSlots.buildSlots(page.entries.filter { it.date == dateNum })
+                .firstOrNull { s -> s.display.id == lessonId || s.replacement?.id == lessonId || s.display.lessonId == lessonId }
+                ?: return@launch
+            showDetail(slot)
+        }
+    }
+
+    private val _sentExcuses = MutableStateFlow<List<dev.plattnericus.pokyh.data.untis.UntisClient.SentExcuse>>(emptyList())
+
+    /** The excuses sent to the class teachers, read once a lesson's detail is opened. */
+    val sentExcuses: StateFlow<List<dev.plattnericus.pokyh.data.untis.UntisClient.SentExcuse>> = _sentExcuses.asStateFlow()
+    private var excusesRead = false
+
     fun showDetail(slot: MergedSlot) {
+        if (!excusesRead) {
+            excusesRead = true
+            appState.session.value?.takeIf { it.hasUntis }?.let { s ->
+                viewModelScope.launch { runCatching { untisClient.sentExcuses(s) }.onSuccess { _sentExcuses.value = it }.onFailure { excusesRead = false } }
+            }
+        }
         _detail.value = slot
         loadLessonDetail(slot.display)
     }
@@ -486,7 +575,8 @@ class TimetableViewModel @Inject constructor(
     fun exportWeek(context: Context) {
         val entries = (_pages.value[_ui.value.weekOffset] as? WeekPageState.Data)?.entries.orEmpty()
         if (entries.isEmpty()) return
-        shareIcs(context, "pokyh_stundenplan.ics", buildIcs(entries, "POKYH Stundenplan"))
+        val t = dev.plattnericus.pokyh.core.i18n.I18n.s.timetable
+        shareIcs(context, t.icsWeekFile, buildIcs(entries, t.icsWeekName))
     }
 
     /** "Prüfungen exportieren" — [UntisClient] has no dedicated `upcomingExams` endpoint (unlike
@@ -506,7 +596,8 @@ class TimetableViewModel @Inject constructor(
                 exams += weekEntries.filter { it.isExam && it.date >= todayNum }
             }
             _ui.update { it.copy(exporting = false) }
-            if (exams.isNotEmpty()) shareIcs(context, "pokyh_pruefungen.ics", buildIcs(exams, "POKYH Prüfungen"))
+            val t = dev.plattnericus.pokyh.core.i18n.I18n.s.timetable
+            if (exams.isNotEmpty()) shareIcs(context, t.icsExamsFile, buildIcs(exams, t.icsExamsName))
         }
     }
 
@@ -537,7 +628,7 @@ private fun buildIcs(entries: List<TimetableEntry>, calendarName: String): Strin
     sb.append("CALSCALE:GREGORIAN\r\n")
     sb.append("X-WR-CALNAME:${icsEscape(calendarName)}\r\n")
     for (e in entries.sortedWith(compareBy({ it.date }, { it.startTime }))) {
-        val summary = e.subjectName.ifEmpty { e.note ?: "Stunde" }
+        val summary = e.subjectName.ifEmpty { e.note ?: dev.plattnericus.pokyh.core.i18n.I18n.s.timetable.lesson }
         sb.append("BEGIN:VEVENT\r\n")
         sb.append("UID:${e.id}-${e.date}-${e.startTime}@pokyh.com\r\n")
         sb.append("DTSTART:${icsDateTime(e.date, e.startTime)}\r\n")
@@ -545,7 +636,7 @@ private fun buildIcs(entries: List<TimetableEntry>, calendarName: String): Strin
         sb.append("SUMMARY:${icsEscape(summary)}\r\n")
         if (e.roomName.isNotEmpty()) sb.append("LOCATION:${icsEscape(e.roomName)}\r\n")
         val descParts = listOfNotNull(
-            e.teacherName.takeIf { it.isNotEmpty() }?.let { "Lehrer: $it" },
+            e.teacherName.takeIf { it.isNotEmpty() }?.let { "${dev.plattnericus.pokyh.core.i18n.I18n.s.timetable.icsTeacher}: $it" },
             e.examDescription?.takeIf { it.isNotEmpty() },
             e.note?.takeIf { it.isNotEmpty() },
         )

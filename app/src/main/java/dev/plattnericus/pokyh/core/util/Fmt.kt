@@ -23,6 +23,10 @@ object Fmt {
         return s.replace('.', I18n.s.common.decimal)
     }
 
+    /** Always [digits] decimals, as JavaScript's toFixed (an average: "7,40"). */
+    fun fixed(value: Double, digits: Int = 2): String =
+        String.format(Locale.ROOT, "%.${digits}f", value).replace('.', I18n.s.common.decimal)
+
     /** yyyyMMdd-Int -> "dd.MM.yy" ("dd/MM/yy" auf Italienisch und Englisch). */
     fun dateShort(date: Int): String {
         val s = date.toString()

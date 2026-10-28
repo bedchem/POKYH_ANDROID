@@ -118,6 +118,14 @@ class ProfileStrings(
     val errPasswordsDiffer: String,
     val errSamePassword: String,
     val errPasswordFailed: String,
+    val views: (Int) -> String,
+    val studentId: String,
+    val userId: String,
+    val classIdLabel: String,
+    val copy: String,
+    val copied: String,
+    val statsOffTitle: String,
+    val statsOffText: String,
 )
 
 val ProfileDe = ProfileStrings(
@@ -237,6 +245,14 @@ val ProfileDe = ProfileStrings(
     errPasswordsDiffer = "Die neuen Passwörter stimmen nicht überein.",
     errSamePassword = "Das neue Passwort muss sich vom alten unterscheiden.",
     errPasswordFailed = "Das Passwort konnte nicht geändert werden.",
+    views = { if (it == 1) "1 Aufruf" else "$it Aufrufe" },
+    studentId = "Schüler-ID",
+    userId = "POKYH-ID",
+    classIdLabel = "Klassen-ID",
+    copy = "Kopieren",
+    copied = "Kopiert",
+    statsOffTitle = "Persönliche Statistiken sind ausgeschaltet",
+    statsOffText = "Darum siehst du hier nur, an welchen Tagen du online warst, nicht wie lange und was du am meisten öffnest. Du kannst sie in den Einstellungen jederzeit einschalten und wieder ausschalten.",
 )
 
 val ProfileIt = ProfileStrings(
@@ -356,6 +372,14 @@ val ProfileIt = ProfileStrings(
     errPasswordsDiffer = "Le nuove password non coincidono.",
     errSamePassword = "La nuova password deve essere diversa da quella vecchia.",
     errPasswordFailed = "Impossibile cambiare la password.",
+    views = { if (it == 1) "1 visita" else "$it visite" },
+    studentId = "ID studente",
+    userId = "ID POKYH",
+    classIdLabel = "ID classe",
+    copy = "Copia",
+    copied = "Copiato",
+    statsOffTitle = "Le statistiche personali sono disattivate",
+    statsOffText = "Per questo qui vedi solo in quali giorni sei stato online, non per quanto tempo né cosa apri di più. Puoi attivarle e disattivarle nelle impostazioni in qualsiasi momento.",
 )
 
 val ProfileEn = ProfileStrings(
@@ -475,4 +499,12 @@ val ProfileEn = ProfileStrings(
     errPasswordsDiffer = "The new passwords don't match.",
     errSamePassword = "The new password must differ from the old one.",
     errPasswordFailed = "The password couldn't be changed.",
+    views = { if (it == 1) "1 view" else "$it views" },
+    studentId = "Student ID",
+    userId = "POKYH ID",
+    classIdLabel = "Class ID",
+    copy = "Copy",
+    copied = "Copied",
+    statsOffTitle = "Personal statistics are switched off",
+    statsOffText = "That’s why you only see which days you were online here, not for how long or what you open most. You can switch them on and off in the settings at any time.",
 )

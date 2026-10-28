@@ -11,8 +11,8 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 import dev.plattnericus.pokyh.core.i18n.I18n
-import dev.plattnericus.pokyh.core.util.GradeEntryOrder
 import kotlinx.datetime.LocalDate
+import dev.plattnericus.pokyh.core.util.GradeEntryOrder
 
 /**
  * Everything the Noten dashboard displays, computed once from the subject list.
@@ -226,7 +226,8 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
  * ("9-") a 9. Plain rounding would send 8,5 to 9. The epsilon absorbs floating-point noise
  * around the exact half.
  */
-internal fun gradeBucket(value: Double): Int = ceil(value - 0.5 - 1e-9).toInt().coerceIn(1, 10)
+/** The whole grade a value counts as: rounded half up, as the web's `Math.round` (6,5 → 7). */
+internal fun gradeBucket(value: Double): Int = kotlin.math.floor(value + 0.5).toInt().coerceIn(1, 10)
 
 /** Walks grades 10 → 1 so the ring reads best-first clockwise from the top, like the web. */
 private fun buildDonutSegments(distribution: List<Int>, total: Int): List<DonutSegment> {

@@ -46,6 +46,8 @@ class TodosViewModel @Inject constructor(
         val error: String? = null,
         val todos: List<ApiTodo> = emptyList(),
         val submitting: Boolean = false,
+        /** The last add failed (not a dropped connection): the sheet stays open and says so. */
+        val addError: String? = null,
         /** Signed in offline and [todos] is the copy stored on this device (read-only). */
         val offlineCopy: Boolean = false,
         /** Signed in offline: new Todos go to the outbox instead of the server. */
@@ -77,7 +79,7 @@ class TodosViewModel @Inject constructor(
                     _ui.update {
                         UiState(
                             loading = false,
-                            todos = stored?.value.orEmpty().undoneFirst(),
+                            todos = stored?.value.orEmpty().arranged(),
                             offlineCopy = stored != null,
                             offline = s != null && appState.isOffline.value,
                             pending = it.pending,
@@ -115,7 +117,7 @@ class TodosViewModel @Inject constructor(
         sseClient.sseTodos(token)
             .catch { /* stream dropped for good — last loaded list stays, user can pull to refresh */ }
             .collect { list ->
-                _ui.update { it.copy(loading = false, error = null, todos = list.undoneFirst(), offlineCopy = false) }
+                _ui.update { it.copy(loading = false, error = null, todos = list.arranged(), offlineCopy = false) }
                 offlineStore.save(cacheKey(username), list, ListSerializer(ApiTodo.serializer()))
             }
     }
@@ -124,7 +126,7 @@ class TodosViewModel @Inject constructor(
         _ui.update { it.copy(loading = it.todos.isEmpty(), error = null) }
         runCatching { backendClient.todos(username, token) }
             .onSuccess { list ->
-                _ui.update { it.copy(loading = false, error = null, todos = list.undoneFirst(), offlineCopy = false) }
+                _ui.update { it.copy(loading = false, error = null, todos = list.arranged(), offlineCopy = false) }
                 offlineStore.save(cacheKey(username), list, ListSerializer(ApiTodo.serializer()))
             }
             .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) } }
@@ -137,12 +139,34 @@ class TodosViewModel @Inject constructor(
         viewModelScope.launch { load(s.username, token) }
     }
 
+    /** Ticks it off (or opens it again) at once; put back if the server says no. */
     fun toggle(todo: ApiTodo) {
         val s = session.value ?: return
         val token = s.apiToken ?: return
+        val done = !todo.done
+        val doneAt = if (done) java.time.Instant.now().toString() else null
+        _ui.update { st -> st.copy(todos = st.todos.map { if (it.id == todo.id) it.copy(done = done, doneAt = doneAt) else it }.arranged()) }
         viewModelScope.launch {
-            runCatching { backendClient.updateTodo(s.username, todo.id, !todo.done, token) }
-            load(s.username, token)
+            runCatching { backendClient.updateTodo(s.username, todo.id, done, token, doneAt) }
+                .onFailure { _ui.update { st -> st.copy(todos = st.todos.map { if (it.id == todo.id) todo else it }.arranged()) } }
+        }
+    }
+
+    fun clearAddError() = _ui.update { it.copy(addError = null) }
+
+    /** Saves a change at once here; the server's copy comes back through the live stream. */
+    fun editTodo(todo: ApiTodo, title: String, details: String, dueAt: String?, onDone: () -> Unit) {
+        val s = session.value ?: return
+        val token = s.apiToken ?: return
+        if (title.isBlank()) return
+        viewModelScope.launch {
+            _ui.update { it.copy(submitting = true, addError = null) }
+            runCatching { backendClient.editTodo(s.username, todo.id, title, details, dueAt, token) }
+                .onSuccess {
+                    _ui.update { st -> st.copy(submitting = false, todos = st.todos.map { if (it.id == todo.id) it.copy(title = title, details = details, dueAt = dueAt) else it }.arranged()) }
+                    onDone()
+                }
+                .onFailure { e -> _ui.update { it.copy(submitting = false, addError = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.saveFailed) } }
         }
     }
 
@@ -169,12 +193,16 @@ class TodosViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            _ui.update { it.copy(submitting = true) }
+            _ui.update { it.copy(submitting = true, addError = null) }
             val failure = runCatching { backendClient.createTodo(s.username, title, details, dueAt, token) }
                 .exceptionOrNull()
             // The connection dropped mid-request: don't lose what was typed.
             if (failure is AppError && failure.isNetwork) {
                 outbox.enqueue(OutboxItem.Kind.Todo, s.username, title, details, dueAt)
+            } else if (failure != null) {
+                // Refused: the sheet stays open with what was typed, and says so (as the web).
+                _ui.update { it.copy(submitting = false, addError = failure.message?.takeIf { m -> m.isNotBlank() } ?: dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.saveFailed) }
+                return@launch
             }
             _ui.update { it.copy(submitting = false) }
             onDone()
@@ -182,6 +210,16 @@ class TodosViewModel @Inject constructor(
         }
     }
 
-    /** `todos.sorted { !$0.done && $1.done }` — undone first, otherwise original order kept. */
-    private fun List<ApiTodo>.undoneFirst(): List<ApiTodo> = sortedBy { it.done }
+    /**
+     * As on the web: a done item leaves the list a day after it was ticked off; the open ones by
+     * due date (none last), then newest first; the done ones after them, last ticked off first.
+     */
+    private fun List<ApiTodo>.arranged(): List<ApiTodo> {
+        val now = System.currentTimeMillis()
+        fun ms(raw: String?) = raw?.let { runCatching { java.time.OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() ?: runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+        val kept = filter { !it.done || (ms(it.doneAt)?.let { at -> now - at < 86_400_000L } ?: true) }
+        val open = kept.filter { !it.done }.sortedWith(compareBy<ApiTodo> { ms(it.dueAt) ?: Long.MAX_VALUE }.thenByDescending { ms(it.createdAt) ?: 0L })
+        val done = kept.filter { it.done }.sortedByDescending { ms(it.doneAt) ?: 0L }
+        return open + done
+    }
 }

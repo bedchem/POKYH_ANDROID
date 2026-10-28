@@ -20,6 +20,40 @@ import kotlinx.serialization.Serializable
 // UserSession is our own clean, already-normalized domain object (not decoded directly from
 // WebUntis's wire JSON — UntisClient builds it manually field-by-field), so it's safe to make
 // @Serializable purely for AppState's own offline DiskCache round-trip.
+/**
+ * A school on WebUntis, as its public school search names it: the login name, the server it is
+ * on and its name. [Default] is the one the app was made for (LBS Brixen); a session or a saved
+ * account without a school belongs to it.
+ */
+@Serializable
+data class School(val loginName: String, val server: String, val name: String = "", val address: String = "") {
+    companion object {
+        val Default: School by lazy {
+            School(
+                loginName = dev.plattnericus.pokyh.data.network.Config.school,
+                server = java.net.URI(dev.plattnericus.pokyh.data.network.Config.untisBase).host,
+                name = "LBS Brixen",
+            )
+        }
+    }
+
+    /** WebUntis' address for this school ("https://<server>/WebUntis"). */
+    val base: String
+        get() = if (this == Default || (loginName == Default.loginName && server == Default.server)) {
+            dev.plattnericus.pokyh.data.network.Config.untisBase
+        } else {
+            "https://$server/WebUntis"
+        }
+
+    /** The login name for a `?school=` query: school names may hold spaces, `&`, `+` or brackets. */
+    val query: String
+        get() = java.net.URLEncoder.encode(loginName, "UTF-8").replace("+", "%20")
+
+    /** The schoolname cookie: "_" + base64(loginName). */
+    val cookie: String
+        get() = "_" + android.util.Base64.encodeToString(loginName.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+}
+
 @Serializable
 data class UserSession(
     var sessionId: String,
@@ -38,7 +72,12 @@ data class UserSession(
     var classId: String? = null,
     /** Profile image URL from the WebUntis app data (`user.person.imageUrl`). */
     var imageUrl: String? = null,
+    /** The WebUntis school of the account; null: the default one ([School.Default]). */
+    var school: School? = null,
 ) {
+    /** The account's school, the default one when none was chosen. */
+    val schoolRef: School get() = school ?: School.Default
+
     /** Does this session have a linked WebUntis account (timetable/grades)?
      * Pure POKYH backend accounts (login fallback) have `studentId == 0`. Also applies
      * to the token-less offline session (timetable then comes from cache). */
@@ -62,6 +101,8 @@ data class SavedAccount(
     var displayName: String, // class name or username
     var nickname: String? = null, // optional, locally assigned nickname
     var imageUrl: String? = null, // profile image URL (WebUntis) for the account list
+    /** The WebUntis school it signs in at; null: the default one. */
+    var school: School? = null,
 ) {
     val id: String get() = username
 
@@ -129,7 +170,20 @@ data class TimetableEntry(
     var substitutionText: String? = null,
     /** `lessonText` — the teacher's free text for the period, separate from `lessonInfo`. */
     var lessonText: String? = null,
+    /** Every text WebUntis attaches to the period (`texts`), each with its type — kinds the
+     * fields above don't cover show under "Info" (web lib/timetable-logic.ts). */
+    var texts: List<PeriodText> = emptyList(),
 )
+
+@Serializable
+data class PeriodText(val type: String, val text: String)
+
+/** Another timetable shown instead of the own one ("Weitere Stundenpläne"): CLASS, TEACHER or ROOM. */
+@Serializable
+data class TimetableSource(val type: String, val id: Int, val name: String)
+
+/** A class (teacher, room) whose timetable the school shows this account. */
+data class TimetableResource(val id: Int, val name: String, val longName: String)
 
 // ── Grades ───────────────────────────────────────────────────────────────
 
@@ -191,6 +245,11 @@ data class MessagePreview(
     var sentDate: String,
     var isRead: Boolean,
     var hasAttachments: Boolean,
+    /** The sender asked this reader to confirm reading (inbox). */
+    var needsConfirmation: Boolean = false,
+    /** How many recipients confirmed reading, of how many asked (sent). */
+    var readConfirmed: Int? = null,
+    var readTotal: Int? = null,
 )
 
 data class MessageDetail(
@@ -200,7 +259,23 @@ data class MessageDetail(
     var sentDate: String,
     var body: String,
     var attachments: List<MessageAttachment>,
+    /** The message says it has files, even when the list came back empty. */
+    var hasAttachments: Boolean = false,
+    /** A read confirmation asked of this reader (inbox). */
+    var confirmation: ReadConfirmation? = null,
+    /** How many recipients confirmed reading (sent). */
+    var readConfirmed: Int? = null,
+    var readTotal: Int? = null,
+    /** A sent message WebUntis lets the sender take back. */
+    var canRevoke: Boolean = false,
+    var isRevoked: Boolean = false,
+    var outgoing: Boolean = false,
 )
+
+data class ReadConfirmation(val canConfirm: Boolean, val confirmedAt: String?, val confirmedBy: String?)
+
+/** Who of a sent message's recipients confirmed reading; a class lists its people. */
+data class ReadStatusRecipient(val name: String, val className: String, val confirmedAt: String?, val people: List<Pair<String, String?>>)
 
 data class MessageAttachment(
     /** WebUntis numeric attachment id. 0 when the message only carries storage attachments. */

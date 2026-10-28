@@ -32,6 +32,7 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import javax.inject.Inject
+import dev.plattnericus.pokyh.core.i18n.strings
 
 @HiltViewModel
 class UpdateViewModel @Inject constructor(val updater: AppUpdater) : ViewModel()
@@ -56,14 +57,14 @@ fun UpdateDialogHost(viewModel: UpdateViewModel = hiltViewModel()) {
         AppUpdater.State.Idle -> Unit
 
         is AppUpdater.State.Available -> UpdateDialog(
-            title = "Update verfügbar",
-            confirmLabel = "Aktualisieren",
+            title = strings().system.updateTitle,
+            confirmLabel = strings().system.updateConfirm,
             onConfirm = updater::startUpdate,
-            dismissLabel = "Morgen",
+            dismissLabel = strings().system.tomorrow,
             onDismiss = updater::snooze,
         ) {
             Text(
-                text = "Version ${s.release.version} ist verfügbar (installiert: ${BuildConfig.VERSION_NAME}).",
+                text = strings().system.updateText(s.release.version, BuildConfig.VERSION_NAME),
                 style = PokyhType.callout,
                 color = PokyhTheme.colors.textSecondary,
             )
@@ -78,8 +79,8 @@ fun UpdateDialogHost(viewModel: UpdateViewModel = hiltViewModel()) {
         }
 
         is AppUpdater.State.Downloading -> UpdateDialog(
-            title = "Wird heruntergeladen…",
-            dismissLabel = "Abbrechen",
+            title = strings().system.downloading,
+            dismissLabel = strings().common.cancel,
             onDismiss = updater::cancel,
         ) {
             val progress = s.progress
@@ -100,32 +101,31 @@ fun UpdateDialogHost(viewModel: UpdateViewModel = hiltViewModel()) {
                 )
             }
             Text(
-                text = if (progress != null) "${(progress * 100).toInt()} %" else "Verbinde…",
+                text = if (progress != null) "${(progress * 100).toInt()} %" else strings().system.connecting,
                 style = PokyhType.footnote,
                 color = PokyhTheme.colors.textSecondary,
             )
         }
 
         is AppUpdater.State.NeedsPermission -> UpdateDialog(
-            title = "Installation erlauben",
-            confirmLabel = "Einstellungen öffnen",
+            title = strings().system.allowInstall,
+            confirmLabel = strings().system.openSettings,
             onConfirm = updater::openInstallPermissionSettings,
-            dismissLabel = "Abbrechen",
+            dismissLabel = strings().common.cancel,
             onDismiss = updater::cancel,
         ) {
             Text(
-                text = "Das Update ist heruntergeladen. Erlaube POKYH einmalig, Apps zu installieren " +
-                    "(„Aus dieser Quelle zulassen“), und komm dann zurück — die Installation startet automatisch.",
+                text = strings().system.allowInstallText,
                 style = PokyhType.callout,
                 color = PokyhTheme.colors.textSecondary,
             )
         }
 
         is AppUpdater.State.Failed -> UpdateDialog(
-            title = "Update fehlgeschlagen",
-            confirmLabel = "Erneut versuchen",
+            title = strings().system.updateFailed,
+            confirmLabel = strings().common.retry,
             onConfirm = updater::startUpdate,
-            dismissLabel = "Morgen",
+            dismissLabel = strings().system.tomorrow,
             onDismiss = updater::snooze,
         ) {
             Text(s.message, style = PokyhType.callout, color = PokyhTheme.colors.textSecondary)

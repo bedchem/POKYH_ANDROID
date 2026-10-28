@@ -8,12 +8,14 @@ import dev.plattnericus.pokyh.core.widgets.WidgetDataBridge
 import dev.plattnericus.pokyh.data.model.AppError
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.data.storage.OfflineStore
+import dev.plattnericus.pokyh.data.storage.PreferencesStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
 
@@ -24,14 +26,11 @@ class GradesViewModel @Inject constructor(
     private val untisClient: UntisClient,
     private val widgetDataBridge: WidgetDataBridge,
     private val offlineStore: OfflineStore,
+    private val preferencesStore: PreferencesStore,
 ) : ViewModel() {
 
-    enum class SortMode(val label: String) {
-        NAME("Name"),
-        AVG_DESC("Schnitt ↓"),
-        AVG_ASC("Schnitt ↑"),
-        RECENT("Letzte Note"),
-    }
+    /** Labelled in the language in use by the screen (`sortLabel`). */
+    enum class SortMode { NAME, AVG_DESC, AVG_ASC, RECENT }
 
     /** Available school years for the toolbar picker, newest first — `SchoolDates.availableYears`. */
     val availableYears: List<Int> = SchoolDates.availableYears
@@ -58,6 +57,11 @@ class GradesViewModel @Inject constructor(
     data class Freshness(val savedAt: Long = 0L, val stale: Boolean = false)
 
     init {
+        // The order picked last time stays picked.
+        viewModelScope.launch {
+            val stored = preferencesStore.gradesSort.firstOrNull()
+            SortMode.entries.firstOrNull { it.name == stored }?.let { _sort.value = it }
+        }
         load()
     }
 
@@ -70,6 +74,7 @@ class GradesViewModel @Inject constructor(
 
     fun selectSort(mode: SortMode) {
         _sort.value = mode
+        viewModelScope.launch { preferencesStore.setGradesSort(mode.name) }
     }
 
     fun retry() = load()
@@ -77,8 +82,16 @@ class GradesViewModel @Inject constructor(
     private fun load() {
         val session = appState.session.value ?: return
         viewModelScope.launch {
-            _loading.value = true
             _error.value = null
+            val key = "grades-${session.studentId}-${_year.value}"
+            val stored = runCatching { offlineStore.peek(key, ListSerializer(SubjectGrades.serializer())) }.getOrNull()
+            if (stored != null && stored.value.isNotEmpty()) {
+                _subjects.value = stored.value
+                _freshness.value = Freshness(stored.savedAt, false)
+                _loading.value = false
+            } else {
+                _loading.value = true
+            }
             try {
                 // `year == currentSchoolYear ? nil : year` — the client resolves `null` to the
                 // WebUntis "current" schoolyear itself, exactly like the iOS call site.

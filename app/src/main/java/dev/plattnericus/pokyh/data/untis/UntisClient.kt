@@ -52,6 +52,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import dev.plattnericus.pokyh.data.model.School
+import dev.plattnericus.pokyh.data.model.ReadConfirmation
+import dev.plattnericus.pokyh.data.model.ReadStatusRecipient
 
 /**
  * WebUntis client — replicates the frontend's server-proxy routes natively: JSON-RPC
@@ -83,11 +86,11 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             .build()
     }
 
-    private fun cookieHeader(sessionId: String): String =
-        "JSESSIONID=$sessionId; schoolname=\"${Config.schoolCookie}\""
+    private fun cookieHeader(sessionId: String, school: School): String =
+        "JSESSIONID=$sessionId; schoolname=\"${school.cookie}\""
 
     private fun Request.Builder.withAuth(s: UserSession): Request.Builder {
-        header("Cookie", cookieHeader(s.sessionId))
+        header("Cookie", cookieHeader(s.sessionId, s.schoolRef))
         header("Accept", "application/json")
         if (s.bearerToken.isNotEmpty()) header("Authorization", "Bearer ${s.bearerToken}")
         return this
@@ -109,11 +112,17 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         return body.firstOrNull() == '<'
     }
 
+    /** The school's breaks from a month ago on (JSON-RPC getHolidays), merged and named. */
+    suspend fun holidays(s: UserSession): List<dev.plattnericus.pokyh.core.util.SchoolHoliday> {
+        val from = java.time.LocalDate.now().minusDays(31).toString()
+        return dev.plattnericus.pokyh.core.util.SchoolHolidays.read(rpc("getHolidays", s, "holidays"), from)
+    }
+
     // ── JSON-RPC ─────────────────────────────────────────────────────────────
 
     private suspend fun rpcFull(method: String, s: UserSession, id: String, params: JSONObject = JSONObject()): JsonDyn =
         withContext(Dispatchers.IO) {
-            val url = "${Config.untisBase}${Config.Routes.jsonRpc}?school=${Config.school}"
+            val url = "${s.schoolRef.base}${Config.Routes.jsonRpc}?school=${s.schoolRef.query}"
             val bodyJson = JSONObject().apply {
                 put("id", id)
                 put("method", method)
@@ -123,7 +132,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             val request = Request.Builder()
                 .url(url)
                 .header("Content-Type", "application/json")
-                .header("Cookie", cookieHeader(s.sessionId))
+                .header("Cookie", cookieHeader(s.sessionId, s.schoolRef))
                 .post(bodyJson.toString().toRequestBody(jsonMediaType))
                 .build()
             val response = noCookieClient.newCall(request).execute()
@@ -139,17 +148,20 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      * [token]: the 6-digit code of the authenticator app, for an account with two-factor
      * sign-in — asked for after a [TwoFactorRequiredException].
      */
-    suspend fun login(username: String, password: String, token: String? = null): UserSession {
+    suspend fun login(username: String, password: String, token: String? = null, school: School = School.Default): UserSession {
         val user = username.trim().lowercase()
         if (user.isEmpty() || password.isEmpty()) {
-            throw AppError("Benutzername und Passwort erforderlich.")
+            throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.needCredentials)
         }
 
+        // An Office 365 account: the app key instead of a password.
+        if (AppKey.isKey(password)) return loginWithKey(user, password.removePrefix(AppKey.PREFIX), school)
+
         // With the code: only WebUntis' own sign-in form takes it.
-        if (token != null) return loginWithForm(user, password, token)
+        if (token != null) return loginWithForm(user, password, token, school)
 
         // 1. JSON-RPC authenticate
-        val rpcUrl = "${Config.untisBase}${Config.Routes.jsonRpc}?school=${Config.school}"
+        val rpcUrl = "${school.base}${Config.Routes.jsonRpc}?school=${school.query}"
         val rpcBody = JSONObject().apply {
             put("id", "pockyh-web")
             put("method", "authenticate")
@@ -183,18 +195,58 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             // after a plain wrong password (-8504): that would count every typo twice
             // towards WebUntis' lock-out.
             if (json["error"]["code"].int != -8504) {
-                when (val form = formLogin(user, password, null)) {
-                    is FormLogin.Ok -> return completeFormLogin(user, form.sessionId)
+                when (val form = formLogin(user, password, null, school)) {
+                    is FormLogin.Ok -> return completeFormLogin(user, form.sessionId, school)
                     FormLogin.CodeRequired -> throw TwoFactorRequiredException(wrongCode = false)
                     else -> Unit
                 }
             }
-            throw AppError(json["error"]["message"].string ?: "Anmeldung fehlgeschlagen.")
+            throw AppError(json["error"]["message"].string ?: dev.plattnericus.pokyh.core.i18n.I18n.s.errors.loginFailed)
         }
-        val studentId = json["result"]["personId"].int ?: throw AppError("Anmeldung fehlgeschlagen.")
+        val studentId = json["result"]["personId"].int ?: throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.loginFailed)
         val klasseId0 = json["result"]["klasseId"].int ?: 0
         val personType = json["result"]["personType"].int
-        return completeLogin(user, sessionId, studentId, klasseId0, personType)
+        return completeLogin(user, sessionId, studentId, klasseId0, personType, school)
+    }
+
+    /**
+     * Signs in with the account's app key: the one-time code of the moment through WebUntis'
+     * mobile interface (`jsonrpc_intern.do?m=getUserData2017`), as the official app and the web
+     * backend do. The same WebUntis session comes back as for a password.
+     */
+    private suspend fun loginWithKey(user: String, key: String, school: School): UserSession {
+        val now = System.currentTimeMillis()
+        val body = JSONObject()
+            .put("id", "pokyh-app")
+            .put("method", "getUserData2017")
+            .put("params", JSONArray().put(JSONObject().put("auth", JSONObject().put("clientTime", now).put("user", user).put("otp", AppKey.totp(key, now)))))
+            .put("jsonrpc", "2.0")
+        val request = Request.Builder()
+            .url("${school.base}/jsonrpc_intern.do?m=getUserData2017&school=${school.query}&v=i2.2")
+            .header("Content-Type", "application/json")
+            .post(body.toString().toRequestBody(jsonMediaType))
+            .build()
+        val response = withContext(Dispatchers.IO) { noCookieClient.newCall(request).execute() }
+        val text = response.use { it.body?.string().orEmpty() }
+        if (!response.isSuccessful) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.untisDown)
+        val sessionId = response.headers("Set-Cookie").firstNotNullOfOrNull { Regex("JSESSIONID=([^;]+)").find(it)?.groupValues?.get(1) }.orEmpty()
+        val json = JsonDyn.parse(text)
+        if (json["error"].exists || !json["result"].exists) {
+            if (json["error"]["code"].int == -8504) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.login.badKey)
+            throw AppError(json["error"]["message"].string ?: dev.plattnericus.pokyh.core.i18n.I18n.s.errors.loginFailed)
+        }
+        if (sessionId.isEmpty()) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.loginFailed)
+        val u = json["result"]["userData"]
+        val personId = u["elemId"].int?.takeIf { it > 0 } ?: 0
+        val personType = when (u["elemType"].string?.uppercase()) {
+            "TEACHER" -> 2
+            "STUDENT" -> 5
+            "PARENT", "LEGAL_GUARDIAN" -> 12
+            else -> null
+        }
+        val klassen = u["klassenIds"].array.mapNotNull { it.int }.filter { it > 0 }
+        if (personId == 0) return completeFormLogin(user, sessionId, school)
+        return completeLogin(user, sessionId, personId, if (klassen.size == 1) klassen[0] else 0, personType, school)
     }
 
     /** What WebUntis' sign-in form (POST /j_spring_security_check) answered. */
@@ -212,10 +264,10 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      * second factor. It wants an anonymous session and its CSRF token first, which the school's
      * sign-in page hands out.
      */
-    private suspend fun formLogin(user: String, password: String, token: String?): FormLogin = withContext(Dispatchers.IO) {
+    private suspend fun formLogin(user: String, password: String, token: String?, school: School): FormLogin = withContext(Dispatchers.IO) {
         try {
             val page = Request.Builder()
-                .url("${Config.untisBase}/?school=${Config.school}")
+                .url("${school.base}/?school=${school.query}")
                 .header("Accept", "text/html")
                 .build()
             val pageResponse = noCookieClient.newCall(page).execute()
@@ -227,14 +279,14 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             val tenant = Regex("\"tenantId\"\\s*:\\s*\"?([0-9A-Za-z-]+)\"?").find(pageBody)?.groupValues?.get(1)
 
             val form = FormBody.Builder()
-                .add("school", Config.school)
+                .add("school", school.loginName)
                 .add("j_username", user)
                 .add("j_password", password)
                 .apply { if (token != null) add("token", token) }
                 .build()
             val request = Request.Builder()
-                .url("${Config.untisBase}/j_spring_security_check")
-                .header("Cookie", cookieHeader(anonymous))
+                .url("${school.base}/j_spring_security_check")
+                .header("Cookie", cookieHeader(anonymous, school))
                 .header("Accept", "application/json")
                 .apply {
                     if (csrf != null) header("X-CSRF-TOKEN", csrf)
@@ -262,27 +314,27 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         }
     }
 
-    private suspend fun loginWithForm(user: String, password: String, token: String): UserSession =
-        when (val form = formLogin(user, password, token)) {
-            is FormLogin.Ok -> completeFormLogin(user, form.sessionId)
+    private suspend fun loginWithForm(user: String, password: String, token: String, school: School): UserSession =
+        when (val form = formLogin(user, password, token, school)) {
+            is FormLogin.Ok -> completeFormLogin(user, form.sessionId, school)
             FormLogin.CodeRequired, FormLogin.CodeWrong -> throw TwoFactorRequiredException(wrongCode = true)
-            FormLogin.BadCredentials -> throw AppError("Benutzername oder Passwort ist falsch.")
-            FormLogin.Refused -> throw AppError("WebUntis hat die Anmeldung abgelehnt.")
+            FormLogin.BadCredentials -> throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.badCredentials)
+            FormLogin.Refused -> throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.refused)
             FormLogin.Unavailable -> throw AppError.noConnection()
         }
 
     /** The sign-in form names no person: the app data does (`user.person.id`). */
-    private suspend fun completeFormLogin(user: String, sessionId: String): UserSession {
+    private suspend fun completeFormLogin(user: String, sessionId: String, school: School): UserSession {
         val bare = UserSession(
             sessionId = sessionId, bearerToken = "", studentId = 0, klasseId = 0,
             klasseName = "", username = user, personName = null, personType = null, isParent = false,
-            apiToken = null, apiRefresh = null, stableUid = null, classId = null, imageUrl = null,
+            apiToken = null, apiRefresh = null, stableUid = null, classId = null, imageUrl = null, school = school,
         )
         val bearer = runCatching { fetchToken(bare) }.getOrDefault("")
         val appData = runCatching { fetchAppData(bare.copy(bearerToken = bearer)) }.getOrNull()
         val personId = appData?.let { personIdRaw(it.raw) } ?: 0
-        if (personId <= 0) throw AppError("Anmeldung fehlgeschlagen.")
-        return completeLogin(user, sessionId, personId, 0, null)
+        if (personId <= 0) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.loginFailed)
+        return completeLogin(user, sessionId, personId, 0, null, school)
     }
 
     private fun personIdRaw(raw: Any?): Int? {
@@ -292,7 +344,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     }
 
     /** Everything after WebUntis signed the account in: bearer token, class, student list, app data. */
-    private suspend fun completeLogin(user: String, sessionId: String, studentId: Int, klasseId0: Int, personType: Int?): UserSession {
+    private suspend fun completeLogin(user: String, sessionId: String, studentId: Int, klasseId0: Int, personType: Int?, school: School): UserSession {
 
         var bearerToken = ""
         var klasseName = ""
@@ -309,7 +361,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val snapshot = UserSession(
             sessionId = sessionId, bearerToken = "", studentId = studentId, klasseId = klasseId0,
             klasseName = "", username = user, personName = null, personType = personType, isParent = false,
-            apiToken = null, apiRefresh = null, stableUid = null, classId = null, imageUrl = null,
+            apiToken = null, apiRefresh = null, stableUid = null, classId = null, imageUrl = null, school = school,
         )
         coroutineScope {
             val tokenDeferred = async { runCatching { fetchToken(snapshot) }.getOrDefault("") }
@@ -341,9 +393,11 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             }
 
             // App data AT MOST once (expensive: several endpoints) — only when something is
-            // still missing: klasseId unknown, or a real parent account without a student list.
+            // still missing: klasseId unknown, a real parent account without a student list, or
+            // the person's own name (schools that lock getStudents for students: the greeting
+            // and the profile then showed the login name, "pfei-eman", instead of the real one).
             val needsParentResolve = isParentCandidate && studentList.isEmpty()
-            if (resolvedKlasseId <= 0 || needsParentResolve) {
+            if (resolvedKlasseId <= 0 || needsParentResolve || personName.isNullOrBlank()) {
                 val appDataSnapshot = snapshot.copy(
                     bearerToken = bearerToken, studentId = resolvedStudentId, klasseId = resolvedKlasseId,
                 )
@@ -354,6 +408,9 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                         extractChildStudentIdRaw(appData.raw, studentId)?.let { resolvedStudentId = it }
                         if (personName == null) personName = extractChildName(appData.json)
                     }
+                    // The web's name (pokyh-backend extractAbsenceSubjectName): a guardian's child,
+                    // else the signed-in person's own display name.
+                    if (personName.isNullOrBlank()) personName = extractChildName(appData.json) ?: extractPersonName(appData.json)
                     if (resolvedKlasseId <= 0) {
                         extractKlasseIdRaw(appData.raw, resolvedStudentId)?.let { if (it > 0) resolvedKlasseId = it }
                     }
@@ -392,12 +449,12 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             sessionId = sessionId, bearerToken = bearerToken, studentId = resolvedStudentId,
             klasseId = resolvedKlasseId, klasseName = klasseName, username = user, personName = personName,
             personType = personType, isParent = isParent, apiToken = null, apiRefresh = null,
-            stableUid = null, classId = null, imageUrl = imageUrl,
+            stableUid = null, classId = null, imageUrl = imageUrl, school = school,
         )
     }
 
     private suspend fun fetchToken(s: UserSession): String {
-        val (body, resp) = get("${Config.untisBase}${Config.Routes.token}", s)
+        val (body, resp) = get("${s.schoolRef.base}${Config.Routes.token}", s)
         if (resp.code != 200) return ""
         val tok = body.trim()
         return if (tok.count { it == '.' } == 2) tok else ""
@@ -451,7 +508,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         for (day in days) {
             val start = day.toString()
             val end = day.plus(DatePeriod(days = 5)).toString()
-            val url = "${Config.untisBase}${Config.Routes.timetable}?start=$start&end=$end&format=1" +
+            val url = "${s.schoolRef.base}${Config.Routes.timetable}?start=$start&end=$end&format=1" +
                 "&resourceType=STUDENT&resources=${s.studentId}&periodTypes=&timetableType=MY_TIMETABLE&layout=START_TIME"
             val (body, resp) = runCatching { get(url, s, timeoutMs = 8000) }.getOrNull() ?: continue
             if (resp.code != 200) continue
@@ -528,7 +585,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     private suspend fun fetchAppData(s: UserSession): AppDataResult? {
         // Each endpoint independent + time-boxed → one slow endpoint doesn't block the whole login.
         for (path in Config.Routes.appDataCandidates) {
-            val (body, resp) = runCatching { get("${Config.untisBase}$path", s, timeoutMs = 6000) }.getOrNull() ?: continue
+            val (body, resp) = runCatching { get("${s.schoolRef.base}$path", s, timeoutMs = 6000) }.getOrNull() ?: continue
             if (isHtmlOrAuthError(body, resp) || resp.code != 200) continue
             val raw = runCatching { JSONTokener(body).nextValue() }.getOrNull()
             if (raw is JSONObject) return AppDataResult(JsonDyn.parse(body), raw)
@@ -690,6 +747,23 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         return name.trim().takeIf { it.isNotEmpty() }
     }
 
+    /**
+     * The signed-in person's own name in the app data — `user.person.displayName`, else its fore-
+     * and long name — as pokyh-backend's `extractPersonName` reads it ("Pfeifer Emanuel").
+     */
+    private fun extractPersonName(appData: JsonDyn): String? {
+        val user = appData["data"]["user"].takeIf { it.dictionary.isNotEmpty() } ?: appData["user"]
+        val ownPerson = user["person"].takeIf { it.dictionary.isNotEmpty() }
+        val person = ownPerson ?: user
+        // `name` only on the person: the user's own `name` is the login name.
+        listOf(person["displayName"].string, user["displayName"].string, ownPerson?.get("name")?.string)
+            .firstOrNull { !it.isNullOrBlank() }
+            ?.let { return it.trim() }
+        val fore = person["foreName"].string ?: person["firstName"].string ?: person["firstname"].string
+        val long = person["longName"].string ?: person["lastName"].string ?: person["lastname"].string
+        return listOfNotNull(fore, long).joinToString(" ").trim().takeIf { it.isNotEmpty() }
+    }
+
     // ── School years / dates ─────────────────────────────────────────────────
 
     private fun currentSchoolYear(): Int {
@@ -734,16 +808,58 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      * Week of entries starting [weekStartYyyyMMdd] (ISO `yyyy-MM-dd`); end = start + 5 days,
      * matching the frontend/iOS week window (Mon–Sat).
      */
-    suspend fun timetable(session: UserSession, studentId: Int, weekStartYyyyMMdd: String): List<TimetableEntry> {
+    suspend fun timetable(
+        session: UserSession,
+        studentId: Int,
+        weekStartYyyyMMdd: String,
+        /** Another timetable, as far as the school shows it to this account (WebUntis refuses the rest). */
+        source: dev.plattnericus.pokyh.data.model.TimetableSource? = null,
+    ): List<TimetableEntry> {
         if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val start = LocalDate.parse(weekStartYyyyMMdd)
         val end = start.plus(DatePeriod(days = 5)).toString()
-        val url = "${Config.untisBase}${Config.Routes.timetable}?start=$weekStartYyyyMMdd&end=$end&format=1" +
-            "&resourceType=STUDENT&resources=$studentId&periodTypes=&timetableType=MY_TIMETABLE&layout=START_TIME"
+        val resource = if (source != null) {
+            "resourceType=${source.type}&resources=${source.id}&periodTypes=&timetableType=STANDARD"
+        } else {
+            "resourceType=STUDENT&resources=$studentId&periodTypes=&timetableType=MY_TIMETABLE"
+        }
+        val url = "${session.schoolRef.base}${Config.Routes.timetable}?start=$weekStartYyyyMMdd&end=$end&format=1&$resource&layout=START_TIME"
         val (body, resp) = get(url, session)
         if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Stundenplan nicht ladbar (HTTP ${resp.code}).")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.timetable(resp.code))
         return parseTimetable(JsonDyn.parse(body))
+    }
+
+    /**
+     * Which classes (teachers, rooms) the school shows this account, as WebUntis' own picker lists
+     * them (`timetable/filter`; backend webuntis/timetableFilter.ts). Often only the own class.
+     */
+    suspend fun timetableFilters(session: UserSession, type: String): List<dev.plattnericus.pokyh.data.model.TimetableResource> {
+        val monday = java.time.LocalDate.now().with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val url = "${session.schoolRef.base}/api/rest/view/v1/timetable/filter?resourceType=$type&timetableType=STANDARD&start=$monday&end=${monday.plusDays(5)}"
+        val (body, resp) = get(url, session, timeoutMs = 12_000)
+        if (isHtmlOrAuthError(body, resp) && resp.code != 403) throw AppError.sessionExpired
+        if (resp.code == 403) return emptyList()
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.timetable.otherFailed)
+        val found = LinkedHashMap<Int, dev.plattnericus.pokyh.data.model.TimetableResource>()
+        val skip = setOf("periods", "lessons", "days", "gridEntries")
+        fun visit(node: JsonDyn, depth: Int) {
+            if (depth > 6) return
+            if (node.isArray) { node.array.forEach { visit(it, depth + 1) }; return }
+            val keys = node.dictionary
+            if (keys.isEmpty()) return
+            val id = node["id"].int ?: -1
+            val name = node["shortName"].string?.trim().orEmpty().ifEmpty { node["displayName"].string?.trim().orEmpty().ifEmpty { node["name"].string?.trim().orEmpty() } }
+            if (id > 0 && name.isNotEmpty() && id !in found) {
+                val display = node["displayName"].string?.trim().orEmpty()
+                val long = node["longName"].string?.trim().orEmpty().ifEmpty { if (display != name) display else "" }
+                found[id] = dev.plattnericus.pokyh.data.model.TimetableResource(id, name, long)
+            }
+            for ((k, v) in keys) if (k !in skip) visit(v, depth + 1)
+        }
+        visit(JsonDyn.parse(body), 0)
+        val collator = java.text.Collator.getInstance(java.util.Locale.GERMAN)
+        return found.values.sortedWith { a, b -> collator.compare(a.name, b.name) }
     }
 
     private fun parseTimetable(json: JsonDyn): List<TimetableEntry> {
@@ -833,6 +949,9 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                         icons = icons,
                         substitutionText = substitutionText,
                         lessonText = lessonText,
+                        texts = ge["texts"].array.mapNotNull { x ->
+                            x["text"].string?.trim()?.takeIf { it.isNotEmpty() }?.let { dev.plattnericus.pokyh.data.model.PeriodText(x["type"].string.orEmpty(), it) }
+                        },
                     ),
                 )
             }
@@ -845,13 +964,13 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     /** `schoolYear` null = the current school year (resolved via getCurrentSchoolyear). */
     suspend fun grades(session: UserSession, studentId: Int, schoolYear: Int? = null): List<SubjectGrades> {
         if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
-        val syId = schoolyearId(schoolYear, session) ?: throw AppError("Schuljahr nicht gefunden.")
+        val syId = schoolyearId(schoolYear, session) ?: throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.noSchoolYear)
         if (syId == -1) throw AppError.sessionExpired
 
-        val listUrl = "${Config.untisBase}${Config.Routes.gradeList}?studentId=$studentId&schoolyearId=$syId"
+        val listUrl = "${session.schoolRef.base}${Config.Routes.gradeList}?studentId=$studentId&schoolyearId=$syId"
         val (body, resp) = get(listUrl, session)
         if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Noten nicht ladbar (HTTP ${resp.code}).")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.grades(resp.code))
 
         val listJson = JsonDyn.parse(body)
         var lessons = listJson["data"]["lessons"].array
@@ -886,13 +1005,13 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         subjectName: String,
         teacherName: String,
     ): SubjectGrades? {
-        val url = "${Config.untisBase}${Config.Routes.gradeLesson}?studentId=$studentId&lessonId=$lessonId"
+        val url = "${session.schoolRef.base}${Config.Routes.gradeLesson}?studentId=$studentId&lessonId=$lessonId"
         val (body, resp) = get(url, session)
         if (isHtmlOrAuthError(body, resp) || resp.code != 200) return null
         val json = JsonDyn.parse(body)
         val entries = json["data"]["grades"].array.mapNotNull { g ->
             val markValue = g["mark"]["markValue"].double ?: 0.0
-            if (markValue <= 0) return@mapNotNull null
+            if (markValue <= 0 || (g["date"].int ?: 0) <= 0) return@mapNotNull null
             GradeEntry(
                 id = g["id"].long ?: 0L,
                 text = g["text"].string ?: "",
@@ -975,10 +1094,36 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
     // ── Abwesenheiten / Absences ─────────────────────────────────────────────
 
+    /**
+     * The missed lessons as the school counts them (WebUntis "Fehlzeiten",
+     * `/api/classreg/absencetimes/student`): the minutes each absence cost, lesson by lesson —
+     * what pokyh-backend's `/webuntis/absences/times` reads for the website.
+     */
+    suspend fun absenceTimes(session: UserSession, studentId: Int, startDateYyyyMMdd: String, endDateYyyyMMdd: String): List<dev.plattnericus.pokyh.ui.absences.AbsenceCalc.OfficialMinute> {
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
+        val url = "${session.schoolRef.base}/api/classreg/absencetimes/student?startDate=$startDateYyyyMMdd&endDate=$endDateYyyyMMdd" +
+            "&studentId=$studentId&excuseStatusId=-1&excludeAbsences=false&excludeLateness=false"
+        val (body, resp) = get(url, session, timeoutMs = 15_000)
+        if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.absenceTimes(resp.code))
+        val root = JsonDyn.parse(body)
+        val list = if (root["data"]["absenceTimes"].exists) root["data"]["absenceTimes"] else root["absenceTimes"]
+        if (!list.exists) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.absenceTimesPlain)
+        return list.array.map { r ->
+            dev.plattnericus.pokyh.ui.absences.AbsenceCalc.OfficialMinute(
+                absenceId = r["absenceId"].int ?: 0,
+                minutes = maxOf(0, r["missedMins"].int ?: r["missedMins"].double?.toInt() ?: 0),
+                date = r["date"].int ?: 0,
+                subject = r["subjectName"].string?.trim().orEmpty(),
+                excused = r["excused"].bool == true,
+            )
+        }
+    }
+
     suspend fun absences(session: UserSession, studentId: Int, startDateYyyyMMdd: String, endDateYyyyMMdd: String): List<AbsenceEntry> {
         if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val pageSize = 100
-        val baseUrl = "${Config.untisBase}${Config.Routes.absences}?studentId=$studentId&startDate=$startDateYyyyMMdd" +
+        val baseUrl = "${session.schoolRef.base}${Config.Routes.absences}?studentId=$studentId&startDate=$startDateYyyyMMdd" +
             "&endDate=$endDateYyyyMMdd&excuseStatusId=-1&limit=$pageSize&pageSize=$pageSize"
         val all = mutableListOf<JsonDyn>()
         var page = 0
@@ -991,7 +1136,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                 break
             }
             if (resp.code != 200) {
-                if (page == 0) throw AppError("Abwesenheiten nicht ladbar (HTTP ${resp.code}).")
+                if (page == 0) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.absences(resp.code))
                 break
             }
             val parsed = JsonDyn.parse(body)
@@ -1048,17 +1193,20 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
     // ── Nachrichten / Messages ────────────────────────────────────────────────
 
-    suspend fun messages(session: UserSession, folder: MessageFolder): List<MessagePreview> {
+    suspend fun messages(session: UserSession, folder: MessageFolder, query: String? = null): List<MessagePreview> {
         if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val path = when (folder) {
             MessageFolder.Inbox -> Config.Routes.messages
             MessageFolder.Sent -> Config.Routes.messagesSent
             MessageFolder.Drafts -> Config.Routes.messagesDrafts
         }
-        val url = "${Config.untisBase}$path?pageSize=100&start=0"
+        // WebUntis' own search over subject, text and people (inbox and sent), as on the web.
+        val search = query?.trim()?.take(80)?.takeIf { it.isNotEmpty() && folder != MessageFolder.Drafts }
+            ?.let { "&searchText=" + java.net.URLEncoder.encode(it, "UTF-8") }.orEmpty()
+        val url = "${session.schoolRef.base}$path?pageSize=100&start=0$search"
         val (body, resp) = get(url, session)
         if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Nachrichten nicht ladbar (HTTP ${resp.code}).")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.messages(resp.code))
         return parseMessages(JsonDyn.parse(body))
     }
 
@@ -1079,20 +1227,34 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             val senderName = sender["displayName"].string
                 ?: sender["name"].string
                 ?: m["senderName"].string
-                ?: (if (recipientLabel.isEmpty()) "Unbekannt" else "An: $recipientLabel")
+                ?: (if (recipientLabel.isEmpty()) dev.plattnericus.pokyh.core.i18n.I18n.s.messages.unknown else dev.plattnericus.pokyh.core.i18n.I18n.s.messages.toNames(recipientLabel))
             val sentDate = m["sentDateTime"].string ?: m["sentDate"].string ?: m["date"].string ?: ""
-            val isRead = m["isRead"].bool ?: m["read"].bool ?: m["readFlag"].bool ?: true
+            val isRead = messageIsRead(m)
             MessagePreview(
                 id = m["id"].int ?: 0,
-                subject = m["subject"].string ?: "(Kein Betreff)",
+                subject = m["subject"].string?.takeIf { it.isNotBlank() } ?: dev.plattnericus.pokyh.core.i18n.I18n.s.messages.noSubject,
                 contentPreview = m["contentPreview"].string ?: "",
                 senderName = senderName,
                 senderId = sender["userId"].int ?: 0,
                 sentDate = sentDate,
                 isRead = isRead,
                 hasAttachments = m["hasAttachments"].bool ?: false,
+                needsConfirmation = m["requestConfirmation"]["allowSendRequestConfirmation"].bool == true && m["requestConfirmation"]["confirmationDate"].string.isNullOrBlank(),
+                readConfirmed = m["requestConfirmationStatus"]["confirmedRequestCount"].int,
+                readTotal = m["requestConfirmationStatus"]["totalRequestCount"].int,
             )
         }
+    }
+
+    /**
+     * Whether a message counts as read (web lib/untis-parse.ts `messageIsRead`): WebUntis sends
+     * `isMessageRead`; the other names cover older response shapes — as a boolean, 1 or "true".
+     */
+    private fun messageIsRead(m: JsonDyn): Boolean {
+        val raw = listOf("isMessageRead", "isRead", "read", "isread", "readFlag", "readStatus").map { m[it] }.firstOrNull { it.exists }
+            ?: return true
+        raw.bool?.let { return it }
+        return raw.int == 1
     }
 
     /**
@@ -1111,29 +1273,121 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             .filter { it.isNotEmpty() }
             .distinct()
 
-    suspend fun messageDetail(session: UserSession, id: Int): MessageDetail {
-        val url = "${Config.untisBase}${Config.Routes.messageDetail(id)}"
-        val (body, resp) = get(url, session)
+    suspend fun messageDetail(session: UserSession, id: Int, outgoing: Boolean = false): MessageDetail {
+        // A sent message has its own page (with the read status and whether it can be taken back).
+        val sentUrl = "${session.schoolRef.base}${Config.Routes.messagesSent}/$id"
+        val url = "${session.schoolRef.base}${Config.Routes.messageDetail(id)}"
+        val (body, resp) = if (outgoing) {
+            get(sentUrl, session).takeIf { it.second.code == 200 } ?: get(url, session)
+        } else {
+            get(url, session)
+        }
         if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Nachricht nicht ladbar (HTTP ${resp.code}).")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.message(resp.code))
         val m = JsonDyn.parse(body)
         val sender = m["sender"]
         val senderName = sender["displayName"].string ?: sender["name"].string ?: m["senderName"].string
-            ?: recipientNames(m).takeIf { it.isNotEmpty() }?.let { "An: $it" }
-            ?: "Unbekannt"
+            ?: recipientNames(m).takeIf { it.isNotEmpty() }?.let { dev.plattnericus.pokyh.core.i18n.I18n.s.messages.toNames(it) }
+            ?: dev.plattnericus.pokyh.core.i18n.I18n.s.messages.unknown
         val attachments = parseAttachments(m)
         return MessageDetail(
             id = m["id"].int ?: id,
-            subject = m["subject"].string ?: "(Kein Betreff)",
+            subject = m["subject"].string?.takeIf { it.isNotBlank() } ?: dev.plattnericus.pokyh.core.i18n.I18n.s.messages.noSubject,
             senderName = senderName,
             sentDate = m["sentDateTime"].string ?: m["sentDate"].string ?: "",
             body = m["body"].string ?: m["content"].string ?: "",
             attachments = attachments,
+            hasAttachments = attachments.isNotEmpty() || m["hasAttachments"].bool == true || (m["attachmentCount"].int ?: 0) > 0,
+            confirmation = m["requestConfirmation"].takeIf { it.exists && it.dictionary.isNotEmpty() }?.let { rc ->
+                ReadConfirmation(
+                    canConfirm = rc["allowSendRequestConfirmation"].bool == true && rc["confirmationDate"].string.isNullOrBlank(),
+                    confirmedAt = rc["confirmationDate"].string?.takeIf { it.isNotBlank() },
+                    confirmedBy = rc["confirmerUserDisplayName"].string?.takeIf { it.isNotBlank() },
+                )
+            },
+            readConfirmed = m["requestConfirmationStatus"]["confirmedRequestCount"].int,
+            readTotal = m["requestConfirmationStatus"]["totalRequestCount"].int,
+            canRevoke = outgoing && m["allowMessageDeletion"].bool == true && m["isRevoked"].bool != true,
+            isRevoked = m["isRevoked"].bool == true,
+            outgoing = outgoing,
+        )
+    }
+
+    /** Confirms reading a message whose sender asked for it. */
+    suspend fun confirmMessageRead(session: UserSession, id: Int) {
+        val code = withContext(Dispatchers.IO) {
+            noCookieClient.newCall(
+                Request.Builder().url("${session.schoolRef.base}${Config.Routes.messages}/$id/read-confirmation").withAuth(session).post("".toRequestBody()).build(),
+            ).execute().use { it.code }
+        }
+        if (code == 401) throw AppError.sessionExpired
+        if (code !in 200..299) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.messages.confirmFailed)
+    }
+
+    /** Who of a sent message's recipients confirmed reading (a class: per person). */
+    suspend fun messageReadStatus(session: UserSession, id: Int): List<ReadStatusRecipient> {
+        val (body, resp) = get("${session.schoolRef.base}${Config.Routes.messagesSent}/$id/request-confirmation-status", session, timeoutMs = 12_000)
+        if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.messages.readStatusFailed)
+        val root = JsonDyn.parse(body)
+        val list = if (root.isArray) root.array else root["data"].array
+        return list.map { item ->
+            val people = item["confirmationStates"].array.map { st -> st["userDisplayName"].string.orEmpty() to st["date"].string?.takeIf { it.isNotBlank() } }
+            ReadStatusRecipient(
+                name = item["recipientDisplayName"].string.orEmpty(),
+                className = item["recipientClassName"].string.orEmpty(),
+                confirmedAt = people.firstNotNullOfOrNull { it.second },
+                people = people,
+            )
+        }
+    }
+
+    /** Takes a sent message back: the recipients no longer see it. */
+    suspend fun revokeMessage(session: UserSession, id: Int) {
+        val code = withContext(Dispatchers.IO) {
+            noCookieClient.newCall(
+                Request.Builder().url("${session.schoolRef.base}${Config.Routes.messages}/$id/revoke").withAuth(session).post("".toRequestBody()).build(),
+            ).execute().use { it.code }
+        }
+        if (code == 401) throw AppError.sessionExpired
+        if (code !in 200..299) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.messages.revokeFailed)
+    }
+
+    /** Deletes messages (or a draft): all in one call, else one by one. Returns the ids deleted. */
+    suspend fun deleteMessages(session: UserSession, ids: List<Int>): List<Int> = withContext(Dispatchers.IO) {
+        fun delete(url: String): Int = noCookieClient.newCall(Request.Builder().url(url).withAuth(session).delete().build()).execute().use { it.code }
+        val base = "${session.schoolRef.base}${Config.Routes.messages}"
+        val all = delete("$base?ids=${ids.joinToString(",")}")
+        if (all == 401) throw AppError.sessionExpired
+        if (all in 200..299) return@withContext ids
+        ids.filter { delete("$base/$it") in 200..299 }
+    }
+
+    /** A draft to go on with: its subject, text and recipients (web backend `parseDraft`). */
+    class Draft(val id: Int, val subject: String, val content: String, val recipients: List<MessageRecipient>)
+
+    suspend fun draft(session: UserSession, id: Int): Draft {
+        val (body, resp) = get("${session.schoolRef.base}${Config.Routes.messagesDrafts}/$id", session, timeoutMs = 12_000)
+        if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.message(resp.code))
+        val root = JsonDyn.parse(body)
+        val d = if (root["data"].exists) root["data"] else root
+        val raw = d["content"].string ?: d["contentHtml"].string ?: d["body"].string ?: ""
+        val people = d["recipientPersons"].array.ifEmpty { d["recipients"].array }
+        return Draft(
+            id = d["id"].int ?: id,
+            subject = d["subject"].string.orEmpty(),
+            content = if (Regex("<[a-z][\\s\\S]*>", RegexOption.IGNORE_CASE).containsMatchIn(raw)) plainText(raw) else raw,
+            recipients = people.mapNotNull { r ->
+                val rid = r["id"].int ?: r["userId"].int ?: return@mapNotNull null
+                if (rid <= 0) return@mapNotNull null
+                MessageRecipient(id = rid, type = (r["type"].string ?: "TEACHER").uppercase(), name = r["displayName"].string ?: r["name"].string ?: "")
+            },
         )
     }
 
     suspend fun markMessageRead(session: UserSession, id: Int) {
-        val url = "${Config.untisBase}${Config.Routes.messageMarkRead(id)}"
+        val url = "${session.schoolRef.base}${Config.Routes.messageMarkRead(id)}"
         runCatching {
             withContext(Dispatchers.IO) {
                 val request = Request.Builder().url(url).withAuth(session).post("".toRequestBody()).build()
@@ -1166,14 +1420,29 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                     ?: rawId.string?.takeIf { it.toIntOrNull() == null }
                     ?: "",
                 name = a["name"].string ?: a["fileName"].string ?: a["originalName"].string
-                    ?: a["src"].string ?: "Anhang",
+                    ?: a["src"].string ?: dev.plattnericus.pokyh.core.i18n.I18n.s.messages.attachment,
                 size = a["size"].int ?: a["fileSize"].int ?: 0,
             )
         }
         if (list.isNotEmpty()) return list
-        return node["storageAttachments"].array.map { a ->
-            MessageAttachment(id = 0, storageId = a["id"].string ?: "", name = a["name"].string ?: "Anhang", size = 0)
+        val storage = node["storageAttachments"].array.map { a ->
+            MessageAttachment(id = 0, storageId = a["id"].string ?: "", name = a["name"].string ?: dev.plattnericus.pokyh.core.i18n.I18n.s.messages.attachment, size = 0)
         }
+        if (storage.isNotEmpty()) return storage
+        // A single file sent with the message itself (WebUntis "blobAttachment").
+        val blob = node["blobAttachment"]
+        if (blob["id"].exists || blob["name"].exists) {
+            val rawId = blob["id"]
+            return listOf(
+                MessageAttachment(
+                    id = rawId.int ?: 0,
+                    storageId = blob["storageId"].string ?: rawId.string?.takeIf { it.toIntOrNull() == null } ?: "",
+                    name = blob["name"].string ?: blob["fileName"].string ?: dev.plattnericus.pokyh.core.i18n.I18n.s.messages.attachment,
+                    size = blob["size"].int ?: 0,
+                ),
+            )
+        }
+        return emptyList()
     }
 
     /**
@@ -1183,7 +1452,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      */
     suspend fun messageAttachments(session: UserSession, id: Int): List<MessageAttachment> {
         for (path in listOf(Config.Routes.messageAttachments(id), Config.Routes.messageDetail(id))) {
-            val (body, resp) = runCatching { get("${Config.untisBase}$path", session) }.getOrNull() ?: continue
+            val (body, resp) = runCatching { get("${session.schoolRef.base}$path", session) }.getOrNull() ?: continue
             if (resp.code != 200 || body.firstOrNull() == '<') continue
             val found = parseAttachments(JsonDyn.parse(body))
             if (found.isNotEmpty()) return found
@@ -1207,7 +1476,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     ): DownloadedAttachment? {
         storageDownload(session, attachment)?.let { return it }
         for (path in Config.Routes.attachmentCandidates(messageId, attachment.storageId, attachment.id)) {
-            fetchFile("${Config.untisBase}$path", attachment.name, session = session)?.let { return it }
+            fetchFile("${session.schoolRef.base}$path", attachment.name, session = session)?.let { return it }
         }
         return null
     }
@@ -1215,7 +1484,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     private suspend fun storageDownload(session: UserSession, attachment: MessageAttachment): DownloadedAttachment? {
         if (attachment.storageId.isEmpty()) return null
         val (body, resp) = runCatching {
-            get("${Config.untisBase}${Config.Routes.attachmentStorageUrl(attachment.storageId)}", session)
+            get("${session.schoolRef.base}${Config.Routes.attachmentStorageUrl(attachment.storageId)}", session)
         }.getOrNull() ?: return null
         if (resp.code != 200 || body.firstOrNull() == '<') return null
         val info = JsonDyn.parse(body)
@@ -1267,7 +1536,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
 
     /** The people this account may write to, grouped by the API into class teachers / others. */
     suspend fun messageRecipients(session: UserSession): List<MessageRecipient> {
-        val (body, resp) = get("${Config.untisBase}${Config.Routes.messageRecipients}", session)
+        val (body, resp) = get("${session.schoolRef.base}${Config.Routes.messageRecipients}", session)
         if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
         if (resp.code != 200) return emptyList()
         val seen = mutableSetOf<String>()
@@ -1306,16 +1575,18 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         recipients: List<MessageRecipient>,
         attachments: List<OutgoingAttachment> = emptyList(),
         asDraft: Boolean = false,
+        /** The draft this is: saved in its place, or sent from it (and so leaves the drafts). */
+        draftId: Int? = null,
     ) {
         val token = freshMessageToken(session)
         val schoolYearId = runCatching { rpc("getCurrentSchoolyear", session, "sy")["id"].int }.getOrNull()
         val permissions = messagePermissions(session, token, schoolYearId)
 
         if (attachments.size > permissions.maxFileCount) {
-            throw AppError("Maximal ${permissions.maxFileCount} Anhänge erlaubt.")
+            throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.maxFiles(permissions.maxFileCount))
         }
         attachments.firstOrNull { it.bytes.size > permissions.maxFileSize }?.let {
-            throw AppError("„${it.name}“ ist zu groß (max. ${permissions.maxFileSize / (1024 * 1024)} MB pro Datei).")
+            throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.fileTooBig(it.name, (permissions.maxFileSize / (1024 * 1024)).toInt()))
         }
 
         val meta = JSONObject().apply {
@@ -1324,13 +1595,19 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             put("recipientOption", permissions.recipientOption)
             put("recipientPersons", JSONArray().apply { recipients.forEach { put(JSONObject().put("id", it.id)) } })
             put("recipientGroups", JSONArray())
+            if (draftId != null && !asDraft) put("draftMessageId", draftId)
+            if (draftId != null && asDraft) put("attachmentIdsToDelete", JSONArray())
         }
-        val paths = if (asDraft) listOf(Config.Routes.messagesV2Drafts, Config.Routes.messagesDrafts)
-        else listOf(Config.Routes.messagesV2, Config.Routes.messages)
-        val failure = if (asDraft) {
-            "Der Entwurf konnte nicht gespeichert werden. Bitte versuche es später erneut."
+        val paths = if (asDraft) {
+            if (draftId != null) listOf("${Config.Routes.messagesV2Drafts}/$draftId", "${Config.Routes.messagesDrafts}/$draftId")
+            else listOf(Config.Routes.messagesV2Drafts, Config.Routes.messagesDrafts)
         } else {
-            "Die Nachricht konnte nicht gesendet werden. Bitte versuche es später erneut."
+            listOf(Config.Routes.messagesV2, Config.Routes.messages)
+        }
+        val failure = if (asDraft) {
+            dev.plattnericus.pokyh.core.i18n.I18n.s.errors.draftFailed
+        } else {
+            dev.plattnericus.pokyh.core.i18n.I18n.s.errors.sendFailed
         }
 
         for (path in paths) {
@@ -1348,9 +1625,10 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                 .build()
             val (text, code) = withContext(Dispatchers.IO) {
                 val request = Request.Builder()
-                    .url("${Config.untisBase}$path")
+                    .url("${session.schoolRef.base}$path")
                     .headers(messageWriteHeaders(session, token, schoolYearId))
-                    .post(form)
+                    // A saved draft is updated in place (PUT), as the web does.
+                    .method(if (asDraft && draftId != null) "PUT" else "POST", form)
                     .build()
                 val client = noCookieClient.newBuilder().callTimeout(60, TimeUnit.SECONDS).build()
                 client.newCall(request).execute().use { it.body?.string().orEmpty() to it.code }
@@ -1372,7 +1650,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val (body, code) = runCatching {
             withContext(Dispatchers.IO) {
                 val request = Request.Builder()
-                    .url("${Config.untisBase}${Config.Routes.messagePermissions}")
+                    .url("${session.schoolRef.base}${Config.Routes.messagePermissions}")
                     .headers(messageWriteHeaders(session, token, schoolYearId))
                     .build()
                 noCookieClient.newCall(request).execute().use { it.body?.string().orEmpty() to it.code }
@@ -1391,7 +1669,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      * set the multipart boundary itself. */
     private fun messageWriteHeaders(session: UserSession, token: String, schoolYearId: Int?): Headers =
         Headers.Builder().apply {
-            add("Cookie", cookieHeader(session.sessionId))
+            add("Cookie", cookieHeader(session.sessionId, session.schoolRef))
             add("Accept", "application/json")
             if (token.isNotEmpty()) add("Authorization", "Bearer $token")
             tenantIdOf(token, session.bearerToken)?.let { add("Tenant-Id", it) }
@@ -1401,7 +1679,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     /** WebUntis issues short-lived JWTs and the web client refreshes before every write; falls
      * back to the token stored at login when the refresh is unavailable. */
     private suspend fun freshMessageToken(session: UserSession): String {
-        val (body, resp) = runCatching { get("${Config.untisBase}${Config.Routes.token}", session) }.getOrNull()
+        val (body, resp) = runCatching { get("${session.schoolRef.base}${Config.Routes.token}", session) }.getOrNull()
             ?: return session.bearerToken
         if (resp.code != 200 || body.firstOrNull() == '<') return session.bearerToken
         val trimmed = body.trim()
@@ -1447,10 +1725,10 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     suspend fun classregEvents(session: UserSession, studentId: Int, year: Int? = null): List<ClassregEvent> {
         if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val y = year ?: currentSchoolYear()
-        val url = "${Config.untisBase}${Config.Routes.classregEvents}?startDate=${y}0908&endDate=${y + 1}0612&studentId=$studentId"
+        val url = "${session.schoolRef.base}${Config.Routes.classregEvents}?startDate=${y}0908&endDate=${y + 1}0612&studentId=$studentId"
         val (body, resp) = get(url, session)
         if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Klassenbuch nicht ladbar (HTTP ${resp.code}).")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.classreg(resp.code))
         val json = JsonDyn.parse(body)
         return json["data"]["rows"].array.map { r ->
             ClassregEvent(
@@ -1471,10 +1749,10 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     suspend fun classServices(session: UserSession): List<ClassService> {
         if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
         val y = currentSchoolYear()
-        val url = "${Config.untisBase}${Config.Routes.classServices}?startDate=${y}0901&endDate=${y + 1}0630"
+        val url = "${session.schoolRef.base}${Config.Routes.classServices}?startDate=${y}0901&endDate=${y + 1}0630"
         val (body, resp) = get(url, session, timeoutMs = 15_000)
         if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Die Klassendienste konnten gerade nicht geladen werden.")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.services)
         val root = JsonDyn.parse(body)
         val data = if (root["data"].exists) root["data"] else root
         val seen = mutableSetOf<String>()
@@ -1491,12 +1769,41 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     // ── Hausaufgaben / Homework ──────────────────────────────────────────────
 
     /** Homework due between the two dates (YYYYMMDD), with the subject of the lesson it belongs to. */
+    /**
+     * WebUntis' exam list (`/api/exams`, as the web backend's /webuntis/exams): exams the
+     * timetable doesn't always carry. As timetable entries, so Home can take them as they are.
+     */
+    suspend fun exams(session: UserSession, startDate: Int, endDate: Int): List<TimetableEntry> {
+        if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
+        val url = "${session.schoolRef.base}/api/exams?studentId=${session.studentId}&klasseId=-1&startDate=$startDate&endDate=$endDate"
+        val (body, resp) = get(url, session, timeoutMs = 12_000)
+        if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
+        if (resp.code != 200) return emptyList()
+        val root = JsonDyn.parse(body)
+        val data = if (root["data"].exists) root["data"] else root
+        return data["exams"].array.mapIndexedNotNull { index, exam ->
+            val date = exam["examDate"].int ?: return@mapIndexedNotNull null
+            val subject = exam["subject"].string.orEmpty()
+            if (date <= 0 || subject.isEmpty()) return@mapIndexedNotNull null
+            val start = exam["startTime"].int ?: 0
+            val end = exam["endTime"].int?.takeIf { it > 0 } ?: if (start > 0) start else 2359
+            val id = exam["id"].int ?: -(index + 1)
+            TimetableEntry(
+                id = id, lessonId = id, date = date, startTime = start, endTime = end,
+                subjectName = subject, subjectLong = subject, teacherName = "",
+                roomName = exam["rooms"].array.firstNotNullOfOrNull { it.string }.orEmpty(),
+                isExam = true, isCancelled = false, isSubstitution = false, isAdditional = false,
+                examDescription = exam["text"].string?.takeIf { it.isNotBlank() },
+            )
+        }
+    }
+
     suspend fun homeworks(session: UserSession, startDate: Int, endDate: Int): List<HomeworkItem> {
         if (session.bearerToken.isEmpty()) throw AppError.offlineNotSaved
-        val url = "${Config.untisBase}${Config.Routes.homeworks}?startDate=$startDate&endDate=$endDate"
+        val url = "${session.schoolRef.base}${Config.Routes.homeworks}?startDate=$startDate&endDate=$endDate"
         val (body, resp) = get(url, session, timeoutMs = 15_000)
         if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Hausaufgaben nicht ladbar (HTTP ${resp.code}).")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.homework(resp.code))
         val root = JsonDyn.parse(body)
         val data = if (root["data"].exists) root["data"] else root
         // "Mathematik (4BFS_M)" → "Mathematik", as on the web.
@@ -1528,12 +1835,12 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             val t = time.toString().padStart(4, '0')
             return "${d.substring(0, 4)}-${d.substring(4, 6)}-${d.substring(6, 8)}T${t.substring(0, 2)}:${t.substring(2, 4)}:00"
         }
-        val url = "${Config.untisBase}${Config.Routes.lessonDetail}?elementId=${session.studentId}&elementType=5" +
+        val url = "${session.schoolRef.base}${Config.Routes.lessonDetail}?elementId=${session.studentId}&elementType=5" +
             "&startDateTime=${URLEncoder.encode(iso(entry.startTime), "UTF-8")}" +
             "&endDateTime=${URLEncoder.encode(iso(entry.endTime), "UTF-8")}&homeworkOption=DUE"
         val (body, resp) = get(url, session, timeoutMs = 10_000)
         if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Die Details konnten gerade nicht geladen werden.")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.details)
         val texts = mutableListOf<Pair<String, String>>()
         val classes = linkedSetOf<String>()
         val homeworks = mutableListOf<String>()
@@ -1566,10 +1873,24 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     // ── Abwesenheit melden und entschuldigen ─────────────────────────────────
 
     /** Reasons and the preset range of WebUntis' own report dialog. */
+    /** The reasons alone, when the report dialog's meta can't be read (web backend /absence-reasons). */
+    suspend fun absenceReasons(session: UserSession): List<AbsenceReason> {
+        val d = java.time.LocalDate.now().let { it.year * 10000 + it.monthValue * 100 + it.dayOfMonth }
+        val (body, resp) = get("${session.schoolRef.base}${Config.Routes.absences}?studentId=${session.studentId}&startDate=$d&endDate=$d&excuseStatusId=-1", session, timeoutMs = 12_000)
+        if (resp.code != 200 || body.firstOrNull() == '<') return emptyList()
+        val root = JsonDyn.parse(body)
+        val data = if (root["data"].exists) root["data"] else root
+        return data["absenceReasons"].array.mapNotNull { r ->
+            val id = r["id"].int ?: return@mapNotNull null
+            val name = (r["name"].string ?: r["longName"].string ?: r["displayName"].string).orEmpty().trim()
+            if (name.isEmpty() || name == "---") null else AbsenceReason(id, name)
+        }
+    }
+
     suspend fun absenceMeta(session: UserSession): AbsenceMeta {
-        val (body, resp) = get("${Config.untisBase}${Config.Routes.absenceMeta}", session, timeoutMs = 12_000)
+        val (body, resp) = get("${session.schoolRef.base}${Config.Routes.absenceMeta}", session, timeoutMs = 12_000)
         if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
-        if (resp.code != 200) throw AppError("Abwesenheitsgründe konnten nicht geladen werden.")
+        if (resp.code != 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.reasons)
         val root = JsonDyn.parse(body)
         val data = if (root["data"].exists) root["data"] else root
         val list = data["absenceReasons"].array.ifEmpty { data["reasons"].array }
@@ -1596,7 +1917,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         if (session.bearerToken.isEmpty()) return false
         val today = Clock.System.todayIn(TimeZone.currentSystemDefault())
         val day = today.year * 10000 + today.monthNumber * 100 + today.dayOfMonth
-        val url = "${Config.untisBase}${Config.Routes.absences}?studentId=${session.studentId}" +
+        val url = "${session.schoolRef.base}${Config.Routes.absences}?studentId=${session.studentId}" +
             "&startDate=$day&endDate=$day&excuseStatusId=-1"
         val flag = runCatching {
             val (body, resp) = get(url, session, timeoutMs = 12_000)
@@ -1622,10 +1943,10 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         text: String,
     ) {
         if (endDate.toLong() * 10_000 + endTime <= startDate.toLong() * 10_000 + startTime) {
-            throw AppError("Das Ende muss nach dem Beginn liegen.")
+            throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.endAfterStart)
         }
         if (!canReportAbsence(session)) {
-            throw AppError("Abwesenheiten melden ist für dein Konto in WebUntis nicht freigegeben.")
+            throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.reportNotAllowed)
         }
         val reply = classicWrite(
             session,
@@ -1641,7 +1962,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                 put("reasonId", reasonId)
             },
         )
-        checkAbsenceWrite(reply, "Die Abwesenheit konnte nicht gemeldet werden.")
+        checkAbsenceWrite(reply, dev.plattnericus.pokyh.core.i18n.I18n.s.errors.reportFailed)
     }
 
     /**
@@ -1652,15 +1973,15 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     suspend fun excuseAbsences(session: UserSession, absenceIds: List<Int>, reasonId: Int, text: String) {
         var failure: String? = null
         for (id in absenceIds.take(20)) {
-            val (body, resp) = get("${Config.untisBase}${Config.Routes.absenceSingle}?absenceId=$id", session, timeoutMs = 12_000)
+            val (body, resp) = get("${session.schoolRef.base}${Config.Routes.absenceSingle}?absenceId=$id", session, timeoutMs = 12_000)
             if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
             val absence = JsonDyn.parse(body)["data"]["absence"]
             if (resp.code != 200 || !absence.exists) {
-                failure = failure ?: "Die Abwesenheit wurde in WebUntis nicht gefunden."
+                failure = failure ?: dev.plattnericus.pokyh.core.i18n.I18n.s.errors.absenceNotFound
                 continue
             }
             if (absence["canEdit"].bool != true) {
-                failure = failure ?: "WebUntis erlaubt dir bei dieser Abwesenheit keine Änderung."
+                failure = failure ?: dev.plattnericus.pokyh.core.i18n.I18n.s.errors.absenceLocked
                 continue
             }
             val reply = classicWrite(
@@ -1678,7 +1999,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                 },
             )
             try {
-                checkAbsenceWrite(reply, "Die Abwesenheit konnte nicht gespeichert werden.")
+                checkAbsenceWrite(reply, dev.plattnericus.pokyh.core.i18n.I18n.s.errors.absenceSaveFailed)
             } catch (e: AppError) {
                 if (e.isSessionExpired) throw e
                 failure = failure ?: e.message
@@ -1732,7 +2053,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val open = absences.filter { !it.isExcused }
         if (open.isEmpty()) throw AppError(t.exAlready)
 
-        val (body, resp) = get("${Config.untisBase}${Config.Routes.messageRecipients}", session, timeoutMs = 12_000)
+        val (body, resp) = get("${session.schoolRef.base}${Config.Routes.messageRecipients}", session, timeoutMs = 12_000)
         if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
         if (resp.code == 403) {
             // WebUntis lets this account write to no teacher. Its own excuse is left: reason and
@@ -1814,7 +2135,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      */
     suspend fun sentExcuses(session: UserSession): List<SentExcuse> {
         if (session.bearerToken.isEmpty()) return emptyList()
-        val (body, resp) = get("${Config.untisBase}${Config.Routes.messagesSent}?pageSize=100&start=0", session, timeoutMs = 12_000)
+        val (body, resp) = get("${session.schoolRef.base}${Config.Routes.messagesSent}?pageSize=100&start=0", session, timeoutMs = 12_000)
         if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
         if (resp.code != 200) return emptyList()
         val root = JsonDyn.parse(body)
@@ -1851,15 +2172,16 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             append("&withLateness=true&withAbsences=true&excuseGroup=1")
             absenceIds.take(100).forEach { append("&id=$it") }
         }
-        val (body, resp) = get("${Config.untisBase}${Config.Routes.reports}?$params", session, timeoutMs = 20_000)
+        val (body, resp) = get("${session.schoolRef.base}${Config.Routes.reports}?$params", session, timeoutMs = 20_000)
         if (resp.code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
         val data = JsonDyn.parse(body)["data"]
-        if (resp.code != 200 || !data.exists) throw AppError("Das Entschuldigungsschreiben konnte nicht erstellt werden.")
-        if (data["finished"].bool != true) throw AppError("WebUntis erstellt das Schreiben noch. Versuch es gleich noch einmal.")
+        if (resp.code != 200 || !data.exists) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.letterFailed)
+        if (data["finished"].bool != true) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.letterBusy)
         val msgId = URLEncoder.encode(data["messageId"].string.orEmpty(), "UTF-8")
-        val url = "${Config.untisBase}${Config.Routes.reports}?msgId=$msgId&${data["reportParams"].string.orEmpty()}"
-        return fetchFile(url, "Entschuldigung-$startDate.pdf", session = session)
-            ?: throw AppError("Das Entschuldigungsschreiben konnte nicht geladen werden.")
+        val url = "${session.schoolRef.base}${Config.Routes.reports}?msgId=$msgId&${data["reportParams"].string.orEmpty()}"
+        val year = dev.plattnericus.pokyh.core.util.SchoolDates.schoolYearOf(startDate.toString().filter { it.isDigit() }.take(8).toIntOrNull() ?: 0)
+        return fetchFile(url, "${dev.plattnericus.pokyh.core.i18n.I18n.s.absences.letter} $year-${"%02d".format((year + 1) % 100)}.pdf", session = session)
+            ?: throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.letterLoadFailed)
     }
 
     /** Saved only when WebUntis reports neither errors nor conflicts (the official client's rule). */
@@ -1872,7 +2194,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             val details = conflicts.mapNotNull { c ->
                 c.string ?: listOf("text", "message", "title", "description", "name").firstNotNullOfOrNull { c[it].string }
             }.filter { it.isNotBlank() }.take(3)
-            throw AppError((listOf("Für diesen Zeitraum gibt es bereits eine Abwesenheit.") + details).joinToString(" "))
+            throw AppError((listOf(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.absenceExists) + details).joinToString(" "))
         }
     }
 
@@ -1883,9 +2205,9 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      * the old password and its own rules; its reason is shown as it is. Nothing is logged.
      */
     suspend fun changePassword(session: UserSession, oldPassword: String, newPassword: String) {
-        if (oldPassword.isEmpty() || newPassword.isEmpty()) throw AppError("Bitte beide Passwörter eingeben.")
-        if (oldPassword.length > 200 || newPassword.length > 200) throw AppError("Eingabe zu lang.")
-        if (oldPassword == newPassword) throw AppError("Das neue Passwort muss sich vom alten unterscheiden.")
+        if (oldPassword.isEmpty() || newPassword.isEmpty()) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.bothPasswords)
+        if (oldPassword.length > 200 || newPassword.length > 200) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.tooLong)
+        if (oldPassword == newPassword) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.samePassword)
         val reply = classicWrite(
             session,
             Config.Routes.profilePassword,
@@ -1894,7 +2216,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         )
         if (reply.expired) throw AppError.sessionExpired
         if (reply.ok && reply.json["errors"].array.isEmpty()) return
-        throw AppError(untisError(reply.json) ?: "Das Passwort konnte nicht geändert werden.")
+        throw AppError(untisError(reply.json) ?: dev.plattnericus.pokyh.core.i18n.I18n.s.errors.passwordFailed)
     }
 
     /**
@@ -1902,17 +2224,17 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
      * address stored for the account; POKYH never sees a password. It needs an anonymous
      * session: the login page sets the cookie and carries the CSRF token and tenant for it.
      */
-    suspend fun requestPasswordReset(username: String, email: String) {
+    suspend fun requestPasswordReset(username: String, email: String, school: School = School.Default) {
         val user = username.trim()
         val mail = email.trim()
-        if (user.isEmpty() || mail.isEmpty()) throw AppError("Bitte Benutzername und E-Mail-Adresse eingeben.")
+        if (user.isEmpty() || mail.isEmpty()) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.userAndMail)
         if (user.length > 100 || mail.length > 200 || !EmailPattern.matches(mail)) {
-            throw AppError("Bitte eine gültige E-Mail-Adresse eingeben.")
+            throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.validMail)
         }
-        val unavailable = "WebUntis ist gerade nicht erreichbar."
+        val unavailable = dev.plattnericus.pokyh.core.i18n.I18n.s.errors.untisDown
         withContext(Dispatchers.IO) {
             val pageRequest = Request.Builder()
-                .url("${Config.untisBase}/?school=${Config.school}")
+                .url("${school.base}/?school=${school.query}")
                 .header("Accept", "text/html")
                 .build()
             val (sessionId, config) = runCatching {
@@ -1926,8 +2248,8 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             if (sessionId == null || csrf == null) throw AppError(unavailable)
 
             val request = Request.Builder()
-                .url("${Config.untisBase}${Config.Routes.passwordReset}")
-                .header("Cookie", cookieHeader(sessionId))
+                .url("${school.base}${Config.Routes.passwordReset}")
+                .header("Cookie", cookieHeader(sessionId, school))
                 .header("Accept", "application/json")
                 .header("X-CSRF-TOKEN", csrf)
                 .apply { config.tenant?.let { header("Tenant-Id", it) } }
@@ -1941,11 +2263,11 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             if (code in 200..299 && isJson && errorCode == null) return@withContext
             throw AppError(
                 when (errorCode) {
-                    "INVALID_USER_DATA" -> "Benutzername und E-Mail-Adresse passen zu keinem Konto."
-                    "SEND_EMAIL_FAILURE" -> "WebUntis konnte die E-Mail gerade nicht senden."
-                    "PW_RESET_NOT_ALLOWED" -> "Das Zurücksetzen des Passworts ist an deiner Schule nicht freigegeben. Wende dich an das Sekretariat."
-                    "INTERNAL_ERROR" -> "WebUntis hat einen internen Fehler gemeldet."
-                    else -> "Das Zurücksetzen konnte nicht gestartet werden."
+                    "INVALID_USER_DATA" -> dev.plattnericus.pokyh.core.i18n.I18n.s.errors.resetNoMatch
+                    "SEND_EMAIL_FAILURE" -> dev.plattnericus.pokyh.core.i18n.I18n.s.errors.resetMailFailed
+                    "PW_RESET_NOT_ALLOWED" -> dev.plattnericus.pokyh.core.i18n.I18n.s.errors.resetNotAllowed
+                    "INTERNAL_ERROR" -> dev.plattnericus.pokyh.core.i18n.I18n.s.errors.resetInternal
+                    else -> dev.plattnericus.pokyh.core.i18n.I18n.s.errors.resetFailed
                 },
             )
         }
@@ -1959,14 +2281,14 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val schoolYearId = runCatching { rpc("getCurrentSchoolyear", session, "sy")["id"].int }.getOrNull()
         val (body, code) = withContext(Dispatchers.IO) {
             val request = Request.Builder()
-                .url("${Config.untisBase}${Config.Routes.messageReplyForm(messageId)}")
+                .url("${session.schoolRef.base}${Config.Routes.messageReplyForm(messageId)}")
                 .headers(messageWriteHeaders(session, token, schoolYearId))
                 .build()
             noCookieClient.newCall(request).execute().use { it.body?.string().orEmpty() to it.code }
         }
         if (code == 401 || body.firstOrNull() == '<') throw AppError.sessionExpired
         val json = JsonDyn.parse(body)
-        if (code !in 200..299) throw AppError(untisError(json) ?: "Auf diese Nachricht kann nicht geantwortet werden.")
+        if (code !in 200..299) throw AppError(untisError(json) ?: dev.plattnericus.pokyh.core.i18n.I18n.s.messages.noReply)
         return ReplyForm(
             subject = json["subject"].string.orEmpty(),
             recipientName = json["recipient"]["displayName"].string.orEmpty(),
@@ -1985,10 +2307,10 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val schoolYearId = runCatching { rpc("getCurrentSchoolyear", session, "sy")["id"].int }.getOrNull()
         val permissions = messagePermissions(session, token, schoolYearId)
         if (attachments.size > permissions.maxFileCount) {
-            throw AppError("Maximal ${permissions.maxFileCount} Anhänge erlaubt.")
+            throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.maxFiles(permissions.maxFileCount))
         }
         attachments.firstOrNull { it.bytes.size > permissions.maxFileSize }?.let {
-            throw AppError("„${it.name}“ ist zu groß (max. ${permissions.maxFileSize / (1024 * 1024)} MB pro Datei).")
+            throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.fileTooBig(it.name, (permissions.maxFileSize / (1024 * 1024)).toInt()))
         }
         val meta = JSONObject().apply {
             put("subject", subject.take(255))
@@ -2005,7 +2327,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             .build()
         val (text, code) = withContext(Dispatchers.IO) {
             val request = Request.Builder()
-                .url("${Config.untisBase}${Config.Routes.messageReply(messageId)}")
+                .url("${session.schoolRef.base}${Config.Routes.messageReply(messageId)}")
                 .headers(messageWriteHeaders(session, token, schoolYearId))
                 .post(form)
                 .build()
@@ -2014,7 +2336,92 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         }
         if (code == 401 || text.firstOrNull() == '<') throw AppError.sessionExpired
         if (code in 200..299) return
-        throw AppError(serverMessage(text) ?: "Die Antwort konnte nicht gesendet werden.")
+        throw AppError(serverMessage(text) ?: dev.plattnericus.pokyh.core.i18n.I18n.s.errors.replyFailed)
+    }
+
+    // ── The WebUntis account: settings and two-factor sign-in ─────────────────
+
+    class UntisAccount(
+        val email: String,
+        val forwardToEmail: Boolean,
+        val passwordChangeAllowed: Boolean,
+        val twoFactorAvailable: Boolean,
+        val twoFactorEnabled: Boolean,
+        val twoFactorRequired: Boolean,
+        val languageCode: String = "",
+        /** The languages WebUntis offers (key to name). */
+        val languages: List<Pair<String, String>> = emptyList(),
+    )
+
+    suspend fun untisAccount(s: UserSession): UntisAccount = coroutineScope {
+        val general = async { get("${s.schoolRef.base}/api/profile/general", s, timeoutMs = 12_000) }
+        val access = async { runCatching { get("${s.schoolRef.base}/api/profile/access", s, timeoutMs = 12_000) }.getOrNull() }
+        val languages = async { runCatching { get("${s.schoolRef.base}/api/profile/languages", s, timeoutMs = 12_000) }.getOrNull() }
+        val (gBody, gResp) = general.await()
+        if (isHtmlOrAuthError(gBody, gResp)) throw AppError.sessionExpired
+        val d = JsonDyn.parse(gBody)["data"]
+        val p = d["profile"]
+        if (!p.exists) throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.settings.devicesFailed)
+        val a = access.await()?.first?.let { JsonDyn.parse(it)["data"] } ?: JsonDyn.empty
+        val totp = a["totpCredentials"]
+        UntisAccount(
+            email = p["email"].string.orEmpty(),
+            forwardToEmail = p["forwardMessageToEmail"].bool == true,
+            passwordChangeAllowed = d["pwChangeAllowed"].bool != false,
+            twoFactorAvailable = a["canUseTotp"].bool == true,
+            twoFactorEnabled = !totp["secret"].string.isNullOrBlank(),
+            twoFactorRequired = totp["isTotpRequired"].bool == true,
+            languageCode = p["languageCode"].string.orEmpty(),
+            languages = languages.await()?.first?.let { JsonDyn.parse(it)["data"]["languages"].array }.orEmpty()
+                .mapNotNull { l -> val k = l["key"].string.orEmpty(); val n = l["name"].string.orEmpty(); if (k.isNotEmpty() && n.isNotEmpty()) k to n else null },
+        )
+    }
+
+    /** Changes some of the settings; WebUntis takes the whole set, so the others go as they are. */
+    suspend fun saveUntisAccount(s: UserSession, email: String? = null, forwardToEmail: Boolean? = null, languageCode: String? = null) {
+        val (body, resp) = get("${s.schoolRef.base}/api/profile/general", s, timeoutMs = 12_000)
+        if (isHtmlOrAuthError(body, resp)) throw AppError.sessionExpired
+        val p = JsonDyn.parse(body)["data"]["profile"]
+        val raw = JSONObject(body).optJSONObject("data")?.optJSONObject("profile") ?: throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.settings.saveError)
+        val next = JSONObject()
+            .put("languageCode", languageCode ?: p["languageCode"].string.orEmpty())
+            .put("email", email?.trim() ?: p["email"].string.orEmpty())
+            .put("forwardMessageToEmail", forwardToEmail ?: (p["forwardMessageToEmail"].bool == true))
+            .put("userTaskNotifications", p["userTaskNotifications"].bool == true)
+            .put("itemOnStartPage", raw.opt("itemOnStartPage"))
+            .put("showLessonsOfDay", raw.opt("showLessonsOfDay"))
+            .put("showNextDayPeriods", raw.opt("showNextDayPeriods"))
+        val reply = classicWrite(s, "/api/profile/general", "POST", next)
+        if (reply.expired) throw AppError.sessionExpired
+        if (reply.ok && reply.json["errors"].array.isEmpty()) return
+        throw AppError(untisError(reply.json) ?: dev.plattnericus.pokyh.core.i18n.I18n.s.settings.saveError)
+    }
+
+    /** A new secret for the authenticator app (as text and as the otpauth link); nothing is on yet. */
+    class TwoFactorSetup(val secret: String, val link: String)
+
+    suspend fun startTwoFactorSetup(s: UserSession): TwoFactorSetup {
+        val reply = classicWrite(s, "/api/profile/access/totp/create", "POST", JSONObject())
+        if (reply.expired) throw AppError.sessionExpired
+        val totp = reply.json["data"]["totpCredentials"]
+        val secret = totp["secret"].string.orEmpty().replace(Regex("\\s+"), "").uppercase()
+        if (!reply.ok || secret.isEmpty()) throw AppError(untisError(reply.json) ?: dev.plattnericus.pokyh.core.i18n.I18n.s.settings.devicesFailed)
+        return TwoFactorSetup(secret, totp["qrText"].string.orEmpty())
+    }
+
+    /** Turns two-factor sign-in on with the app's current code. */
+    suspend fun enableTwoFactor(s: UserSession, secret: String, code: String) {
+        val reply = classicWrite(s, "/api/profile/access/totp", "POST", JSONObject().put("key", secret).put("token", code.toInt()).put("algorithm", "STANDARD"))
+        if (reply.expired) throw AppError.sessionExpired
+        if (reply.ok && reply.json["errors"].array.isEmpty() && reply.json["data"]["totpCredentials"].exists) return
+        throw AppError(dev.plattnericus.pokyh.core.i18n.I18n.s.settings.tfCodeFormat)
+    }
+
+    suspend fun disableTwoFactor(s: UserSession) {
+        val reply = classicWrite(s, "/api/profile/access/totp", "DELETE", JSONObject())
+        if (reply.expired) throw AppError.sessionExpired
+        if (reply.ok && reply.json["errors"].array.isEmpty()) return
+        throw AppError(untisError(reply.json) ?: dev.plattnericus.pokyh.core.i18n.I18n.s.settings.devicesFailed)
     }
 
     // ── Classic writes (CSRF) ────────────────────────────────────────────────
@@ -2039,8 +2446,8 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val config = withContext(Dispatchers.IO) {
             runCatching {
                 val request = Request.Builder()
-                    .url("${Config.untisBase}/?school=${Config.school}")
-                    .header("Cookie", cookieHeader(s.sessionId))
+                    .url("${s.schoolRef.base}/?school=${s.schoolRef.query}")
+                    .header("Cookie", cookieHeader(s.sessionId, s.schoolRef))
                     .header("Accept", "text/html")
                     .build()
                 noCookieClient.newCall(request).execute().use { readPageConfig(it.body?.string().orEmpty()) }
@@ -2064,8 +2471,8 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     private suspend fun classicWrite(s: UserSession, path: String, method: String, body: JSONObject): UntisReply {
         suspend fun send(config: PageConfig): UntisReply = withContext(Dispatchers.IO) {
             val builder = Request.Builder()
-                .url("${Config.untisBase}$path")
-                .header("Cookie", cookieHeader(s.sessionId))
+                .url("${s.schoolRef.base}$path")
+                .header("Cookie", cookieHeader(s.sessionId, s.schoolRef))
                 .header("Accept", "application/json")
                 .method(method, body.toString().toRequestBody(jsonMediaType))
             config.csrf?.let { builder.header("X-CSRF-TOKEN", it) }

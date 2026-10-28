@@ -76,11 +76,11 @@ import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import dev.plattnericus.pokyh.ui.theme.nestedSurface
 import dev.plattnericus.pokyh.ui.theme.pressHighlight
+import dev.plattnericus.pokyh.core.i18n.strings
+import kotlinx.datetime.plus
 
-private val Weekdays = listOf("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
-private val MonthsShort = listOf(
-    "Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
-)
+private val Weekdays: List<String> get() = dev.plattnericus.pokyh.core.i18n.I18n.s.common.weekdaysShort
+private val MonthsShort: List<String> get() = dev.plattnericus.pokyh.core.i18n.I18n.s.common.monthsShort
 
 /**
  * Klasse — the web frontend's class page, rebuilt for the phone.
@@ -112,8 +112,8 @@ fun ClassScreen(
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
-                title = if (klasseName.isNotEmpty()) "Klasse $klasseName" else "Meine Klasse",
-                eyebrow = "Schuljahr ${viewModel.schoolYear} / ${viewModel.schoolYear + 1}",
+                title = if (klasseName.isNotEmpty()) strings().tasks.klasseNamed(klasseName) else strings().tasks.myClass,
+                eyebrow = strings().common.schoolYear(viewModel.schoolYear),
                 nav = TopBarNav.Back(onNavigateBack),
             )
         },
@@ -134,70 +134,75 @@ fun ClassScreen(
 
             // ── 1. Neue Klassenbuch Einträge ────────────────────────────────
             OverviewSection(
-                title = "Neue Klassenbuch Einträge",
-                subtitle = "Letzte 3 Monate",
+                title = strings().tasks.newClassreg,
+                subtitle = strings().tasks.last3Months,
                 onSeeAll = { onNavigate(PokyhDestinations.CLASSREG_EVENTS) },
-                emptyText = if (overview.eventsUnknown) OFFLINE_NOT_STORED else "Keine Einträge in den letzten 3 Monaten",
+                emptyText = if (overview.eventsUnknown) OFFLINE_NOT_STORED else strings().tasks.noClassreg3,
                 items = overview.recentEvents,
+                loading = overview.loading,
                 modifier = Modifier.fadeIn(),
             ) { event -> ClassregEventRow(event) }
 
             // ── 2. Offene Abwesenheiten ─────────────────────────────────────
             OverviewSection(
-                title = "Offene Abwesenheiten",
+                title = strings().tasks.openAbsences,
                 onSeeAll = { onNavigate(PokyhDestinations.ABSENCES) },
-                emptyText = if (overview.absencesUnknown) OFFLINE_NOT_STORED else "Keine offenen Abwesenheiten",
+                emptyText = if (overview.absencesUnknown) OFFLINE_NOT_STORED else strings().tasks.noOpenAbsences,
                 items = overview.openAbsences.take(6),
                 footer = {
                     val extra = overview.openAbsences.size - 6
                     if (extra > 0) {
                         PokyhTextButton(
-                            text = "+$extra weitere",
+                            text = strings().tasks.more(extra),
                             onClick = { onNavigate(PokyhDestinations.ABSENCES) },
                         )
                     }
                 },
+                loading = overview.loading,
                 modifier = Modifier.fadeIn(40),
             ) { absence -> OpenAbsenceRow(absence) }
 
             // ── 3. Klassendienste ───────────────────────────────────────────
             OverviewSection(
-                title = "Klassendienste",
-                emptyText = if (overview.servicesUnknown) OFFLINE_NOT_STORED else "Keine Klassendienste eingetragen",
+                title = strings().tasks.services,
+                emptyText = if (overview.servicesUnknown) OFFLINE_NOT_STORED else strings().tasks.noServices,
                 items = overview.classServices,
+                loading = overview.loading,
                 modifier = Modifier.fadeIn(80),
             ) { service -> ClassServiceRow(service) }
 
             // ── 4. Prüfungen ────────────────────────────────────────────────
             WeekSplitSection(
-                title = "Prüfungen",
-                thisWeekEmpty = if (overview.thisWeekUnknown) OFFLINE_NOT_STORED else "Keine Prüfungen diese Woche",
-                nextWeekEmpty = if (overview.nextWeekUnknown) OFFLINE_NOT_STORED else "Keine Prüfungen nächste Woche",
+                title = strings().tasks.exams,
+                thisWeekEmpty = if (overview.thisWeekUnknown) OFFLINE_NOT_STORED else strings().tasks.noExamsThisWeek,
+                nextWeekEmpty = if (overview.nextWeekUnknown) OFFLINE_NOT_STORED else strings().tasks.noExamsNextWeek,
                 bothEmpty = when {
                     overview.thisWeekUnknown && overview.nextWeekUnknown -> OFFLINE_NOT_STORED
-                    overview.thisWeekUnknown || overview.nextWeekUnknown -> "Offline – Prüfungen nur teilweise bekannt"
-                    else -> "Keine Prüfungen in Zukunft"
+                    overview.thisWeekUnknown || overview.nextWeekUnknown -> strings().tasks.examsPartly
+                    else -> strings().tasks.noExamsAhead
                 },
                 thisWeek = overview.examsThisWeek,
                 nextWeek = overview.examsNextWeek,
+                loading = overview.loading,
                 modifier = Modifier.fadeIn(120),
             ) { exam -> ExamRow(exam) }
 
             // ── 5. Hausaufgaben ─────────────────────────────────────────────
             WeekSplitSection(
-                title = "Hausaufgaben",
-                thisWeekEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else "Keine Hausaufgaben diese Woche",
-                nextWeekEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else "Keine Hausaufgaben nächste Woche",
-                bothEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else "Keine Hausaufgaben in Zukunft",
+                title = strings().tasks.homework,
+                thisWeekEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else strings().tasks.noHomeworkThisWeek,
+                nextWeekEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else strings().tasks.noHomeworkNextWeek,
+                bothEmpty = if (overview.homeworkUnknown) OFFLINE_NOT_STORED else strings().tasks.noHomeworkAhead,
                 thisWeek = overview.homeworkThisWeek,
                 nextWeek = overview.homeworkNextWeek,
+                loading = overview.loading,
                 modifier = Modifier.fadeIn(160),
             ) { homework -> HomeworkRow(homework) }
 
             // ── 6. Klasse & Mitglieder ──────────────────────────────────────
             when {
                 !hasBackend && klass == null -> Box(Modifier.fillMaxWidth().height(240.dp)) {
-                    BackendUnavailableView(feature = "Die Klassenliste", status = backendStatus)
+                    BackendUnavailableView(feature = strings().tasks.classList, status = backendStatus)
                 }
                 error != null -> Box(Modifier.fillMaxWidth().height(240.dp)) {
                     ErrorStateView(message = error!!, onRetry = viewModel::retry)
@@ -206,7 +211,7 @@ fun ClassScreen(
                     val c = klass!!
                     Column(modifier = Modifier.fadeIn(200)) {
                         PokyhSectionHeader(
-                            title = "Mitglieder",
+                            title = strings().tasks.members,
                             trailing = { PokyhLabel("${c.members.size}") },
                         )
                         Spacer(Modifier.size(PokyhSpacing.headerContent))
@@ -239,6 +244,7 @@ private fun <T> OverviewSection(
     subtitle: String? = null,
     onSeeAll: (() -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
+    loading: Boolean = false,
     itemContent: @Composable (T) -> Unit,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -251,11 +257,13 @@ private fun <T> OverviewSection(
                 }
             }
             if (onSeeAll != null) {
-                PokyhTextButton(text = "Alle", icon = PokyhIcons.chevronRight, onClick = onSeeAll)
+                PokyhTextButton(text = strings().tasks.all, icon = PokyhIcons.chevronRight, onClick = onSeeAll)
             }
         }
         Spacer(Modifier.size(PokyhSpacing.headerContent))
-        if (items.isEmpty()) {
+        if (items.isEmpty() && loading) {
+            LoadingLines()
+        } else if (items.isEmpty()) {
             EmptyLine(emptyText)
         } else {
             PokyhCard(padding = 0.dp) {
@@ -289,18 +297,43 @@ private fun <T> WeekSplitSection(
     thisWeek: List<T>,
     nextWeek: List<T>,
     modifier: Modifier = Modifier,
+    loading: Boolean = false,
     itemContent: @Composable (T) -> Unit,
 ) {
+    // Each week with its dates, as on the web ("Diese Woche · 27.10. – 31.10.").
+    val monday = remember { dev.plattnericus.pokyh.core.util.schoolWeekMonday() }
+    fun range(m: kotlinx.datetime.LocalDate): String {
+        val c = dev.plattnericus.pokyh.core.i18n.I18n.s.common
+        val f = m.plus(4, kotlinx.datetime.DateTimeUnit.DAY)
+        return c.dayMonthShort(m.dayOfMonth, m.monthNumber) + " – " + c.dayMonthShort(f.dayOfMonth, f.monthNumber)
+    }
     Column(modifier = modifier.fillMaxWidth()) {
         PokyhSectionHeader(title = title)
         Spacer(Modifier.size(PokyhSpacing.headerContent))
-        if (thisWeek.isEmpty() && nextWeek.isEmpty()) {
+        if (thisWeek.isEmpty() && nextWeek.isEmpty() && loading) {
+            LoadingLines()
+        } else if (thisWeek.isEmpty() && nextWeek.isEmpty()) {
             EmptyLine(bothEmpty)
         } else {
-            WeekBlock(label = "Diese Woche", emptyText = thisWeekEmpty, items = thisWeek, itemContent = itemContent)
-            Spacer(Modifier.size(PokyhSpacing.lg))
-            WeekBlock(label = "Nächste Woche", emptyText = nextWeekEmpty, items = nextWeek, itemContent = itemContent)
+            WeekBlock(label = strings().timetable.thisWeek + " · " + range(monday), emptyText = thisWeekEmpty, items = thisWeek, itemContent = itemContent)
+            // Nothing next week: no block for it at all.
+            if (nextWeek.isNotEmpty()) {
+                Spacer(Modifier.size(PokyhSpacing.lg))
+                WeekBlock(label = strings().timetable.nextWeek + " · " + range(monday.plus(7, kotlinx.datetime.DateTimeUnit.DAY)), emptyText = nextWeekEmpty, items = nextWeek, itemContent = itemContent)
+            }
         }
+    }
+}
+
+/** Two rows' worth of skeleton while a block loads. */
+@Composable
+private fun LoadingLines() {
+    Column(
+        Modifier.fillMaxWidth().nestedSurface(PokyhShapes.lg).padding(PokyhSpacing.card),
+        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+    ) {
+        dev.plattnericus.pokyh.ui.components.SkeletonBlock(height = 16.dp, width = 180.dp)
+        dev.plattnericus.pokyh.ui.components.SkeletonBlock(height = 14.dp, width = 120.dp)
     }
 }
 
@@ -417,7 +450,7 @@ private fun OpenAbsenceRow(absence: AbsenceEntry) {
                 Text(sub, style = PokyhType.footnote, color = colors.textSecondary)
             }
         }
-        TagChip(text = "Offen", color = Brand.danger)
+        TagChip(text = strings().tasks.open, color = Brand.danger)
     }
 }
 
@@ -448,7 +481,7 @@ private fun ExamRow(exam: TimetableEntry) {
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = exam.subjectLong.ifEmpty { exam.subjectName.ifEmpty { "Prüfung" } },
+                text = exam.subjectLong.ifEmpty { exam.subjectName.ifEmpty { strings().tasks.exam } },
                 style = PokyhType.headline,
                 color = colors.textPrimary,
                 maxLines = 1,
@@ -459,7 +492,7 @@ private fun ExamRow(exam: TimetableEntry) {
                 Text(it, style = PokyhType.caption, color = colors.textTertiary)
             }
         }
-        TagChip(text = "Prüfung", color = Brand.warning)
+        TagChip(text = strings().tasks.exam, color = Brand.warning)
     }
 }
 
@@ -512,7 +545,7 @@ private fun HomeworkRow(homework: HomeworkItem) {
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = homework.subject.ifEmpty { "Hausaufgabe" },
+                text = homework.subject.ifEmpty { strings().tasks.homeworkOne },
                 style = PokyhType.headline,
                 color = colors.textPrimary,
                 maxLines = 1,
@@ -522,7 +555,7 @@ private fun HomeworkRow(homework: HomeworkItem) {
                 Text(homework.text, style = PokyhType.footnote, color = colors.textSecondary)
             }
         }
-        TagChip(text = "Fällig", color = Brand.success)
+        TagChip(text = strings().tasks.due, color = Brand.success)
     }
 }
 
@@ -534,9 +567,9 @@ private fun JoinCodeCard(code: String, modifier: Modifier = Modifier) {
     PokyhCard(modifier = modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                PokyhLabel("Beitrittscode")
+                PokyhLabel(strings().tasks.joinCode)
                 Text(
-                    text = "Zum Teilen mit Klassenkamerad:innen",
+                    text = strings().tasks.joinCodeHint,
                     style = PokyhType.caption,
                     color = colors.textTertiary,
                 )
@@ -587,7 +620,7 @@ private fun MemberExpandableRow(member: ApiClassMember) {
             )
             Icon(
                 imageVector = PokyhIcons.expandMenu,
-                contentDescription = if (expanded) "Einklappen" else "Aufklappen",
+                contentDescription = if (expanded) strings().tasks.collapse else strings().tasks.expand,
                 tint = colors.textTertiary,
                 modifier = Modifier.size(18.dp).rotate(rotation),
             )
@@ -605,11 +638,11 @@ private fun MemberExpandableRow(member: ApiClassMember) {
                     .padding(horizontal = PokyhSpacing.card, vertical = PokyhSpacing.md),
                 verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
             ) {
-                MemberDetail("Benutzername", member.username)
+                MemberDetail(strings().tasks.username, member.username)
                 member.joinedAt?.takeIf { it.isNotEmpty() }?.let {
-                    MemberDetail("Beigetreten", it.take(10))
+                    MemberDetail(strings().tasks.joined, it.take(10))
                 }
-                MemberDetail("ID", member.stableUid)
+                MemberDetail("POKYH ID", member.stableUid)
             }
         }
     }
@@ -636,4 +669,4 @@ private fun MemberDetail(label: String, value: String) {
 }
 
 /** Empty-line text for a section whose source failed offline with nothing stored. */
-private const val OFFLINE_NOT_STORED = "Offline – auf diesem Gerät nicht gespeichert"
+private val OFFLINE_NOT_STORED: String get() = dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.offlineNotStored

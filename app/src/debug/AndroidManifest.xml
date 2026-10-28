@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: a gallery of the app's pieces with sample data (DebugGalleryActivity). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="dev.plattnericus.pokyh.debug.DebugGalleryActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Pokyh" />
+    </application>
+</manifest>

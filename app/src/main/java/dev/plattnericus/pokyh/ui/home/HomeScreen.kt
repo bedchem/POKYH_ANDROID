@@ -106,16 +106,24 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.daysUntil
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
+import dev.plattnericus.pokyh.core.i18n.strings
+import dev.plattnericus.pokyh.ui.pixel.PixelSprite
+import dev.plattnericus.pokyh.ui.components.PixelState
+import dev.plattnericus.pokyh.ui.theme.pressHighlight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.defaultMinSize
+import dev.plattnericus.pokyh.ui.theme.PokyhType.bold
+import dev.plattnericus.pokyh.ui.theme.wideContent
 
 /**
  * Home. The one screen with a personal greeting instead of a
  * [dev.plattnericus.pokyh.ui.components.PokyhTopBar] title, so the greeting itself carries the
  * screen's [PokyhType.display] heading and hosts the Messages/Profile actions.
  *
- * **The order of the blocks belongs to the user.** They come from [HomeLayout]; the pencil in
- * the greeting row arms arrange mode *on this screen*, where a long press lifts a card and
- * moves it, and a ✕ badge takes a widget off (it goes to "Widgets hinzufügen" at the bottom). The
- * default order is the day in the order it happens: quick links, next exam, today’s lessons, today’s menu, newest grades.
+ * The blocks come from [HomeLayout]: the day in the order it happens — quick links, next exam,
+ * today’s lessons, today’s menu, newest grades. There is no pencil in the greeting row any more,
+ * as on the web; arrange mode (a long press lifts a card, a ✕ badge takes one off) stays in the
+ * code for an order saved before, but nothing on this screen opens it.
  */
 @Composable
 fun HomeScreen(
@@ -130,7 +138,7 @@ fun HomeScreen(
     // surface sets, and cheaper than making the user find the Fertig button again.
     BackHandler(enabled = arranging) { viewModel.setEditing(false) }
 
-    Box(modifier = Modifier.fillMaxSize().appBackground()) {
+    Box(modifier = Modifier.fillMaxSize().wideContent()) {
         if (state.error != null) {
             ErrorStateView(message = state.error!!, onRetry = viewModel::retry)
             return@Box
@@ -209,12 +217,14 @@ private fun HomeContent(
         wasDragging = reorder.isDragging
     }
 
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+    val wide = maxWidth >= 760.dp
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
-            start = PokyhSpacing.screenH,
-            end = PokyhSpacing.screenH,
+            start = if (wide) 32.dp else PokyhSpacing.screenH,
+            end = if (wide) 32.dp else PokyhSpacing.screenH,
             top = PokyhSpacing.lg,
             bottom = PokyhSpacing.xxxl,
         ),
@@ -227,6 +237,8 @@ private fun HomeContent(
             GreetingHeader(
                 session = state.session,
                 arranging = arranging,
+                canReport = state.canReport,
+                wide = wide,
                 onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                 onProfile = { onNavigate(PokyhDestinations.PROFILE) },
                 onNavigate = onNavigate,
@@ -235,17 +247,61 @@ private fun HomeContent(
             )
         }
 
-        if (working.isEmpty() && !arranging) {
+        // Without WebUntis only what works without a school account, as on the web.
+        val noUntis = state.session?.hasUntis == false
+        val shown = if (noUntis && !arranging) working.filter { it == HomeSection.Mensa } else working
+        if (noUntis && !arranging) {
+            item(key = "nountis") {
+                NoUntisBlock(
+                    onTodos = { onNavigate(PokyhDestinations.TODOS) },
+                    onReminders = { onNavigate(PokyhDestinations.REMINDERS) },
+                    modifier = Modifier.fadeIn(40),
+                )
+            }
+        }
+
+        if (working.isEmpty() && !arranging && !noUntis) {
             item(key = "empty") {
                 PokyhInlineNotice(
                     icon = PokyhIcons.edit,
-                    text = "Keine Widgets auf der Startseite – tippe auf den Stift, um welche hinzuzufügen",
+                    text = strings().home.noWidgets,
                     modifier = Modifier.fadeIn(),
                 )
             }
         }
 
-        itemsIndexed(working, key = { _, section -> section.name }) { index, section ->
+        if (wide && !arranging) {
+            // Shortcuts across the whole width; the others side by side in pairs, the exam and the
+            // Mensa narrower (5 of 12), the lists wider (7 of 12), as on the web.
+            val rows = buildList<List<HomeSection>> {
+                var pending: HomeSection? = null
+                for (s in shown) {
+                    if (s == HomeSection.Shortcuts) {
+                        pending?.let { add(listOf(it)); pending = null }
+                        add(listOf(s))
+                    } else if (pending == null) {
+                        pending = s
+                    } else {
+                        add(listOf(pending!!, s)); pending = null
+                    }
+                }
+                pending?.let { add(listOf(it)) }
+            }
+            itemsIndexed(rows, key = { _, row -> row.joinToString("+") { it.name } }) { index, row ->
+                Row(
+                    Modifier.fillMaxWidth().fadeIn(40 + index * 40),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    row.forEach { section ->
+                        val weight = if (row.size == 1) 1f else if (section == HomeSection.Exam || section == HomeSection.Mensa) 5f else 7f
+                        Box(Modifier.weight(weight)) {
+                            HomeSectionContent(section = section, state = state, onNavigate = onNavigate, viewModel = viewModel, wide = true)
+                        }
+                    }
+                }
+            }
+        } else itemsIndexed(shown, key = { _, section -> section.name }) { index, section ->
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -309,6 +365,7 @@ private fun HomeContent(
             }
         }
     }
+    }
 }
 /** Every Home block dispatches from here — see [HomeSection]. */
 @Composable
@@ -318,9 +375,20 @@ private fun HomeSectionContent(
     onNavigate: (String) -> Unit,
     viewModel: HomeViewModel,
     modifier: Modifier = Modifier,
+    wide: Boolean = false,
 ) {
     when (section) {
         HomeSection.Shortcuts -> ShortcutsGrid(
+            columns = if (wide) 4 else 2,
+            // The small print under each tile, as on the web's quick tiles.
+            notes = strings().home.let { t ->
+                listOf(
+                    state.gradeAverage?.let { "Ø ${Fmt.fixed(it, 2)} · ${t.subjects(state.subjectCount)}" },
+                    state.absenceNote,
+                    if (state.todosLoaded && !state.todosUnavailable) t.todosNote(state.openTodos.size) else null,
+                    if (state.remindersLoaded && !state.remindersUnavailable) t.remindersNote(state.upcomingReminders.size) else null,
+                )
+            },
             onGrades = viewModel::selectGradesTab,
             onAbsences = { onNavigate(PokyhDestinations.ABSENCES) },
             onTodos = { onNavigate(PokyhDestinations.TODOS) },
@@ -328,14 +396,22 @@ private fun HomeSectionContent(
             modifier = modifier,
         )
 
-        HomeSection.Exam -> {
-            val exam = state.nextExam
-            when {
-                exam != null -> ExamCard(exam = exam, modifier = modifier)
-                state.examsLoaded -> NoExamCard(unknown = state.examsUnknown, modifier = modifier)
-                else -> Unit
-            }
-        }
+        HomeSection.Exam -> ExamBlock(
+            exam = state.nextExam,
+            loaded = state.examsLoaded,
+            unknown = state.examsUnknown,
+            onOpen = { state.nextExam?.let { viewModel.openTimetableAt(it.date, it.id) } },
+            modifier = modifier,
+        )
+
+        HomeSection.Messages -> MessagesBlock(
+            loading = state.loadingMessages,
+            messages = state.recentMessages,
+            unavailable = state.messagesUnavailable,
+            onAll = { onNavigate(PokyhDestinations.MESSAGES) },
+            onOpen = { m -> onNavigate(PokyhDestinations.messageDetail(m.id, reply = true)) },
+            modifier = modifier,
+        )
 
         HomeSection.Today -> TodaySection(
             loading = state.loadingToday,
@@ -346,16 +422,14 @@ private fun HomeSectionContent(
             modifier = modifier,
         )
 
-        HomeSection.Mensa -> MensaWeekSection(
+        HomeSection.Mensa -> MensaBlock(
             loading = state.loadingMensa,
             week = state.mensaWeek,
-            weekLabel = state.mensaWeekLabel,
-            savedAt = state.mensaSavedAt,
-            stale = state.mensaStale,
             ratings = state.dishRatings,
             ratingsLoading = state.loadingDishRatings,
             ratingsUnavailable = state.dishRatingsUnavailable,
-            onClick = viewModel::selectMensaTab,
+            onAll = viewModel::selectMensaTab,
+            onOpen = { d -> onNavigate(PokyhDestinations.dishDetail(d.id)) },
             modifier = modifier,
         )
 
@@ -366,6 +440,10 @@ private fun HomeSectionContent(
             loading = state.loadingGrades,
             grades = state.recentGrades,
             unavailable = state.gradesUnavailable,
+            average = state.gradeAverage,
+            subjectCount = state.subjectCount,
+            onAll = viewModel::selectGradesTab,
+            onOpen = { onNavigate(PokyhDestinations.gradeSubject(it.lessonId, dev.plattnericus.pokyh.core.util.SchoolDates.currentSchoolYear)) },
             modifier = modifier,
         )
 
@@ -433,7 +511,7 @@ private fun RemoveBadge(title: String, onRemove: () -> Unit, modifier: Modifier 
     ) {
         Icon(
             imageVector = PokyhIcons.close,
-            contentDescription = "$title entfernen",
+            contentDescription = strings().home.remove(title),
             tint = androidx.compose.ui.graphics.Color.White,
             modifier = Modifier.size(14.dp),
         )
@@ -453,13 +531,13 @@ private fun AddWidgetsSection(
 ) {
     PokyhSection(
         modifier = modifier,
-        title = "Widgets hinzufügen",
-        trailing = { PokyhTextButton(text = "Standard", onClick = onReset) },
+        title = strings().home.addWidgets,
+        trailing = { PokyhTextButton(text = strings().home.standard, onClick = onReset) },
     ) {
         if (available.isEmpty()) {
             PokyhInlineNotice(
                 icon = PokyhIcons.ok,
-                text = "Alle Widgets sind auf deiner Startseite",
+                text = strings().home.allWidgetsShown,
                 tint = Brand.success,
             )
         } else {
@@ -505,6 +583,8 @@ private fun AddWidgetsSection(
 private fun GreetingHeader(
     session: UserSession?,
     arranging: Boolean,
+    canReport: Boolean,
+    wide: Boolean,
     onMessages: () -> Unit,
     onProfile: () -> Unit,
     onNavigate: (String) -> Unit,
@@ -512,7 +592,8 @@ private fun GreetingHeader(
     modifier: Modifier = Modifier,
 ) {
     val colors = PokyhTheme.colors
-    val greeting = remember { currentGreeting() }
+    val t = strings().home
+    val greeting = remember(t) { currentGreeting(t) }
     val firstName = remember(session) { firstNameOf(session) }
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -522,24 +603,15 @@ private fun GreetingHeader(
             horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
         ) {
             if (arranging) {
-                // The one line of instruction the mode needs, in the space the class label
-                // usually has. Without it the pencil arms something invisible.
-                PokyhLabel("Halten zum Verschieben · ✕ zum Entfernen", modifier = Modifier.weight(1f))
-            } else if (session != null) {
-                val klasse = session.klasseName.ifEmpty { "LBS Brixen" }
-                PokyhLabel("$klasse · LBS Brixen", modifier = Modifier.weight(1f))
+                // The one line of instruction the mode needs. Without it the pencil arms
+                // something invisible.
+                PokyhLabel(t.arrangeHint, modifier = Modifier.weight(1f))
             } else {
                 Spacer(Modifier.weight(1f))
             }
             if (arranging) {
-                PokyhTextButton(text = "Fertig", onClick = onToggleArrange)
+                PokyhTextButton(text = strings().common.done, onClick = onToggleArrange)
             } else {
-                PokyhIconButton(
-                    icon = PokyhIcons.edit,
-                    contentDescription = "Startseite anordnen",
-                    onClick = onToggleArrange,
-                    tinted = true,
-                )
                 TabRootActions(
                     avatarContent = { CurrentUserAvatar() },
                     unreadMessages = rememberUnreadMessageCount(),
@@ -549,34 +621,51 @@ private fun GreetingHeader(
                 )
             }
         }
-        Spacer(Modifier.size(PokyhSpacing.md))
-        Text("$greeting,", style = PokyhType.display, color = colors.textPrimary)
-        Text(
-            text = firstName.ifEmpty { "Willkommen" },
-            style = PokyhType.display,
-            color = Brand.accent,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Spacer(Modifier.size(PokyhSpacing.lg))
+        val now = java.time.LocalDate.now()
+        val c = strings().common
+        val dateLine = listOf(
+            c.weekdays[now.dayOfWeek.ordinal] + ", " + c.dayMonth(now.dayOfMonth, now.monthValue),
+            session?.klasseName.orEmpty(),
+        ).filter { it.isNotBlank() }.joinToString(" · ")
+        HomeGreeting(
+            greeting = greeting,
+            firstName = firstName.ifEmpty { if (session == null) t.welcome else "" },
+            dateLine = dateLine,
+            canReport = canReport,
+            showActions = !arranging && session?.hasUntis == true,
+            wide = wide,
+            onWrite = { onNavigate(PokyhDestinations.messagesCompose()) },
+            onReport = { onNavigate(PokyhDestinations.absencesReport()) },
         )
     }
 }
-private fun currentGreeting(): String {
+/** The web's greeting: morning until 11, the day until 17, the evening after. */
+private fun currentGreeting(t: dev.plattnericus.pokyh.core.i18n.HomeStrings): String {
     val hour = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).hour
-    return when (hour) {
-        in 5..10 -> "Guten Morgen"
-        in 11..16 -> "Hallo"
-        in 17..21 -> "Guten Abend"
-        else -> "Hallo"
+    return when {
+        hour < 11 -> t.morning
+        hour < 17 -> t.day
+        else -> t.evening
     }
 }
 
+/**
+ * The first name for the greeting, as the web finds it (components/app/hooks.ts, useFirstName):
+ * WebUntis gives "Pfeifer Emanuel", surname first, so the word of the real name that a part of
+ * the login name starts with — "pfei-eman" → "Emanuel" — the later parts first. A guardian is
+ * greeted without a name; when nothing matches, the greeting has none either rather than the
+ * login name. An account without WebUntis has only its login name.
+ */
 private fun firstNameOf(session: UserSession?): String {
-    val personName = session?.personName?.trim()
-    if (!personName.isNullOrEmpty()) {
-        val first = personName.split(" ").firstOrNull { it.isNotEmpty() }
-        if (!first.isNullOrEmpty()) return first
+    if (session == null || session.isParent) return ""
+    if (!session.hasUntis) return session.username
+    val words = session.personName.orEmpty().trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    val parts = session.username.lowercase().split(Regex("[-._\\s]+")).filter { it.length >= 2 }
+    for (part in parts.reversed()) {
+        words.firstOrNull { it.lowercase().startsWith(part) }?.let { return it }
     }
-    return session?.username ?: ""
+    return ""
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────
@@ -601,6 +690,7 @@ private data class ShortcutItem(
     val tone: DecorativeTone,
     val glyph: ImageVector,
     val onClick: () -> Unit,
+    val note: String? = null,
 )
 
 /**
@@ -609,6 +699,8 @@ private data class ShortcutItem(
  */
 @Composable
 private fun ShortcutsGrid(
+    columns: Int = 2,
+    notes: List<String?>,
     onGrades: () -> Unit,
     onAbsences: () -> Unit,
     onTodos: () -> Unit,
@@ -616,14 +708,15 @@ private fun ShortcutsGrid(
     modifier: Modifier = Modifier,
 ) {
     val isDark = PokyhTheme.colors.isDark
+    val t = strings().home
     val items = listOf(
-        ShortcutItem("Noten", PokyhDecorative.periwinkle(isDark), PokyhIcons.decorSubjects, onGrades),
-        ShortcutItem("Abwesenheiten", PokyhDecorative.butter(isDark), PokyhIcons.decorAbsences, onAbsences),
-        ShortcutItem("Todos", PokyhDecorative.sage(isDark), PokyhIcons.decorTodos, onTodos),
-        ShortcutItem("Erinnerungen", PokyhDecorative.blush(isDark), PokyhIcons.decorReminders, onReminders),
+        ShortcutItem(strings().nav.grades, PokyhDecorative.periwinkle(isDark), PokyhIcons.decorSubjects, onGrades, notes.getOrNull(0)),
+        ShortcutItem(t.absences, PokyhDecorative.butter(isDark), PokyhIcons.decorAbsences, onAbsences, notes.getOrNull(1)),
+        ShortcutItem(t.todos, PokyhDecorative.sage(isDark), PokyhIcons.decorTodos, onTodos, notes.getOrNull(2)),
+        ShortcutItem(t.reminders, PokyhDecorative.blush(isDark), PokyhIcons.decorReminders, onReminders, notes.getOrNull(3)),
     )
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
-        items.chunked(2).forEach { rowItems ->
+        items.chunked(columns).forEach { rowItems ->
             Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
                 rowItems.forEach { item ->
                     PokyhFeatureTile(
@@ -631,6 +724,7 @@ private fun ShortcutsGrid(
                         tone = item.tone,
                         glyph = item.glyph,
                         onClick = item.onClick,
+                        subtitle = item.note,
                         minHeight = 132.dp,
                         modifier = Modifier.weight(1f),
                     )
@@ -655,11 +749,11 @@ private fun ExamCard(exam: TimetableEntry, modifier: Modifier = Modifier) {
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs),
             ) {
-                PokyhLabel("Nächste Schularbeit")
-                val subject = exam.subjectLong.ifEmpty { exam.subjectName.ifEmpty { "Prüfung" } }
+                PokyhLabel(strings().home.sectionExam)
+                val subject = exam.subjectLong.ifEmpty { exam.subjectName.ifEmpty { strings().home.exam } }
                 Text(subject, style = PokyhType.headline, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    text = "${examWhen(exam.date)} · ${Fmt.time(exam.startTime)}",
+                    text = "${examWhen(exam.date, strings().home)} · ${Fmt.time(exam.startTime)}",
                     style = PokyhType.caption,
                     color = Brand.warning,
                 )
@@ -678,9 +772,9 @@ private fun NoExamCard(unknown: Boolean, modifier: Modifier = Modifier) {
         ) {
             IconTile(icon = if (unknown) PokyhIcons.offline else PokyhIcons.noExam, color = if (unknown) Brand.warning else Brand.success)
             Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
-                PokyhLabel("Nächste Schularbeit")
+                PokyhLabel(strings().home.sectionExam)
                 Text(
-                    text = if (unknown) "Offline – nicht bekannt" else "Keine Tests in Zukunft",
+                    text = if (unknown) strings().home.examOffline else strings().home.noExam,
                     style = PokyhType.headline,
                     color = colors.textPrimary,
                 )
@@ -689,13 +783,13 @@ private fun NoExamCard(unknown: Boolean, modifier: Modifier = Modifier) {
     }
 }
 
-private fun examWhen(dateNum: Int): String {
+private fun examWhen(dateNum: Int, t: dev.plattnericus.pokyh.core.i18n.HomeStrings): String {
     val date = dateNum.toLocalDate()
     val today = todayLocalDate()
     return when {
-        date == today -> "Heute"
-        date == today.plus(1, DateTimeUnit.DAY) -> "Morgen"
-        else -> "in ${today.daysUntil(date)} Tagen · ${Fmt.dateShort(dateNum)}"
+        date == today -> t.today
+        date == today.plus(1, DateTimeUnit.DAY) -> t.tomorrow
+        else -> "${t.inDays(today.daysUntil(date).toLong())} · ${Fmt.dateShort(dateNum)}"
     }
 }
 
@@ -712,21 +806,13 @@ private fun TodaySection(
 ) {
     PokyhSection(
         modifier = modifier,
-        title = "Heute",
+        title = strings().home.sectionToday,
         trailing = { AsOfLabel(savedAt = savedAt, stale = stale) },
     ) {
         when {
             loading -> TileRowSkeleton(rows = 2)
-            unavailable && slots.isEmpty() -> PokyhInlineNotice(
-                icon = PokyhIcons.offline,
-                text = "Offline – für heute ist kein Stundenplan gespeichert",
-                tint = Brand.warning,
-            )
-            slots.isEmpty() -> PokyhInlineNotice(
-                icon = PokyhIcons.noExam,
-                text = "Heute kein Unterricht",
-                tint = Brand.success,
-            )
+            unavailable && slots.isEmpty() -> HomeStateCard(PixelSprite.Unplugged, strings().home.todayOffline)
+            slots.isEmpty() -> HomeStateCard(PixelSprite.Sun, strings().home.noLessonsToday)
             else -> slots.forEachIndexed { idx, slot ->
                 HomeSlotRow(slot = slot, modifier = Modifier.fadeIn(idx * 30))
             }
@@ -755,7 +841,7 @@ private fun HomeSlotRow(slot: MergedSlot, modifier: Modifier = Modifier) {
     PokyhTileRow(modifier = modifier) {
         Box(Modifier.width(4.dp).height(40.dp).background(tone.bar, PokyhShapes.xs))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
-            val subject = display.subjectName.ifEmpty { display.subjectLong.ifEmpty { "Veranstaltung" } }
+            val subject = display.subjectName.ifEmpty { display.subjectLong.ifEmpty { strings().home.event } }
             Text(subject, style = PokyhType.headline, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val teacherRoom = listOf(display.teacherName, display.roomName)
                 .filter { it.isNotEmpty() }
@@ -815,7 +901,7 @@ private fun MensaWeekSection(
 ) {
     PokyhSection(
         modifier = modifier,
-        title = "Mensa",
+        title = strings().nav.mensa,
         trailing = {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
@@ -835,7 +921,7 @@ private fun MensaWeekSection(
             }
 
             week.none { it.dishes.isNotEmpty() } ->
-                PokyhInlineNotice(icon = PokyhIcons.mensa, text = "Kein Speiseplan verfügbar")
+                HomeStateCard(PixelSprite.Empty, strings().home.noMenu)
 
             else -> {
                 val scrollState = rememberScrollState()
@@ -899,7 +985,7 @@ private fun MensaDayCard(
         ) {
             Text(
                 // One line for every card, today included — see the section doc.
-                text = if (day.isToday) "Heute · ${day.weekday.take(2)}" else day.weekday,
+                text = strings().common.weekdays[day.date.dayOfWeek.ordinal].let { name -> if (day.isToday) strings().home.todayShort(name.take(2)) else name },
                 style = PokyhType.subheadline.semibold(),
                 color = dayColor,
                 maxLines = 1,
@@ -930,7 +1016,7 @@ private fun MensaDayCard(
 
         if (day.dishes.isEmpty()) {
             Text(
-                text = "Kein Menü",
+                text = strings().home.noMenuDay,
                 style = PokyhType.footnote,
                 color = colors.textTertiary,
                 modifier = Modifier
@@ -952,7 +1038,7 @@ private fun MensaDayCard(
             if (extra > 0) {
                 Spacer(Modifier.size(PokyhSpacing.sm))
                 Text(
-                    text = "+$extra weitere",
+                    text = strings().home.moreDishes(extra),
                     style = PokyhType.caption,
                     color = colors.accentText,
                 )
@@ -1017,42 +1103,93 @@ private fun MensaDayDish(dish: Dish, rating: DishRatingsData?, ratingsPending: B
 
 // ── Zuletzt eingetragene Noten ──────────────────────────────────────────────
 
+/**
+ * "Kürzlich hinzugefügt" — the web's Home (`GradeList` in components/dashboard/widgets.tsx): the
+ * three grades entered last (GradeEntryOrder), each with its subject, the exam's date, and the
+ * mark in its tone on the right.
+ */
 @Composable
 private fun GradesSection(
     loading: Boolean,
     grades: List<HomeViewModel.RecentGrade>,
     unavailable: Boolean,
+    average: Double?,
+    subjectCount: Int,
+    onAll: () -> Unit,
+    onOpen: (HomeViewModel.RecentGrade) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    PokyhSection(modifier = modifier, title = "Zuletzt eingetragen") {
+    val t = strings().home
+    PokyhSection(
+        modifier = modifier,
+        title = strings().grades.recentTitle,
+        trailing = { PokyhTextButton(text = t.all, onClick = onAll) },
+    ) {
         when {
-            loading -> TileRowSkeleton(rows = 2)
-            unavailable && grades.isEmpty() -> PokyhInlineNotice(
-                icon = PokyhIcons.offline,
-                text = "Offline – Noten sind auf diesem Gerät nicht gespeichert",
-                tint = Brand.warning,
-            )
+            loading -> TileRowSkeleton(rows = 3)
+            unavailable && grades.isEmpty() -> HomeStateCard(PixelSprite.Unplugged, t.gradesOffline)
             // A block that renders nothing is a hole in an order the user arranged
             // themselves — and at the start of a school year, which is exactly when there
             // are no grades, it would be a hole for weeks. The placeholder keeps the shape
             // of the screen and says why it is empty.
-            grades.isEmpty() -> PokyhInlineNotice(
-                icon = PokyhIcons.tabGrades,
-                text = "Noch keine Noten eingetragen",
-            )
-            else -> PokyhListCard(items = grades) { grade -> GradeRow(grade) }
+            grades.isEmpty() -> HomeStateCard(PixelSprite.Empty, t.noGrades)
+            else -> PokyhCard(padding = PokyhSpacing.sm) {
+                grades.forEach { grade -> GradeRow(grade, onClick = { onOpen(grade) }) }
+            }
         }
     }
 }
 
 @Composable
-private fun GradeRow(grade: HomeViewModel.RecentGrade) {
-    PokyhRow(
-        title = grade.subject,
-        subtitle = Fmt.dateFull(grade.date),
-        showChevron = false,
-        leading = { GradeBubble(grade.value) },
-    )
+private fun GradeRow(grade: HomeViewModel.RecentGrade, onClick: () -> Unit) {
+    val colors = PokyhTheme.colors
+    val tone = markTone(grade.value)
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(PokyhShapes.md)
+            .pressHighlight(interaction, PokyhShapes.md)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = PokyhSpacing.md, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(grade.subject.ifEmpty { "–" }, style = PokyhType.callout.semibold(), color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(Fmt.dateShort(grade.date), style = PokyhType.footnote.monospacedDigits(), color = colors.textTertiary, maxLines = 1)
+        }
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minWidth = 48.dp)
+                .height(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(tone.fill)
+                .padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(Fmt.num(grade.value), style = PokyhType.callout.bold().monospacedDigits(), color = tone.ink, maxLines = 1)
+        }
+    }
+}
+
+/** The web's mark tones (`MARK_TONE` by `gradeClass`): sage from 6, butter above 4, blush at 4 and below. */
+@Composable
+internal fun markTone(v: Double): dev.plattnericus.pokyh.ui.theme.DecorativeTone {
+    val dark = PokyhTheme.colors.isDark
+    return when {
+        v >= 6 -> PokyhDecorative.sage(dark)
+        v > 4 -> PokyhDecorative.butter(dark)
+        else -> PokyhDecorative.blush(dark)
+    }
+}
+
+/** A block of Home with nothing to show, or that couldn't be loaded: a small pixel scene and why. */
+@Composable
+internal fun HomeStateCard(sprite: PixelSprite, title: String, modifier: Modifier = Modifier) {
+    PokyhCard(modifier = modifier, padding = 0.dp) {
+        PixelState(title = title, sprite = sprite, compact = true)
+    }
 }
 
 /** The grade number in a tinted disc — the app's one way of showing a single grade, shared by

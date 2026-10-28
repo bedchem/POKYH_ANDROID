@@ -45,6 +45,9 @@ import dev.plattnericus.pokyh.ui.theme.PokyhType.monospacedDigits
 import dev.plattnericus.pokyh.ui.theme.gradeColor
 import java.util.Calendar
 import kotlinx.coroutines.delay
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.i18n.strings
+import dev.plattnericus.pokyh.ui.pixel.PixelSprite
 
 // The optional Home widgets — see [HomeSection]. Each one says "offline, not stored" rather than
 // "nothing there" when its data could not be loaded, like every other block on Home.
@@ -60,8 +63,6 @@ private val SchoolZone: java.util.TimeZone = java.util.TimeZone.getTimeZone("Eur
 
 private fun schoolCalendar(): Calendar = Calendar.getInstance(SchoolZone)
 
-private const val OFFLINE_WIDGET_TEXT = "Offline – noch nicht auf diesem Gerät gespeichert"
-
 /** Minutes since midnight, re-read every 20 seconds so countdowns move on their own. */
 @Composable
 private fun rememberMinuteOfDay(): Int {
@@ -76,14 +77,16 @@ private fun rememberMinuteOfDay(): Int {
     return minute
 }
 
-private fun durationText(minutes: Int): String = when {
-    minutes < 60 -> "$minutes Min"
-    minutes % 60 == 0 -> "${minutes / 60} Std"
-    else -> "${minutes / 60} Std ${minutes % 60} Min"
+private fun durationText(minutes: Int): String = I18n.s.home.let { t ->
+    when {
+        minutes < 60 -> t.minutes(minutes)
+        minutes % 60 == 0 -> t.hours(minutes / 60)
+        else -> t.hoursMinutes(minutes / 60, minutes % 60)
+    }
 }
 
 private fun TimetableEntry.subjectLabel(): String =
-    subjectLong.ifEmpty { subjectName.ifEmpty { note ?: "Stunde" } }
+    subjectLong.ifEmpty { subjectName.ifEmpty { note ?: I18n.s.home.lesson } }
 
 // ── Jetzt & gleich ──────────────────────────────────────────────────────────
 
@@ -107,11 +110,11 @@ internal fun NowNextWidget(
         when {
             loading -> TileRowSkeleton(rows = 1)
             unavailable && lessons.isEmpty() ->
-                PokyhInlineNotice(icon = PokyhIcons.offline, text = OFFLINE_WIDGET_TEXT, tint = Brand.warning)
+                HomeStateCard(PixelSprite.Unplugged, strings().home.offlineWidget)
             lessons.isEmpty() ->
-                PokyhInlineNotice(icon = PokyhIcons.noExam, text = "Heute kein Unterricht", tint = Brand.success)
+                HomeStateCard(PixelSprite.Sun, strings().home.noLessonsToday)
             current == null && next == null ->
-                PokyhInlineNotice(icon = PokyhIcons.noExam, text = "Unterricht für heute vorbei", tint = Brand.success)
+                PokyhInlineNotice(icon = PokyhIcons.noExam, text = strings().home.dayOver, tint = Brand.success)
             else -> PokyhCard(onClick = onOpen) {
                 Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
                     if (current != null) {
@@ -119,9 +122,9 @@ internal fun NowNextWidget(
                         val end = Fmt.minutes(current.endTime)
                         val progress = ((minute - start).toFloat() / (end - start).coerceAtLeast(1)).coerceIn(0f, 1f)
                         LessonLine(
-                            label = "Jetzt",
+                            label = strings().home.now,
                             entry = current,
-                            trailing = "noch ${durationText(end - minute)}",
+                            trailing = strings().home.left(durationText(end - minute)),
                             accent = Brand.accent,
                         )
                         // A thin bar is enough to read "how far through" at a glance.
@@ -143,9 +146,9 @@ internal fun NowNextWidget(
                     if (next != null) {
                         val gap = Fmt.minutes(next.startTime) - minute
                         LessonLine(
-                            label = if (current == null) "Als Nächstes" else "Danach",
+                            label = if (current == null) strings().home.upNext else strings().home.afterThat,
                             entry = next,
-                            trailing = "in ${durationText(gap)} · ${Fmt.time(next.startTime)}",
+                            trailing = strings().home.inTime(durationText(gap), Fmt.time(next.startTime)),
                             accent = Brand.orange,
                         )
                     }
@@ -187,9 +190,9 @@ internal fun ChangesWidget(
         when {
             !loaded -> TileRowSkeleton(rows = 2)
             unknown && changes.isEmpty() ->
-                PokyhInlineNotice(icon = PokyhIcons.offline, text = OFFLINE_WIDGET_TEXT, tint = Brand.warning)
+                HomeStateCard(PixelSprite.Unplugged, strings().home.offlineWidget)
             changes.isEmpty() ->
-                PokyhInlineNotice(icon = PokyhIcons.noExam, text = "Keine Änderungen für heute und morgen", tint = Brand.success)
+                PokyhInlineNotice(icon = PokyhIcons.noExam, text = strings().home.noChanges, tint = Brand.success)
             else -> PokyhCard(onClick = onOpen, padding = 0.dp) {
                 changes.take(5).forEachIndexed { index, entry ->
                     if (index > 0) PokyhRowSeparator()
@@ -198,7 +201,7 @@ internal fun ChangesWidget(
                 if (changes.size > 5) {
                     PokyhRowSeparator()
                     Text(
-                        text = "+${changes.size - 5} weitere im Stundenplan",
+                        text = strings().home.moreInTimetable(changes.size - 5),
                         style = PokyhType.footnote,
                         color = PokyhTheme.colors.accentText,
                         modifier = Modifier.padding(PokyhSpacing.card),
@@ -213,11 +216,11 @@ internal fun ChangesWidget(
 private fun ChangeRow(entry: TimetableEntry, isToday: Boolean) {
     val colors = PokyhTheme.colors
     val (kind, color) = when {
-        entry.isCancelled -> "Entfall" to Brand.danger
-        entry.isSubstitution || entry.addedTeachers.isNotEmpty() -> "Vertretung" to Brand.orange
-        entry.addedRooms.isNotEmpty() -> "Raumänderung" to Brand.warning
-        entry.isAdditional -> "Zusätzlich" to Brand.accent
-        else -> "Geändert" to Brand.warning
+        entry.isCancelled -> strings().home.cancelled to Brand.danger
+        entry.isSubstitution || entry.addedTeachers.isNotEmpty() -> strings().home.substitution to Brand.orange
+        entry.addedRooms.isNotEmpty() -> strings().home.roomChange to Brand.warning
+        entry.isAdditional -> strings().home.additional to Brand.accent
+        else -> strings().home.changed to Brand.warning
     }
     Row(
         modifier = Modifier.fillMaxWidth().padding(PokyhSpacing.card),
@@ -229,7 +232,7 @@ private fun ChangeRow(entry: TimetableEntry, isToday: Boolean) {
             Text(entry.subjectLabel(), style = PokyhType.headline, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val detail = when {
                 entry.isCancelled -> listOf(entry.teacherName, entry.roomName)
-                entry.addedRooms.isNotEmpty() && !entry.isSubstitution -> listOf("Raum ${entry.addedRooms.joinToString(", ")}")
+                entry.addedRooms.isNotEmpty() && !entry.isSubstitution -> listOf(strings().home.room(entry.addedRooms.joinToString(", ")))
                 else -> listOf(entry.teacherName, entry.roomName)
             }.filter { it.isNotEmpty() }.joinToString(" · ")
             if (detail.isNotEmpty()) {
@@ -239,7 +242,7 @@ private fun ChangeRow(entry: TimetableEntry, isToday: Boolean) {
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
             Text(kind, style = PokyhType.caption, color = color)
             Text(
-                text = "${if (isToday) "Heute" else "Morgen"} · ${Fmt.time(entry.startTime)}",
+                text = "${if (isToday) strings().home.today else strings().home.tomorrow} · ${Fmt.time(entry.startTime)}",
                 style = PokyhType.caption2.monospacedDigits(),
                 color = colors.textTertiary,
             )
@@ -268,19 +271,19 @@ internal fun AverageWidget(
         when {
             !loaded -> TileRowSkeleton(rows = 1)
             average == null && unavailable ->
-                PokyhInlineNotice(icon = PokyhIcons.offline, text = OFFLINE_WIDGET_TEXT, tint = Brand.warning)
+                HomeStateCard(PixelSprite.Unplugged, strings().home.offlineWidget)
             average == null ->
-                PokyhInlineNotice(icon = PokyhIcons.tabGrades, text = "Noch keine Noten in diesem Schuljahr")
+                HomeStateCard(PixelSprite.Empty, strings().home.noGrades)
             else -> PokyhCard(onClick = onOpen) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.lg)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
-                        PokyhLabel("Gesamtschnitt")
+                        PokyhLabel(strings().home.overall)
                         Text(Fmt.num(average), style = PokyhType.statLarge.monospacedDigits(), color = gradeColor(average))
-                        Text("aus $count Noten", style = PokyhType.footnote, color = colors.textSecondary)
+                        Text(strings().home.fromGrades(count), style = PokyhType.footnote, color = colors.textSecondary)
                     }
                     if (weakest != null) {
                         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
-                            PokyhLabel("Schwächstes Fach")
+                            PokyhLabel(strings().home.weakest)
                             Text(
                                 weakest.first,
                                 style = PokyhType.headline,
@@ -315,14 +318,14 @@ internal fun OpenTodosWidget(
     PokyhSection(
         modifier = modifier,
         title = HomeSection.OpenTodos.title,
-        trailing = { PokyhTextButton(text = "Alle", onClick = onOpen) },
+        trailing = { PokyhTextButton(text = strings().home.all, onClick = onOpen) },
     ) {
         when {
             !loaded -> TileRowSkeleton(rows = 2)
             todos.isEmpty() && pending == 0 && unavailable ->
-                PokyhInlineNotice(icon = PokyhIcons.offline, text = OFFLINE_WIDGET_TEXT, tint = Brand.warning)
+                HomeStateCard(PixelSprite.Unplugged, strings().home.offlineWidget)
             todos.isEmpty() && pending == 0 ->
-                PokyhInlineNotice(icon = PokyhIcons.noExam, text = "Alles erledigt", tint = Brand.success)
+                HomeStateCard(PixelSprite.Empty, strings().home.allDone)
             else -> PokyhCard(onClick = onOpen, padding = 0.dp) {
                 todos.take(3).forEachIndexed { index, todo ->
                     if (index > 0) PokyhRowSeparator()
@@ -357,14 +360,14 @@ internal fun UpcomingRemindersWidget(
     PokyhSection(
         modifier = modifier,
         title = HomeSection.UpcomingReminders.title,
-        trailing = { PokyhTextButton(text = "Alle", onClick = onOpen) },
+        trailing = { PokyhTextButton(text = strings().home.all, onClick = onOpen) },
     ) {
         when {
             !loaded -> TileRowSkeleton(rows = 2)
             reminders.isEmpty() && pending == 0 && unavailable ->
-                PokyhInlineNotice(icon = PokyhIcons.offline, text = OFFLINE_WIDGET_TEXT, tint = Brand.warning)
+                HomeStateCard(PixelSprite.Unplugged, strings().home.offlineWidget)
             reminders.isEmpty() && pending == 0 ->
-                PokyhInlineNotice(icon = PokyhIcons.reminders, text = "Keine anstehenden Erinnerungen")
+                HomeStateCard(PixelSprite.Bell, strings().home.noReminders)
             else -> PokyhCard(onClick = onOpen, padding = 0.dp) {
                 reminders.take(3).forEachIndexed { index, reminder ->
                     if (index > 0) PokyhRowSeparator()
@@ -414,13 +417,13 @@ private fun FooterLine(more: Int, pending: Int) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (more > 0) {
-            Text("+$more weitere", style = PokyhType.footnote, color = PokyhTheme.colors.accentText, modifier = Modifier.weight(1f))
+            Text(strings().home.moreDishes(more), style = PokyhType.footnote, color = PokyhTheme.colors.accentText, modifier = Modifier.weight(1f))
         } else {
             Box(Modifier.weight(1f))
         }
         if (pending > 0) {
             StatusLabel(
-                text = if (pending == 1) "1 wartet auf Internet" else "$pending warten auf Internet",
+                text = if (pending == 1) strings().home.waitingOne else strings().home.waitingMany(pending),
                 color = Brand.warning,
                 icon = PokyhIcons.pendingSync,
             )

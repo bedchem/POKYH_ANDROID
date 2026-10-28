@@ -62,7 +62,7 @@ private fun GradesContent(snapshot: GradesSnapshot) {
     ) {
         Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "Noten",
+                dev.plattnericus.pokyh.core.i18n.I18n.s.system.widgetGrades,
                 style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ColorProvider(Brand.accent)),
             )
             Spacer(GlanceModifier.defaultWeight())
@@ -76,7 +76,7 @@ private fun GradesContent(snapshot: GradesSnapshot) {
         Spacer(GlanceModifier.height(8.dp))
         if (!snapshot.hasData) {
             Text(
-                "Keine Noten verfügbar",
+                dev.plattnericus.pokyh.core.i18n.I18n.s.system.widgetNoGrades,
                 style = TextStyle(fontSize = 14.sp, color = GlanceTheme.colors.onSurfaceVariant),
             )
         } else {

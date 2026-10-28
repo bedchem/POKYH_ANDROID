@@ -65,14 +65,17 @@ fun AbsenceCalculatorScreen(
     absent: String,
     total: String,
     onNavigateBack: () -> Unit,
+    /** The whole school year's lessons (to June); with it, "Bisher" and "Ganzes Jahr" to switch. */
+    yearTotal: String = "",
 ) {
     val t = strings().absences
     val dec = strings().common.decimal
     fun shown(v: String) = v.replace('.', dec).removeSuffix("${dec}0")
-    val prefilled = total.isNotEmpty()
+    val prefilled = total.isNotEmpty() || yearTotal.isNotEmpty()
     var absentInput by rememberSaveable { mutableStateOf(shown(absent)) }
     var weeklyMode by rememberSaveable { mutableStateOf(!prefilled) }
-    var totalInput by rememberSaveable { mutableStateOf(shown(total)) }
+    var wholeYear by rememberSaveable { mutableStateOf(total.isEmpty() && yearTotal.isNotEmpty()) }
+    var totalInput by rememberSaveable { mutableStateOf(shown(if (total.isEmpty()) yearTotal else total)) }
     var weeklyInput by rememberSaveable { mutableStateOf("") }
     var weeksInput by rememberSaveable { mutableStateOf("") }
     var limitInput by rememberSaveable { mutableStateOf("25") }
@@ -104,6 +107,20 @@ fun AbsenceCalculatorScreen(
             PokyhCard(modifier = Modifier.fadeIn(40)) {
                 Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg)) {
                     NumberField(t.calcAbsent, absentInput, invalid = (absentInput.isNotBlank() && absentHours == null) || tooMany) { absentInput = it }
+                    // The school's own numbers: the lessons so far, or the whole year's.
+                    if (total.isNotEmpty() && yearTotal.isNotEmpty()) {
+                        PokyhSegmentedControl(
+                            options = listOf(false, true),
+                            selected = wholeYear,
+                            onSelect = { whole ->
+                                wholeYear = whole
+                                weeklyMode = false
+                                totalInput = shown(if (whole) yearTotal else total)
+                            },
+                            label = { if (it) t.spanYear else t.spanSoFar },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     PokyhLabel(t.calcTotalMode, color = PokyhTheme.colors.textSecondary)
                     PokyhSegmentedControl(
                         options = listOf(true, false),

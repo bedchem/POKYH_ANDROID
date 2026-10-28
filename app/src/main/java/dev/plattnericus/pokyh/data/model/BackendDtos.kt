@@ -65,6 +65,8 @@ data class ApiComment(
     val body: String,
     val createdAt: String,
     val updatedAt: String? = null,
+    /** Under a dish, signed in: the stars its author gave it (the backend matches them by account). */
+    val stars: Int? = null,
 )
 
 @Serializable
@@ -119,10 +121,11 @@ data class DishDto(
     val category: String = "",
     val tags: List<String> = emptyList(),
     val prepTime: Int = 0,
-    val calories: Double = 0.0,
+    val calories: Double? = null,
     val price: Double = 0.0,
-    val protein: Double = 0.0,
-    val fat: Double = 0.0,
+    val protein: Double? = null,
+    val carbs: Double? = null,
+    val fat: Double? = null,
     val allergens: List<String> = emptyList(),
     val isVegetarian: Boolean = false,
     val isVegan: Boolean = false,
@@ -131,6 +134,8 @@ data class DishDto(
 
 @Serializable
 data class MenuResponse(
+    /** false: this school has no menu — the app shows no Mensa at all (backend routes/dishes.ts). */
+    val available: Boolean = true,
     val menu: MenuBody,
 )
 
@@ -155,14 +160,15 @@ data class DishRatingEvent(
 
 /**
  * `name`/`description` are a plain string OR an object with de/it/en on the wire.
- * Tries a direct string first, then de -> it -> en from the object, else empty string.
+ * Tries a direct string first, then the language in use, then de -> it -> en from the object
+ * (web lib/mensa.ts `localized`), else empty string.
  */
 fun JsonElement.resolveLocalized(): String {
     (this as? JsonPrimitive)?.let { prim ->
         return prim.contentOrNull ?: ""
     }
     (this as? JsonObject)?.let { obj ->
-        for (key in listOf("de", "it", "en")) {
+        for (key in listOf(dev.plattnericus.pokyh.core.i18n.I18n.lang.value.code, "de", "it", "en")) {
             val value = (obj[key] as? JsonPrimitive)?.contentOrNull
             if (!value.isNullOrEmpty()) return value
         }
@@ -184,10 +190,11 @@ fun DishDto.toDomain(baseUrl: String): Dish {
         price = price,
         allergens = allergens,
         tags = tags,
-        calories = calories,
-        protein = protein,
-        carbs = null,
-        fat = fat,
+        // A figure of 0 is one that wasn't entered: the web hides it.
+        calories = calories?.takeIf { it > 0 },
+        protein = protein?.takeIf { it > 0 },
+        carbs = carbs?.takeIf { it > 0 },
+        fat = fat?.takeIf { it > 0 },
     )
 }
 
@@ -257,9 +264,18 @@ data class ApiActivityCreated(
  * services/accountActivity.ts): active days and sign-ins from its logs and, only with consent to
  * the personal usage statistics, the time spent. Nothing is measured on the device for this.
  */
+/** How long the server keeps what the grid shows: days, or the running school year ([schoolYear]). */
+@Serializable
+data class ApiActivityRetention(
+    val activeDays: Int = 30,
+    val usage: Int = 30,
+    val schoolYear: Boolean = false,
+)
+
 @Serializable
 data class ApiAccountActivity(
     val today: String = "",
+    val retention: ApiActivityRetention = ApiActivityRetention(),
     val usageConsent: Boolean = false,
     val memberSince: String? = null,
     val days: List<ApiActivityDay> = emptyList(),

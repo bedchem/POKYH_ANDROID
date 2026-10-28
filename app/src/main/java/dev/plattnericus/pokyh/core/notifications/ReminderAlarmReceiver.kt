@@ -22,12 +22,15 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         val title = intent.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: return
         val body = intent.getStringExtra(EXTRA_BODY) ?: ""
         val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 0)
+        // Tapped, it opens the reminder (after the lock screen when the app is locked).
+        val route = intent.getStringExtra(NotificationRoute.EXTRA_ROUTE)
 
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val notification = NotificationCompat.Builder(context, PokyhNotifications.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
+            .setContentIntent(NotificationRoute.contentIntent(context, notifId, route))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()

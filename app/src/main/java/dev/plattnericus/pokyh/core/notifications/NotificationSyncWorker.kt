@@ -40,7 +40,8 @@ class NotificationSyncWorker @AssistedInject constructor(
         val password = credentialStore.getCredentials(username)?.second ?: return Result.success()
 
         return try {
-            val session = untisClient.login(username, password)
+            val school = prefsStore.accounts.first().firstOrNull { it.username == username }?.school ?: dev.plattnericus.pokyh.data.model.School.Default
+            val session = untisClient.login(username, password, school = school)
             val inbox = untisClient.messages(session, MessageFolder.Inbox)
             notifications.checkNewMessages(inbox)
             Result.success()

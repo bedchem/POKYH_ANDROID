@@ -12,10 +12,29 @@ import dev.plattnericus.pokyh.data.model.AbsenceEntry
  *  - [EXCUSED] — over, and WebUntis marks the absence excused.
  *  - [ABSENT] — over and not (yet) excused. Flips to [EXCUSED] on the next load once it is.
  */
-enum class AbsenceMark(val label: String, val shortLabel: String) {
-    PRE_EXCUSED("Vorentschuldigung", "Vorentsch."),
-    EXCUSED("Entschuldigt", "Entsch."),
-    ABSENT("Unentschuldigt", "Unentsch."),
+enum class AbsenceMark {
+    PRE_EXCUSED,
+    EXCUSED,
+    ABSENT,
+    ;
+
+    val label: String
+        get() = dev.plattnericus.pokyh.core.i18n.I18n.s.timetable.let {
+            when (this) {
+                PRE_EXCUSED -> it.markPreExcused
+                EXCUSED -> it.markExcused
+                ABSENT -> it.markAbsent
+            }
+        }
+
+    val shortLabel: String
+        get() = dev.plattnericus.pokyh.core.i18n.I18n.s.timetable.let {
+            when (this) {
+                PRE_EXCUSED -> it.markPreExcusedShort
+                EXCUSED -> it.markExcusedShort
+                ABSENT -> it.markAbsentShort
+            }
+        }
 }
 
 /** One continuous stretch of a day covered by the same [AbsenceMark] — what the overlay draws. */
@@ -64,7 +83,7 @@ object AbsenceMarks {
         fun ddmm(d: Int) = "%02d.%02d.".format(d % 100, (d / 100) % 100)
         val from = if (a.startTime > 0) hhmm(a.startTime) else ""
         val to = if (a.endTime > 0) hhmm(a.endTime) else ""
-        if (a.startDate == a.endDate) return if (from.isNotEmpty() && to.isNotEmpty()) "$from – $to" else "Ganzer Tag"
+        if (a.startDate == a.endDate) return if (from.isNotEmpty() && to.isNotEmpty()) "$from – $to" else dev.plattnericus.pokyh.core.i18n.I18n.s.timetable.wholeDay
         return "${ddmm(a.startDate)}${if (from.isNotEmpty()) " $from" else ""} – ${ddmm(a.endDate)}${if (to.isNotEmpty()) " $to" else ""}"
     }
 

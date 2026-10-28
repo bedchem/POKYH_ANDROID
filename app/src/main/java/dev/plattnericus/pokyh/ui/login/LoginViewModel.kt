@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import dev.plattnericus.pokyh.data.model.School
+import dev.plattnericus.pokyh.data.storage.SchoolChoice
 
 /** LoginView.swift's `app.busy` / `app.statusText` / `app.error` / `app.showAddAccount`, bundled
  * for `collectAsStateWithLifecycle()` at the one call site that needs all four together. */
@@ -41,8 +43,59 @@ data class LoginUiState(
 class LoginViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
+    private val backendClient: dev.plattnericus.pokyh.data.backend.BackendClient,
     @ApplicationContext context: Context,
 ) : ViewModel() {
+
+    private val appContext: Context = context
+
+    // ── Die Schule (step one, as on the web) ────────────────────────────────
+
+    /** The school picked last time on this device, until the end of the school year. */
+    val rememberedSchool: School? = SchoolChoice.read(context)
+
+    /** The school a saved account signs in at (re-entering its password). */
+    fun hasAccount(username: String): Boolean = appState.accounts.value.any { it.username.equals(username, ignoreCase = true) }
+
+    fun schoolOf(username: String): School? = appState.accounts.value.firstOrNull { it.username.equals(username, ignoreCase = true) }?.school
+
+    sealed interface Search {
+        data object Idle : Search
+        data object Searching : Search
+        data class Result(val answer: dev.plattnericus.pokyh.data.backend.BackendClient.SchoolSearch) : Search
+    }
+
+    private val _search = MutableStateFlow<Search>(Search.Idle)
+    val search: StateFlow<Search> = _search.asStateFlow()
+    private var searchJob: kotlinx.coroutines.Job? = null
+
+    /** Searches a moment after the last key, as the web does. */
+    fun searchSchools(query: String) {
+        searchJob?.cancel()
+        val q = query.trim()
+        if (q.isEmpty()) { _search.value = Search.Idle; return }
+        if (q.length < 3) { _search.value = Search.Result(dev.plattnericus.pokyh.data.backend.BackendClient.SchoolSearch.Short); return }
+        _search.value = Search.Searching
+        searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(300)
+            _search.value = Search.Result(backendClient.searchSchools(q))
+        }
+    }
+
+    fun forgetSchool() = SchoolChoice.forget(appContext)
+
+    fun pickSchool(school: dev.plattnericus.pokyh.data.model.School) = SchoolChoice.save(appContext, school)
+
+    private val _loginOptions = MutableStateFlow<dev.plattnericus.pokyh.data.backend.BackendClient.LoginOptions?>(null)
+
+    /** How the chosen school signs in; null until known (the password form, as always). */
+    val loginOptions: StateFlow<dev.plattnericus.pokyh.data.backend.BackendClient.LoginOptions?> = _loginOptions.asStateFlow()
+
+    fun loadLoginOptions(school: dev.plattnericus.pokyh.data.model.School?) {
+        _loginOptions.value = null
+        if (school == null) return
+        viewModelScope.launch { _loginOptions.value = backendClient.loginOptions(school) }
+    }
 
     // ── Passwort vergessen ──────────────────────────────────────────────────
 
@@ -56,12 +109,12 @@ class LoginViewModel @Inject constructor(
     }
 
     /** WebUntis e-mails a reset link to the address stored for the account (UntisClient.requestPasswordReset). */
-    fun requestPasswordReset(username: String, email: String) {
+    fun requestPasswordReset(username: String, email: String, school: dev.plattnericus.pokyh.data.model.School? = null) {
         if (_reset.value.sending) return
         _reset.value = ResetState(sending = true)
         viewModelScope.launch {
             _reset.value = try {
-                untisClient.requestPasswordReset(username, email)
+                untisClient.requestPasswordReset(username, email, school ?: SchoolChoice.read(appContext) ?: dev.plattnericus.pokyh.data.model.School.Default)
                 ResetState(sent = true)
             } catch (e: AppError) {
                 ResetState(error = e.message)
@@ -72,8 +125,9 @@ class LoginViewModel @Inject constructor(
     }
 
     /** LoginView.swift `app.biometricAvailable` — gates the "Mit Biometrie speichern" toggle. */
-    val biometricAvailable: Boolean = BiometricManager.from(context)
-        .canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS
+    // The same check the lock screen uses: on Android 9/10 (many Huawei and Honor phones) the
+    // device code can't be combined with biometrics, and asking for both reported "unavailable".
+    val biometricAvailable: Boolean = dev.plattnericus.pokyh.core.biometric.biometricUnlockAvailable(context)
 
     val uiState: StateFlow<LoginUiState> = combine(
         appState.busy, appState.statusText, appState.error, appState.showAddAccount,
@@ -87,9 +141,10 @@ class LoginViewModel @Inject constructor(
 
     /** LoginView.swift `submit()`. Never called with blank fields — the submit button is
      * disabled in that case, matching iOS's `.disabled(... || username.isEmpty || password.isEmpty)`. */
-    fun submit(username: String, password: String, saveCredentials: Boolean) {
+    fun submit(username: String, password: String, saveCredentials: Boolean, school: dev.plattnericus.pokyh.data.model.School? = null) {
         if (username.isBlank() || password.isBlank()) return
-        viewModelScope.launch { appState.login(username, password, saveCredentials) }
+        school?.let { SchoolChoice.save(appContext, it) }
+        viewModelScope.launch { appState.login(username, password, saveCredentials, school) }
     }
 
     /** LoginView.swift `.onAppear { app.error = nil }`. */

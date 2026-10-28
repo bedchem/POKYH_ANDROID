@@ -8,9 +8,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /** The two servers POKYH depends on. A screen is usually served by exactly one of them. */
-enum class PokyhService(val label: String) {
-    UNTIS("WebUntis"),
-    BACKEND("POKYH-Server"),
+enum class PokyhService {
+    UNTIS,
+    BACKEND,
+    ;
+
+    val label: String get() = if (this == UNTIS) "WebUntis" else dev.plattnericus.pokyh.core.i18n.I18n.s.system.server
 }
 
 /**

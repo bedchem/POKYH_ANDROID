@@ -79,9 +79,30 @@ class BellStore @Inject constructor(
     private var pulledAt = 0L
     private var pushJob: Job? = null
 
+    init {
+        // The inbox changes when messages are read in the app (web: "pokyh-messages-updated").
+        scope.launch {
+            appState.readMessages.collect { ids ->
+                patch(owner, { i -> i.copy(messages = i.messages?.map { m -> if (m.id in ids) m.copy(read = true) else m }) })
+            }
+        }
+    }
+
+    private var refreshedAt = 0L
+
+    /** Times ("vor 5 Min.", "fällig in …") and what is due move with the clock. */
+    fun tick() = publish()
+
+    /** Back in the app after a while (5 minutes): everything again, as on the web. */
+    fun resumed() {
+        if (System.currentTimeMillis() - refreshedAt < 5 * 60_000L) return
+        refresh()
+    }
+
     /** Starts (or switches to) the signed-in account and reads what isn't read yet. */
     fun start() {
         val session = appState.session.value ?: return
+        if (refreshedAt == 0L) refreshedAt = System.currentTimeMillis()
         val who = session.username.lowercase()
         if (who != owner) adopt(who)
         load(session, force = false)
@@ -91,6 +112,7 @@ class BellStore @Inject constructor(
     /** On opening the bell: everything old enough again, and the account's marks. */
     fun refresh() {
         val session = appState.session.value ?: return
+        refreshedAt = System.currentTimeMillis()
         if (session.username.lowercase() != owner) adopt(session.username.lowercase())
         load(session, force = true)
         pull(session)
@@ -167,7 +189,10 @@ class BellStore @Inject constructor(
                             i.copy(messages = list.map { m -> BellFeed.MessageIn(m.id, m.subject, m.senderName, BellFeed.parseTime(m.sentDate) ?: 0L, m.isRead) })
                         })
                     }
-                    .onFailure { asked.remove(BellFeed.Source.Messages) }
+                    .onFailure {
+                        asked.remove(BellFeed.Source.Messages)
+                        if (session.apiToken == null) patch(who, { i -> i.copy(messages = i.messages ?: emptyList()) })
+                    }
             }
         }
         val token = session.apiToken ?: return

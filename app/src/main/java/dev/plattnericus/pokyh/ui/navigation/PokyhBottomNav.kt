@@ -37,8 +37,12 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.floatingSurface
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.offset
 
-data class PokyhNavItem(val tab: AppTab, val icon: ImageVector, val label: String)
+data class PokyhNavItem(val tab: AppTab, val icon: ImageVector, val label: String, val badge: Int = 0)
 
 /**
  * The bottom navigation.
@@ -84,6 +88,67 @@ fun PokyhBottomNav(
                 onClick = { onSelect(item.tab) },
                 modifier = Modifier.weight(1f),
             )
+        }
+    }
+}
+
+/**
+ * The tab bar on a mid-size window (a small tablet, a phone on its side): the same bar, floating
+ * above the bottom edge and no wider than a phone's — a bar stretched across 800dp spreads five
+ * small targets so far apart that reaching from one to the next is a journey.
+ */
+@Composable
+fun PokyhFloatingNav(
+    items: List<PokyhNavItem>,
+    selected: AppTab,
+    onSelect: (AppTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = PokyhSpacing.md), contentAlignment = Alignment.Center) {
+        Row(
+            modifier = Modifier
+                .widthIn(max = 560.dp)
+                .fillMaxWidth()
+                .padding(horizontal = PokyhSpacing.lg)
+                .floatingSurface(shape = PokyhShapes.xxl, color = PokyhTheme.colors.nav)
+                .clip(PokyhShapes.xxl)
+                .padding(horizontal = PokyhSpacing.sm, vertical = PokyhSpacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            items.forEach { item ->
+                PokyhBottomNavItem(item = item, isSelected = item.tab == selected, onClick = { onSelect(item.tab) }, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/**
+ * The tabs on a wide window, as the web's side bar shows them folded: a column at the left edge
+ * in the bar's own tone, each place an icon over its name, the POKYH mark on top. Content then
+ * gets the whole height, which on a tablet on its side is what there is least of.
+ */
+@Composable
+fun PokyhSideNav(
+    items: List<PokyhNavItem>,
+    selected: AppTab,
+    onSelect: (AppTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(96.dp)
+            .background(PokyhTheme.colors.nav)
+            .systemBarsPadding()
+            .padding(vertical = PokyhSpacing.lg, horizontal = PokyhSpacing.sm),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+    ) {
+        dev.plattnericus.pokyh.ui.components.PokyhMark(size = 40.dp, modifier = Modifier.clip(PokyhShapes.md))
+        Spacer(Modifier.height(PokyhSpacing.md))
+        items.forEach { item ->
+            PokyhBottomNavItem(item = item, isSelected = item.tab == selected, onClick = { onSelect(item.tab) }, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -144,6 +209,12 @@ private fun PokyhBottomNavItem(
                 tint = contentColor,
                 modifier = Modifier.size(22.dp),
             )
+            if (item.badge > 0) {
+                dev.plattnericus.pokyh.ui.components.UnreadBadge(
+                    count = item.badge,
+                    modifier = Modifier.align(Alignment.TopEnd).offset(x = (-6).dp, y = (-2).dp),
+                )
+            }
         }
         Spacer(Modifier.size(PokyhSpacing.xs))
         PokyhFittedText(

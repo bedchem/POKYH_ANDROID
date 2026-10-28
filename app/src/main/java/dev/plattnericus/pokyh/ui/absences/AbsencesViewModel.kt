@@ -34,84 +34,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
 import kotlinx.serialization.builtins.ListSerializer
 
-// ─── Abwesenheitsberechnung — 1:1 portiert aus AbsencesView.swift ───────────────────────────
-// Die Fehlstunden werden NICHT aus dem von WebUntis gelieferten `hours`-Feld gerechnet,
-// sondern exakt über den Stundenplan: pro Abwesenheit werden die tatsächlichen Unterrichts-
-// minuten in deren Zeitfenster aufsummiert. Zusätzlich werden alle möglichen Unterrichts-
-// minuten seit Schuljahresbeginn summiert (berücksichtigt Ferien, Feiertage, persönlichen
-// Stundenplan) → daraus die Fehlquote. Eine „Schulstunde" zählt dabei als 50 Minuten.
-
-private data class DaySlot(val startMins: Int, val endMins: Int)
-
-/** WebUntis-Zeitwert → Minuten seit Mitternacht. Werte können als Minuten (z. B. 475 = 07:55)
- * ODER als HHMM (z. B. 755 = 07:55) kommen. Erkennung: sind die letzten zwei Stellen > 59,
- * kann es kein gültiges HHMM sein. */
-private fun toMinutesAbs(t: Int): Int {
-    if (t == 0) return 0
-    if (t > 2359) return t
-    if (t % 100 > 59) return t
-    return (t / 100) * 60 + (t % 100)
-}
-
-/** 0 = Sonntag … 6 = Samstag (wie JavaScripts `Date.getDay`). kotlinx.datetime orders Monday=0. */
-private fun jsWeekday(d: LocalDate): Int = (d.dayOfWeek.ordinal + 1) % 7
-
-/** Je ein Montag pro Kalenderwoche von Schuljahresbeginn (1. Sept) bis `now`. */
-private fun weeksForSchoolYear(now: LocalDate, sep: LocalDate): List<String> {
-    var d = mondayOfWeek(sep)
-    val out = mutableListOf<String>()
-    while (d <= now) {
-        out.add(d.toString())
-        d = d.plus(7, DateTimeUnit.DAY)
-    }
-    return out
-}
-
-/** Je ein Montag pro Kalenderwoche, die sich mit einer Abwesenheit überschneidet. */
-private fun weeksForAbsences(absences: List<AbsenceEntry>): List<String> {
-    val set = mutableSetOf<String>()
-    for (a in absences) {
-        var d = a.startDate.toLocalDate()
-        val end = a.endDate.toLocalDate()
-        while (d <= end) {
-            set.add(mondayOfWeek(d).toString())
-            d = d.plus(1, DateTimeUnit.DAY)
-        }
-    }
-    return set.toList()
-}
-
-/** Exakte Unterrichtsminuten einer Abwesenheit über den Stundenplan. */
-private fun calcAbsenceMinutes(entry: AbsenceEntry, dateMap: Map<Int, List<DaySlot>>): Int {
-    var total = 0
-    var d = entry.startDate.toLocalDate()
-    val end = entry.endDate.toLocalDate()
-    val isMultiDay = entry.startDate != entry.endDate
-    val absStartMin = toMinutesAbs(entry.startTime)
-    val absEndMin = toMinutesAbs(entry.endTime)
-
-    while (d <= end) {
-        val dow = jsWeekday(d)
-        if (dow != 0 && dow != 6) {
-            val dateNum = d.toYyyyMMdd()
-            for (slot in dateMap[dateNum].orEmpty()) {
-                // Gezählte Dauer auf das Abwesenheitsfenster beschneiden.
-                var countStart = slot.startMins
-                var countEnd = slot.endMins
-                if (isMultiDay) {
-                    if (absStartMin > 0 && dateNum == entry.startDate) countStart = maxOf(countStart, absStartMin)
-                    if (absEndMin > 0 && dateNum == entry.endDate) countEnd = minOf(countEnd, absEndMin)
-                } else {
-                    if (absStartMin > 0) countStart = maxOf(countStart, absStartMin)
-                    if (absEndMin > 0) countEnd = minOf(countEnd, absEndMin)
-                }
-                if (countEnd > countStart) total += countEnd - countStart
-            }
-        }
-        d = d.plus(1, DateTimeUnit.DAY)
-    }
-    return total
-}
+// The missed minutes and the rate are worked out as on the web — see [AbsenceCalc].
 
 /**
  * Missed lesson time, as the web shows it: the minutes are real clock time spent in lessons
@@ -142,7 +65,8 @@ fun groupAbsencesByMonth(entries: List<AbsenceEntry>, minutesMap: Map<Int, Int>)
         val parts = key.split("-")
         val year = parts[0]
         val month = (parts[1].toIntOrNull() ?: 1).coerceIn(1, 12)
-        val total = es.sumOf { minutesMap[it.id] ?: (it.hours * 50) }
+        // What WebUntis counted; nothing where it didn't say (as the rows and the web).
+        val total = es.sumOf { minutesMap[it.id] ?: 0 }
         val name = months[month - 1].replaceFirstChar { it.uppercase() }
         MonthGroup(id = key, label = "$name $year", entries = es, totalMinutes = total)
     }.sortedByDescending { it.id }
@@ -164,6 +88,7 @@ fun sentExcuseFor(a: AbsenceEntry, excuses: List<UntisClient.SentExcuse>): Untis
 /** Port of `AbsencesView`'s `@State`/`load()` (AbsencesView.swift). */
 @HiltViewModel
 class AbsencesViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val appState: AppState,
     private val untisClient: UntisClient,
     private val offlineStore: OfflineStore,
@@ -181,11 +106,20 @@ class AbsencesViewModel @Inject constructor(
     private val _absences = MutableStateFlow<List<AbsenceEntry>>(emptyList())
     val absences: StateFlow<List<AbsenceEntry>> = _absences.asStateFlow()
 
-    private val _minutesMap = MutableStateFlow<Map<Int, Int>>(emptyMap())
-    val minutesMap: StateFlow<Map<Int, Int>> = _minutesMap.asStateFlow()
+    /** The missed minutes and the rate, as the web works them out ([AbsenceCalc]). */
+    private val _figures = MutableStateFlow(AbsenceCalc.figures(emptyList(), null, null, SchoolDates.currentSchoolYear))
+    val figures: StateFlow<AbsenceCalc.Figures> = _figures.asStateFlow()
 
-    private val _totalPossibleMins = MutableStateFlow(1)
-    val totalPossibleMins: StateFlow<Int> = _totalPossibleMins.asStateFlow()
+    /** The timetable's weeks are being loaded for the rate. */
+    private val _calcBusy = MutableStateFlow(false)
+    val calcBusy: StateFlow<Boolean> = _calcBusy.asStateFlow()
+
+    /** The rate against the lessons so far (false) or every lesson of the school year (true). */
+    private val _wholeYear = MutableStateFlow(false)
+    val wholeYear: StateFlow<Boolean> = _wholeYear.asStateFlow()
+
+    private var calendar: AbsenceCalc.LessonCalendar? = null
+    private var official: List<AbsenceCalc.OfficialMinute>? = null
 
     private val _loading = MutableStateFlow(true)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -279,7 +213,10 @@ class AbsencesViewModel @Inject constructor(
             }.getOrNull().orEmpty()
             val lessons = week.filter { it.date == today.toYyyyMMdd() && !it.isCancelled }
             val range = if (lessons.isEmpty()) null else lessons.minOf { it.startTime } to lessons.maxOf { it.endTime }
-            _form.value = _form.value.copy(meta = meta, metaFailed = meta == null, todayRange = range)
+            // Without the dialog's meta, the reasons alone (web: a reasons-only request).
+            val fallback = if (meta == null) runCatching { untisClient.absenceReasons(session) }.getOrDefault(emptyList()) else emptyList()
+            val shownMeta = meta ?: fallback.takeIf { it.isNotEmpty() }?.let { dev.plattnericus.pokyh.data.model.AbsenceMeta(reasons = it, defaultReasonId = null, defaultDate = null, defaultStartTime = null, defaultEndTime = null) }
+            _form.value = _form.value.copy(meta = shownMeta, metaFailed = shownMeta == null, todayRange = range)
         }
         if (forExcuse) {
             viewModelScope.launch {
@@ -292,6 +229,22 @@ class AbsencesViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /** Who the absence is reported for (the "Für" row). */
+    val personName: String? get() = appState.session.value?.personName
+
+    /** A day's lessons for "Aus Stundenplan wählen": the stored week first, else WebUntis. */
+    suspend fun lessonsOn(date: java.time.LocalDate): List<TimetableEntry> {
+        val session = appState.session.value ?: return emptyList()
+        val monday = date.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val num = date.year * 10000 + date.monthValue * 100 + date.dayOfMonth
+        val week = runCatching {
+            offlineStore.load("tt-${session.studentId}-$monday", ListSerializer(TimetableEntry.serializer())) {
+                untisClient.timetable(session, session.studentId, monday.toString())
+            }.value
+        }.getOrDefault(emptyList())
+        return week.filter { it.date == num }.distinctBy { it.startTime }.sortedBy { it.startTime }
     }
 
     fun report(startDate: Int, startTime: Int, endDate: Int, endTime: Int, reasonId: Int, text: String) =
@@ -380,6 +333,7 @@ class AbsencesViewModel @Inject constructor(
     fun selectYear(y: Int) {
         if (y == _year.value) return
         _year.value = y
+        _wholeYear.value = false
         load()
     }
 
@@ -388,6 +342,67 @@ class AbsencesViewModel @Inject constructor(
     /** "Im Stundenplan ansehen": switch to the Stundenplan tab at the week of [dateNum]. */
     fun openInTimetable(dateNum: Int) = appState.openTimetableAt(dateNum)
 
+    /** A year that is over is the same either way. */
+    fun canWhole(): Boolean = _year.value == SchoolDates.currentSchoolYear
+
+    /** The lesson minutes of the whole school year (to June), once every week of it is kept. */
+    fun wholeYearMinutes(): Int? = calendar?.takeIf { AbsenceCalc.hasWholeYear(it, _year.value, whole = true) }
+        ?.let { AbsenceCalc.possibleMinutes(it, _year.value, whole = true) }?.takeIf { it > 0 }
+
+    /** The lesson minutes so far (to today). */
+    fun soFarMinutes(): Int? = calendar?.takeIf { AbsenceCalc.hasWholeYear(it, _year.value, whole = false) }
+        ?.let { AbsenceCalc.possibleMinutes(it, _year.value, whole = false) }?.takeIf { it > 0 }
+
+    fun setWholeYear(whole: Boolean) {
+        _wholeYear.value = whole
+        recompute()
+        // The weeks still to come are only loaded for the whole year.
+        if (whole && !AbsenceCalc.hasWholeYear(calendar, _year.value, whole = true)) refreshCalendar()
+    }
+
+    private fun recompute() {
+        _figures.value = AbsenceCalc.figures(_absences.value, calendar, official, _year.value, whole = _wholeYear.value && canWhole())
+    }
+
+    /** The weeks of the timetable not kept yet, or due again; a few at a time. */
+    fun refreshCalendar() {
+        val session = appState.session.value ?: return
+        val y = _year.value
+        viewModelScope.launch {
+            _calcBusy.value = true
+            try {
+                calendar = AbsenceCalc.refreshCalendar(
+                    context = context,
+                    studentId = session.studentId,
+                    year = y,
+                    fetchWeek = { monday -> untisClient.timetable(session, session.studentId, monday) },
+                    extraWeeks = AbsenceCalc.absenceWeeks(_absences.value),
+                    // The weeks still to come as well, from the start: "Ganzes Jahr" is then
+                    // ready the moment it is picked.
+                    whole = canWhole(),
+                )
+            } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
+            } finally {
+                _calcBusy.value = false
+                if (y == _year.value) recompute()
+            }
+        }
+    }
+
+    private fun loadOfficial(session: UserSession, y: Int) {
+        val key = "abstimes-${session.studentId}-$y"
+        val serializer = ListSerializer(AbsenceCalc.OfficialMinute.serializer())
+        viewModelScope.launch {
+            runCatching { offlineStore.peek(key, serializer) }.getOrNull()?.let { official = it.value; recompute() }
+            runCatching {
+                offlineStore.load(key, serializer) {
+                    untisClient.absenceTimes(session, session.studentId, SchoolDates.yearStart(y).toString(), SchoolDates.yearEnd(y).toString())
+                }
+            }.getOrNull()?.let { if (y == _year.value) { official = it.value; recompute() } }
+        }
+    }
+
     private fun load() {
         val session = appState.session.value ?: return
         viewModelScope.launch {
@@ -395,6 +410,9 @@ class AbsencesViewModel @Inject constructor(
             _error.value = null
             try {
                 val y = _year.value
+                calendar = AbsenceCalc.readCalendar(context, session.studentId, y)
+                official = null
+                loadOfficial(session, y)
                 // On screen straight away from the last copy; the request replaces it when it lands.
                 runCatching {
                     offlineStore.peek(
@@ -404,6 +422,7 @@ class AbsencesViewModel @Inject constructor(
                 }.getOrNull()?.let { cached ->
                     if (cached.value.isNotEmpty()) {
                         _absences.value = cached.value
+                        recompute()
                         _loading.value = false
                     }
                 }
@@ -419,35 +438,10 @@ class AbsencesViewModel @Inject constructor(
                     )
                 }.value
                 _absences.value = parsed
-
-                // Schuljahres-Zeitraum für das gewählte Jahr.
-                val sep = (y * 10000 + 901).toLocalDate() // 1. Sept
-                val now = if (y == SchoolDates.currentSchoolYear) {
-                    dev.plattnericus.pokyh.core.util.todayLocalDate()
-                } else {
-                    ((y + 1) * 10000 + 630).toLocalDate() // 30. Juni Folgejahr
-                }
-
-                // Stundenplan für Abwesenheits-Wochen + alle Schuljahres-Wochen laden
-                // (für einen korrekten Nenner der Fehlquote).
-                val weeks = (weeksForAbsences(parsed) + weeksForSchoolYear(now, sep)).toSet().toList()
-                val dateMap = buildDateMap(session, weeks)
-
-                // Exakte Minuten je Abwesenheit.
-                val mins = mutableMapOf<Int, Int>()
-                for (e in parsed) mins[e.id] = calcAbsenceMinutes(e, dateMap)
-                _minutesMap.value = mins
-
-                // Alle möglichen Unterrichtsminuten seit Schuljahresbeginn.
-                val sepNum = sep.toYyyyMMdd()
-                val nowNum = now.toYyyyMMdd()
-                var possible = 0
-                for ((dateNum, slots) in dateMap) {
-                    if (dateNum in sepNum..nowNum) {
-                        for (slot in slots) possible += slot.endMins - slot.startMins
-                    }
-                }
-                _totalPossibleMins.value = maxOf(1, possible)
+                recompute()
+                _loading.value = false
+                // The rate's whole: the year's lessons from the timetable, kept per week.
+                refreshCalendar()
             } catch (e: AppError) {
                 if (e.isSessionExpired) appState.handleSessionExpired()
                 _error.value = if (e.isSessionExpired) dev.plattnericus.pokyh.core.i18n.I18n.s.common.sessionExpired else e.message
@@ -457,38 +451,5 @@ class AbsencesViewModel @Inject constructor(
                 _loading.value = false
             }
         }
-    }
-
-    /** Lädt die Wochen-Stundenpläne nebenläufig und baut eine Karte dateNum → Unterrichts-Slots
-     * (dedupliziert nach Startzeit, abgesagte und fachlose Einträge übersprungen). */
-    private suspend fun buildDateMap(session: UserSession, weeks: List<String>): Map<Int, List<DaySlot>> = coroutineScope {
-        val deferred = weeks.map { w ->
-            async {
-                try {
-                    // The Stundenplan tab's per-week key — offline, stored weeks still count.
-                    offlineStore.load(
-                        key = "tt-${session.studentId}-$w",
-                        serializer = ListSerializer(TimetableEntry.serializer()),
-                    ) { untisClient.timetable(session, session.studentId, w) }.value
-                } catch (e: AppError) {
-                    if (e.isSessionExpired) throw e else emptyList()
-                } catch (e: Exception) {
-                    emptyList()
-                }
-            }
-        }
-        val raw = mutableMapOf<Int, MutableMap<Int, DaySlot>>()
-        for (entries in deferred.awaitAll()) {
-            for (e in entries) {
-                if (e.isCancelled) continue
-                if (e.subjectName.isEmpty() && e.subjectLong.isEmpty()) continue
-                val startMins = Fmt.minutes(e.startTime)
-                val endMins = Fmt.minutes(e.endTime)
-                // Parallele Fächer (gleicher Beginn) zählen als eine Stunde.
-                val dayMap = raw.getOrPut(e.date) { mutableMapOf() }
-                if (!dayMap.containsKey(startMins)) dayMap[startMins] = DaySlot(startMins, endMins)
-            }
-        }
-        raw.mapValues { it.value.values.toList() }
     }
 }

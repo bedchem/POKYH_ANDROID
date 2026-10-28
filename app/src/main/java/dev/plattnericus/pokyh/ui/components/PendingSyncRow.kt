@@ -65,7 +65,7 @@ fun PendingSyncRow(
                 if (dateLabel != null) {
                     StatusLabel(text = dateLabel, color = Brand.orange, icon = PokyhIcons.timetable)
                 }
-                StatusLabel(text = "Wartet auf Internet", color = Brand.warning, icon = PokyhIcons.offline)
+                StatusLabel(text = dev.plattnericus.pokyh.core.i18n.I18n.s.errors.waiting, color = Brand.warning, icon = PokyhIcons.offline)
             }
         }
     }

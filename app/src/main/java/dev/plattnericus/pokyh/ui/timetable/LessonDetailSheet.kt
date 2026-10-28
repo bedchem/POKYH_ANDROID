@@ -71,6 +71,8 @@ import dev.plattnericus.pokyh.ui.theme.SubjectTone
 import dev.plattnericus.pokyh.ui.theme.statusTone
 import dev.plattnericus.pokyh.ui.theme.subjectTone
 import kotlinx.coroutines.launch
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.i18n.strings
 
 /**
  * The lesson detail, as a bottom sheet.
@@ -103,6 +105,8 @@ fun LessonDetailSheet(
     absences: List<AbsenceEntry> = emptyList(),
     detailLoading: Boolean = false,
     detail: LessonDetail? = null,
+    /** Excuses sent to the class teachers: an unexcused absence they cover says so. */
+    sentExcuses: List<dev.plattnericus.pokyh.data.untis.UntisClient.SentExcuse> = emptyList(),
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
@@ -125,6 +129,7 @@ fun LessonDetailSheet(
             absences = absences,
             detailLoading = detailLoading,
             detail = detail,
+            sentExcuses = sentExcuses,
             onClose = ::dismiss,
         )
     }
@@ -153,6 +158,7 @@ private fun LessonDetailContent(
     absences: List<AbsenceEntry>,
     detailLoading: Boolean,
     detail: LessonDetail?,
+    sentExcuses: List<dev.plattnericus.pokyh.data.untis.UntisClient.SentExcuse> = emptyList(),
     onClose: () -> Unit,
 ) {
     val colors = PokyhTheme.colors
@@ -199,6 +205,15 @@ private fun LessonDetailContent(
                     Text(short, style = PokyhType.subheadline, color = colors.textSecondary)
                 }
                 Spacer(Modifier.size(PokyhSpacing.xs))
+                val dayLine = remember(d.date) {
+                    runCatching {
+                        val l = I18n.lang.value
+                        java.time.LocalDate.of(d.date / 10000, d.date / 100 % 100, d.date % 100)
+                            .format(java.time.format.DateTimeFormatter.ofPattern(I18n.s.tasks.dayLong, l.locale))
+                            .replaceFirstChar { it.titlecase(l.locale) }
+                    }.getOrDefault("")
+                }
+                if (dayLine.isNotEmpty()) Text(dayLine, style = PokyhType.footnote.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = colors.textSecondary)
                 TimePill(text = "${Fmt.time(d.startTime)} – ${Fmt.time(d.endTime)}", tone = tone)
             }
         }
@@ -222,7 +237,15 @@ private fun LessonDetailContent(
             return@Column
         }
         DetailsCard(detailEntryFor(slot), tone, classes = detail?.classes.orEmpty(), group = detail?.group.orEmpty())
-        absence?.let { AbsenceCard(it, tone) }
+        absence?.let { a ->
+            // An unexcused absence the class teachers were written about shows that, as the web.
+            val sent = if (a.mark == AbsenceMark.ABSENT) {
+                val start = d.date.toLong() * 10000 + d.startTime
+                val end = d.date.toLong() * 10000 + d.endTime
+                sentExcuses.filter { it.start < end && it.end > start }.maxByOrNull { it.sentAt }
+            } else null
+            AbsenceCard(a, tone, sent)
+        }
         slot.replacement?.let { InsteadCard(it) }
         // Every free-text field WebUntis can attach to a period, each under its own heading, each
         // text once: the timetable's own first, then what the lesson's detail adds.
@@ -233,17 +256,27 @@ private fun LessonDetailContent(
             val v = text?.trim().orEmpty()
             if (v.isNotEmpty() && notes.none { sameText(it.second, v) }) notes += label to v
         }
-        addNote("Notiz", d.note)
-        addNote("Stundentext", d.lessonText)
-        addNote("Vertretungstext", d.substitutionText)
+        val t = I18n.s.timetable
+        addNote(t.note, d.note)
+        addNote(t.lessonText, d.lessonText)
+        addNote(t.substitutionText, d.substitutionText)
         detail?.texts?.forEach { (label, text) -> addNote(label, text) }
+        d.texts.forEach { x ->
+            val label = when (x.type) {
+                "SUBSTITUTION" -> t.substitutionText
+                "LESSON_TEXT" -> t.lessonText
+                "LESSON_INFO" -> t.note
+                else -> t.info
+            }
+            addNote(label, x.text)
+        }
         if (d.isExam) {
             val exam = listOfNotNull(detail?.examName, d.examDescription ?: detail?.examDescription)
                 .filter { it.isNotBlank() }.distinct().joinToString("\n")
-            if (exam.isNotEmpty()) SectionCard("Prüfungsinhalt", exam)
+            if (exam.isNotEmpty()) SectionCard(strings().timetable.examContent, exam)
         }
         notes.forEach { (label, text) -> SectionCard(label, text) }
-        detail?.homeworks?.takeIf { it.isNotEmpty() }?.let { SectionCard("Hausaufgaben", it.joinToString("\n\n")) }
+        detail?.homeworks?.takeIf { it.isNotEmpty() }?.let { SectionCard(strings().timetable.homework, it.joinToString("\n\n")) }
     }
 }
 
@@ -366,7 +399,7 @@ private fun LessonHeaderImage(
 
         PokyhIconButton(
             icon = PokyhIcons.close,
-            contentDescription = "Schließen",
+            contentDescription = strings().common.close,
             onClick = onClose,
             tint = colors.textPrimary,
             containerColor = colors.card.copy(alpha = 0.92f),
@@ -423,13 +456,14 @@ private fun MonogramFallback(name: String, tone: SubjectTone) {
 private fun tagsFor(slot: MergedSlot): List<Pair<String, Color>> {
     val d = slot.display
     return buildList {
-        if (d.isCancelled) add("Entfall" to Brand.danger)
-        if (slot.kind == SlotKind.REPLACEMENT) add("Vertretung" to Brand.orange)
-        if (d.isExam) add("Prüfung" to Brand.warning)
+        val t = I18n.s.timetable
+        if (d.isCancelled) add(t.cancelled to Brand.danger)
+        if (slot.kind == SlotKind.REPLACEMENT) add(t.substitution to Brand.orange)
+        if (d.isExam) add(t.exam to Brand.warning)
         if (d.isSubstitution && !d.isCancelled && slot.kind != SlotKind.REPLACEMENT) {
-            add("Vertretung" to Brand.orange)
+            add(t.substitution to Brand.orange)
         }
-        if (slot.kind == SlotKind.EVENT) add("Veranstaltung" to Brand.accent)
+        if (slot.kind == SlotKind.EVENT) add(t.event to Brand.accent)
     }
 }
 
@@ -453,7 +487,7 @@ private fun detailTone(slot: MergedSlot, isDark: Boolean): SubjectTone {
 /** The long name where WebUntis has one, else the short name, else the note. */
 private fun headerNameFor(slot: MergedSlot): String {
     val d = slot.display
-    return d.subjectLong.ifEmpty { d.subjectName.ifEmpty { d.note ?: "Stunde" } }
+    return d.subjectLong.ifEmpty { d.subjectName.ifEmpty { d.note ?: I18n.s.timetable.lesson } }
 }
 
 /** The short name, shown under the title only when it adds something the title doesn't. */
@@ -463,8 +497,12 @@ private fun detailEntryFor(slot: MergedSlot): TimetableEntry = slot.display
 
 /** "Abwesend" — the status (Vorentschuldigung / Entschuldigt / Unentschuldigt) and from when to when. */
 @Composable
-private fun AbsenceCard(absence: LessonAbsence, tone: SubjectTone) {
-    val statusColor = if (absence.mark == AbsenceMark.ABSENT) Brand.danger else Brand.success
+private fun AbsenceCard(absence: LessonAbsence, tone: SubjectTone, sent: dev.plattnericus.pokyh.data.untis.UntisClient.SentExcuse? = null) {
+    val statusColor = when {
+        sent != null -> Brand.warning
+        absence.mark == AbsenceMark.ABSENT -> Brand.danger
+        else -> Brand.success
+    }
     val statusTone = SubjectTone(
         fill = statusColor.copy(alpha = 0.16f),
         ink = statusColor,
@@ -472,17 +510,33 @@ private fun AbsenceCard(absence: LessonAbsence, tone: SubjectTone) {
     )
     val reasons = absence.covering.mapNotNull { it.reasonName?.takeIf { r -> r.isNotBlank() } }.distinct()
     PokyhCard(padding = 0.dp) {
-        DetailRow("Abwesend", absence.mark.label, PokyhIcons.absences, statusTone, valueColor = statusColor)
+        DetailRow(strings().timetable.absent, if (sent != null) strings().timetable.markSent else absence.mark.label, if (sent != null) PokyhIcons.sendMessage else PokyhIcons.absences, statusTone, valueColor = statusColor)
+        if (sent != null && sent.recipients.isNotEmpty()) {
+            val date = runCatching {
+                val l = I18n.lang.value
+                java.time.OffsetDateTime.parse(sent.sentAt).format(java.time.format.DateTimeFormatter.ofPattern(if (l == dev.plattnericus.pokyh.core.i18n.Lang.De) "d. MMM" else "d MMM", l.locale))
+            }.getOrNull() ?: runCatching {
+                val l = I18n.lang.value
+                java.time.LocalDateTime.parse(sent.sentAt.take(19)).format(java.time.format.DateTimeFormatter.ofPattern(if (l == dev.plattnericus.pokyh.core.i18n.Lang.De) "d. MMM" else "d MMM", l.locale))
+            }.getOrNull()
+            PokyhRowSeparator(startInset = DetailTextInset)
+            DetailRow(
+                strings().messages.recipients,
+                if (date != null) strings().timetable.sentTo(sent.recipients.joinToString(", "), date) else sent.recipients.joinToString(", "),
+                PokyhIcons.person,
+                tone,
+            )
+        }
         PokyhRowSeparator(startInset = DetailTextInset)
         DetailRow(
-            "Zeitraum",
+            strings().timetable.period,
             absence.covering.joinToString("\n") { AbsenceMarks.rangeText(it) },
             PokyhIcons.clock,
             tone,
         )
         if (reasons.isNotEmpty()) {
             PokyhRowSeparator(startInset = DetailTextInset)
-            DetailRow("Grund", reasons.joinToString(", "), PokyhIcons.document, tone)
+            DetailRow(strings().timetable.reason, reasons.joinToString(", "), PokyhIcons.document, tone)
         }
     }
 }
@@ -505,26 +559,26 @@ private fun DetailsCard(d: TimetableEntry, tone: SubjectTone, classes: List<Stri
     PokyhCard(padding = 0.dp) {
         if (hasTeacher) {
             if (origTeacher.isNotEmpty() && origTeacher != teacher) {
-                ChangeRow("Lehrkraft", origTeacher, teacher, PokyhIcons.person, tone)
+                ChangeRow(strings().timetable.teacher, origTeacher, teacher, PokyhIcons.person, tone)
             } else {
-                DetailRow("Lehrkraft", teacher.ifEmpty { origTeacher }, PokyhIcons.person, tone)
+                DetailRow(strings().timetable.teacher, teacher.ifEmpty { origTeacher }, PokyhIcons.person, tone)
             }
         }
         if (hasRoom) {
             if (afterFirst(1)) PokyhRowSeparator(startInset = DetailTextInset)
             if (origRoom.isNotEmpty() && origRoom != room) {
-                ChangeRow("Raum", origRoom, room, PokyhIcons.room, tone)
+                ChangeRow(strings().timetable.room, origRoom, room, PokyhIcons.room, tone)
             } else {
-                DetailRow("Raum", room.ifEmpty { origRoom }, PokyhIcons.room, tone)
+                DetailRow(strings().timetable.room, room.ifEmpty { origRoom }, PokyhIcons.room, tone)
             }
         }
         if (classes.isNotEmpty()) {
             if (afterFirst(2)) PokyhRowSeparator(startInset = DetailTextInset)
-            DetailRow("Klassen", classes.joinToString(", "), PokyhIcons.classMembers, tone)
+            DetailRow(strings().timetable.classes, classes.joinToString(", "), PokyhIcons.classMembers, tone)
         }
         if (group.isNotEmpty()) {
             if (afterFirst(3)) PokyhRowSeparator(startInset = DetailTextInset)
-            DetailRow("Gruppe", group, PokyhIcons.classMembers, tone)
+            DetailRow(strings().timetable.group, group, PokyhIcons.classMembers, tone)
         }
     }
 }
@@ -626,7 +680,7 @@ private fun InsteadCard(other: TimetableEntry) {
                 tint = colors.textTertiary,
                 modifier = Modifier.size(14.dp),
             )
-            PokyhLabel(if (cancelled) "Statt" else "Stattdessen")
+            PokyhLabel(if (cancelled) strings().timetable.insteadShort else strings().timetable.instead)
         }
         Spacer(Modifier.size(PokyhSpacing.sm))
         Text(

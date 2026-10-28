@@ -158,6 +158,7 @@ private fun animatedColors(target: PokyhColors): PokyhColors {
         nav = fade(target.nav, "nav"),
         border = fade(target.border, "border"),
         separator = fade(target.separator, "separator"),
+        line = fade(target.line, "line"),
         textPrimary = fade(target.textPrimary, "textPrimary"),
         textSecondary = fade(target.textSecondary, "textSecondary"),
         textTertiary = fade(target.textTertiary, "textTertiary"),

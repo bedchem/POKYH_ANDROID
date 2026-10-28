@@ -106,7 +106,7 @@ private fun RatingStar(filled: Boolean, index: Int, onRate: ((Int) -> Unit)?) {
     )
     Icon(
         imageVector = if (filled) PokyhIcons.starFilled else PokyhIcons.starEmpty,
-        contentDescription = if (onRate != null) "${index + 1} Sterne" else null,
+        contentDescription = if (onRate != null) dev.plattnericus.pokyh.core.i18n.I18n.s.mensa.starsLabel(index + 1) else null,
         tint = if (filled) Brand.star else PokyhTheme.colors.textTertiary,
         modifier = Modifier
             .size(26.dp)
@@ -203,13 +203,13 @@ fun MiniStarsSlot(
         when {
             loading -> MiniStarsPlaceholder()
             count <= 0 && unknown -> Text(
-                text = "Offline – Bewertung nicht geladen",
+                text = dev.plattnericus.pokyh.core.i18n.I18n.s.errors.ratingOffline,
                 style = PokyhType.caption2,
                 color = PokyhTheme.colors.textTertiary,
             )
             count > 0 -> MiniStars(average = average, count = count)
             else -> Text(
-                text = "Noch keine Bewertung",
+                text = dev.plattnericus.pokyh.core.i18n.I18n.s.errors.noRating,
                 style = PokyhType.caption2,
                 color = PokyhTheme.colors.textTertiary,
             )

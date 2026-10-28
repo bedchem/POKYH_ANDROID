@@ -195,7 +195,7 @@ class AppUpdater @Inject constructor(
         http.newCall(request).execute().use { response ->
             // 404 = no published release yet — that's "up to date", not an error.
             if (response.code == 404) return@withContext null
-            if (!response.isSuccessful) throw IOException("GitHub antwortet mit ${response.code}")
+            if (!response.isSuccessful) throw IOException(dev.plattnericus.pokyh.core.i18n.I18n.s.system.githubStatus(response.code))
             val gh = json.decodeFromString(GhRelease.serializer(), response.body.string())
             val version = gh.tagName.trim().removePrefix("v").removePrefix("V")
             if (gh.draft || gh.prerelease || !isNewer(version, BuildConfig.VERSION_NAME)) return@withContext null
@@ -215,7 +215,7 @@ class AppUpdater @Inject constructor(
         val part = File(dir, target.name + ".part")
 
         http.newCall(Request.Builder().url(release.apkUrl).build()).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("Download fehlgeschlagen (${response.code})")
+            if (!response.isSuccessful) throw IOException(dev.plattnericus.pokyh.core.i18n.I18n.s.system.downloadFailedCode(response.code))
             val body = response.body
             val total = body.contentLength().takeIf { it > 0 } ?: release.apkSize.takeIf { it > 0 }
             body.byteStream().use { input ->
@@ -240,7 +240,7 @@ class AppUpdater @Inject constructor(
                 }
             }
         }
-        if (!part.renameTo(target)) throw IOException("Update konnte nicht gespeichert werden")
+        if (!part.renameTo(target)) throw IOException(dev.plattnericus.pokyh.core.i18n.I18n.s.system.saveFailed)
         target
     }
 
@@ -252,12 +252,12 @@ class AppUpdater @Inject constructor(
         } else {
             @Suppress("DEPRECATION")
             pm.getPackageArchiveInfo(apk.path, 0)
-        } ?: throw UpdateException("Die heruntergeladene Datei ist beschädigt.")
+        } ?: throw UpdateException(dev.plattnericus.pokyh.core.i18n.I18n.s.system.corrupt)
         if (info.packageName != context.packageName) {
-            throw UpdateException("Dieses Update ist für eine andere App-Variante (${info.packageName}).")
+            throw UpdateException(dev.plattnericus.pokyh.core.i18n.I18n.s.system.otherVariant(info.packageName))
         }
         if (PackageInfoCompat.getLongVersionCode(info) <= BuildConfig.VERSION_CODE) {
-            throw UpdateException("Das Update ist nicht neuer als die installierte Version.")
+            throw UpdateException(dev.plattnericus.pokyh.core.i18n.I18n.s.system.notNewer)
         }
     }
 
@@ -275,7 +275,7 @@ class AppUpdater @Inject constructor(
             // The system installer takes it from here; installing replaces this process.
             _state.value = State.Idle
         } catch (e: Exception) {
-            _state.value = State.Failed(release, "Installation konnte nicht gestartet werden.")
+            _state.value = State.Failed(release, dev.plattnericus.pokyh.core.i18n.I18n.s.system.installFailed)
         }
     }
 
@@ -288,9 +288,9 @@ class AppUpdater @Inject constructor(
 
     private fun Exception.toUserMessage(): String = when (this) {
         is UpdateException -> message.orEmpty()
-        is java.net.UnknownHostException -> "Keine Internetverbindung."
-        is java.net.SocketTimeoutException -> "Zeitüberschreitung beim Download."
-        is IOException -> message?.takeIf { it.isNotBlank() } ?: "Download fehlgeschlagen."
+        is java.net.UnknownHostException -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.noInternet
+        is java.net.SocketTimeoutException -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.downloadTimeout
+        is IOException -> message?.takeIf { it.isNotBlank() } ?: dev.plattnericus.pokyh.core.i18n.I18n.s.system.downloadFailed
         else -> dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
     }
 

@@ -60,6 +60,7 @@ import dev.plattnericus.pokyh.ui.theme.insetSurface
 import dev.plattnericus.pokyh.ui.theme.nestedSurface
 import dev.plattnericus.pokyh.ui.theme.pressHighlight
 import kotlinx.coroutines.launch
+import dev.plattnericus.pokyh.core.i18n.strings
 
 /** Files bigger than this aren't read into memory — WebUntis' own per-file cap is lower still. */
 private const val MaxAttachmentBytes = 20L * 1024 * 1024
@@ -104,7 +105,8 @@ fun ComposeMessageSheet(
                 recipients = state.recipients,
                 selected = state.selected,
                 failed = state.recipientsFailed,
-                onToggle = viewModel::toggleRecipient,
+                // One teacher per message: the pick returns to the form, as on the web.
+                onToggle = { r -> viewModel.toggleRecipient(r); if (state.selected.none { it.id == r.id }) pickingRecipients = false },
                 onDone = { pickingRecipients = false },
             )
         } else {
@@ -130,7 +132,7 @@ private fun ComposeForm(
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
         val read = uris.mapNotNull { readAttachment(context, it) }
-        if (read.size < uris.size) viewModel.fileError("Mindestens eine Datei konnte nicht gelesen werden.")
+        if (read.size < uris.size) viewModel.fileError(dev.plattnericus.pokyh.core.i18n.I18n.s.messages.fileUnreadable)
         viewModel.addFiles(read)
     }
 
@@ -145,14 +147,14 @@ private fun ComposeForm(
         Row(verticalAlignment = Alignment.CenterVertically) {
             PokyhIconButton(
                 icon = PokyhIcons.close,
-                contentDescription = "Schließen",
+                contentDescription = strings().common.close,
                 onClick = onClose,
                 tinted = true,
                 size = 36.dp,
                 iconSize = 18.dp,
             )
             Text(
-                text = if (state.isReply) "Antworten" else "Mitteilung an Lehrkraft",
+                text = if (state.isReply) strings().messages.reply else strings().messages.toTeacher,
                 style = PokyhType.headline,
                 color = colors.textPrimary,
                 modifier = Modifier.weight(1f).padding(horizontal = PokyhSpacing.md),
@@ -168,7 +170,7 @@ private fun ComposeForm(
             } else {
                 PokyhIconButton(
                     icon = if (state.sent) PokyhIcons.check else PokyhIcons.sendMessage,
-                    contentDescription = "Senden",
+                    contentDescription = strings().common.send,
                     onClick = viewModel::send,
                     tint = Brand.onAccent,
                     containerColor = if (state.sent) Brand.success else Brand.accent,
@@ -183,19 +185,19 @@ private fun ComposeForm(
             if (state.isReply) {
                 // A reply goes to the sender; WebUntis says who that is.
                 SheetField(
-                    label = "An",
-                    value = state.replyRecipient?.ifEmpty { null } ?: if (state.replyLoading) "…" else "Nicht verfügbar",
+                    label = strings().messages.to,
+                    value = state.replyRecipient?.ifEmpty { null } ?: if (state.replyLoading) "…" else strings().messages.unavailable,
                     placeholder = state.replyRecipient.isNullOrEmpty(),
                     onClick = null,
                 )
             } else {
                 SheetField(
-                    label = "An",
+                    label = strings().messages.to,
                     value = when {
-                        state.selected.isEmpty() && state.recipientsFailed -> "Nicht verfügbar"
-                        state.selected.isEmpty() -> "Wählen"
+                        state.selected.isEmpty() && state.recipientsFailed -> strings().messages.unavailable
+                        state.selected.isEmpty() -> strings().messages.choose
                         state.selected.size == 1 -> state.selected.first().name
-                        else -> "${state.selected.size} Empfänger"
+                        else -> strings().messages.recipientsCount(state.selected.size)
                     },
                     placeholder = state.selected.isEmpty(),
                     onClick = onPickRecipients,
@@ -205,7 +207,7 @@ private fun ComposeForm(
             PokyhTextField(
                 value = state.subject,
                 onValueChange = viewModel::setSubject,
-                placeholder = "Betreff",
+                placeholder = strings().messages.subject,
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -213,7 +215,7 @@ private fun ComposeForm(
             PokyhTextField(
                 value = state.content,
                 onValueChange = viewModel::setContent,
-                placeholder = "Text hier eingeben",
+                placeholder = strings().messages.textHint,
                 singleLine = false,
                 minLines = 6,
                 enabled = !state.busy,
@@ -249,7 +251,7 @@ private fun ComposeForm(
                         }
                         PokyhIconButton(
                             icon = PokyhIcons.close,
-                            contentDescription = "${file.name} entfernen",
+                            contentDescription = strings().messages.removeFile(file.name),
                             onClick = { viewModel.removeFile(index) },
                             enabled = !state.busy,
                             tint = colors.textSecondary,
@@ -263,16 +265,29 @@ private fun ComposeForm(
 
         Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.rowGap)) {
             PokyhSecondaryButton(
-                text = "Anhang hinzufügen",
+                text = strings().messages.addAttachment,
                 icon = PokyhIcons.attachment,
                 onClick = { picker.launch(arrayOf("*/*")) },
                 enabled = !state.busy,
                 compact = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (state.draftId != null) {
+                PokyhSecondaryButton(
+                    text = strings().messages.deleteDraft,
+                    icon = PokyhIcons.delete,
+                    onClick = viewModel::deleteDraft,
+                    enabled = !state.busy,
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (state.draftLoading) {
+                Text(strings().messages.draftLoading, style = PokyhType.footnote, color = PokyhTheme.colors.textTertiary)
+            }
             if (!state.isReply) {
                 PokyhSecondaryButton(
-                    text = if (state.draftSaved) "Entwurf gespeichert" else "Als Entwurf speichern",
+                    text = if (state.draftSaved) strings().messages.draftSaved else strings().messages.saveDraft,
                     icon = if (state.draftSaved) PokyhIcons.check else PokyhIcons.compose,
                     onClick = viewModel::saveDraft,
                     loading = state.savingDraft,
@@ -285,13 +300,13 @@ private fun ComposeForm(
 
         if (state.recipientsFailed && !state.isReply) {
             Text(
-                text = "Empfänger konnten gerade nicht geladen werden.",
+                text = strings().messages.recipientsFailed,
                 style = PokyhType.footnote,
                 color = Brand.warning,
             )
         }
         state.error?.let { message -> SheetBanner(text = message, color = Brand.danger) }
-        if (state.sent) SheetBanner(text = if (state.isReply) "Antwort gesendet." else "Nachricht gesendet.", color = Brand.success)
+        if (state.sent) SheetBanner(text = if (state.isReply) strings().messages.replySent else strings().messages.messageSent, color = Brand.success)
     }
 }
 
@@ -319,20 +334,20 @@ private fun RecipientPicker(
         Row(verticalAlignment = Alignment.CenterVertically) {
             PokyhIconButton(
                 icon = PokyhIcons.back,
-                contentDescription = "Zurück",
+                contentDescription = strings().common.back,
                 onClick = onDone,
                 tinted = true,
                 size = 36.dp,
                 iconSize = 18.dp,
             )
             Text(
-                text = "Empfänger",
+                text = strings().messages.recipients,
                 style = PokyhType.headline,
                 color = colors.textPrimary,
                 modifier = Modifier.weight(1f).padding(horizontal = PokyhSpacing.md),
             )
             PokyhTextButton(
-                text = if (selected.isEmpty()) "Fertig" else "Fertig (${selected.size})",
+                text = strings().messages.doneCount(selected.size),
                 onClick = onDone,
             )
         }
@@ -340,7 +355,7 @@ private fun RecipientPicker(
         PokyhTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = "Lehrkraft suchen…",
+            placeholder = strings().messages.searchTeacher,
             leadingIcon = PokyhIcons.search,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -348,9 +363,9 @@ private fun RecipientPicker(
         if (recipients.isEmpty()) {
             Text(
                 text = if (failed) {
-                    "Empfänger konnten gerade nicht geladen werden. Bitte versuche es später erneut."
+                    strings().messages.recipientsFailedLater
                 } else {
-                    "Empfänger werden geladen …"
+                    strings().messages.recipientsLoading
                 },
                 style = PokyhType.footnote,
                 color = colors.textTertiary,
@@ -362,13 +377,13 @@ private fun RecipientPicker(
                 verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
             ) {
                 RecipientGroup(
-                    title = "Klassenlehrkraft",
+                    title = strings().messages.classTeacher,
                     items = matching.filter { it.isClassTeacher },
                     selectedKeys = selectedKeys,
                     onToggle = onToggle,
                 )
                 RecipientGroup(
-                    title = "Andere",
+                    title = strings().messages.others,
                     items = matching.filterNot { it.isClassTeacher },
                     selectedKeys = selectedKeys,
                     onToggle = onToggle,
@@ -427,7 +442,7 @@ private fun RecipientGroup(
                 if (isSelected) {
                     Icon(
                         imageVector = PokyhIcons.ok,
-                        contentDescription = "Ausgewählt",
+                        contentDescription = strings().messages.selected,
                         tint = Brand.accent,
                         modifier = Modifier.size(20.dp),
                     )
@@ -505,7 +520,7 @@ internal fun formatFileSize(bytes: Int): String = when {
 /** Reads a picked document into memory, with its display name — null if it can't be read. */
 private fun readAttachment(context: Context, uri: Uri): OutgoingAttachment? = runCatching {
     val resolver = context.contentResolver
-    var name = "Anhang"
+    var name = dev.plattnericus.pokyh.core.i18n.I18n.s.messages.attachment
     var size = -1L
     resolver.query(uri, null, null, null, null)?.use { cursor ->
         if (cursor.moveToFirst()) {

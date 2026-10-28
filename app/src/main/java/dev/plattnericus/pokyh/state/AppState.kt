@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import dev.plattnericus.pokyh.data.model.School
 
 /**
  * Central app state (Store.swift `AppState`): auth phase, multi-account, the offline-restore
@@ -107,9 +108,18 @@ class AppState @Inject constructor(
     val unreadMessages: StateFlow<Int> = _unreadMessages.asStateFlow()
 
     /** Called when messages are opened or marked read, so the badge drops immediately. */
-    fun messageWasRead(count: Int = 1) {
+    fun messageWasRead(count: Int = 1, ids: Collection<Int> = emptyList()) {
         _unreadMessages.value = (_unreadMessages.value - count).coerceAtLeast(0)
+        if (ids.isNotEmpty()) _readMessages.tryEmit(ids.toSet())
     }
+
+    private val _readMessages = kotlinx.coroutines.flow.MutableSharedFlow<Set<Int>>(extraBufferCapacity = 8)
+
+    /** Whether the account's school has a menu (null until known): without one, no Mensa tab. */
+    val mensaAvailable: StateFlow<Boolean?> get() = backendClient.mensaAvailable
+
+    /** Messages just read in the app, so the bell's inbox follows without reading it again. */
+    val readMessages: kotlinx.coroutines.flow.SharedFlow<Set<Int>> = _readMessages
 
     /** Usernames with a stored password — sync snapshot for UI badges ("Passwort nötig"),
      * refreshed whenever [accounts] changes or a credential is saved/deleted. */
@@ -218,6 +228,10 @@ class AppState @Inject constructor(
     }
 
     init {
+        // The menu follows the account's school.
+        scope.launch {
+            _session.collect { s -> backendClient.setMenuAccount(s?.apiToken, s?.schoolRef?.let { "${it.server}/${it.loginName}" }.orEmpty()) }
+        }
         scope.launch { prefsStore.themeMode.collect { _themeMode.value = it } }
         scope.launch { prefsStore.defaultAccount.collect { _defaultUsername.value = it } }
         scope.launch {
@@ -264,7 +278,19 @@ class AppState @Inject constructor(
      * restores a session behind a fingerprint; typing the password is, if anything, the stronger
      * proof of the two.
      */
-    suspend fun login(username: String, password: String, save: Boolean = true) {
+    /** The school picked on the sign-in screen for the login under way (see [schoolFor]). */
+    private var loginSchool: Pair<String, School>? = null
+
+    /** The school [username] signs in at: the one just picked, the saved account's, or the default one. */
+    private fun schoolFor(username: String): School =
+        loginSchool?.takeIf { it.first.equals(username, ignoreCase = true) }?.second
+            ?: _accounts.value.firstOrNull { it.username.equals(username, ignoreCase = true) }?.school
+            ?: School.Default
+
+    suspend fun login(username: String, password: String, save: Boolean = true, school: School? = null) {
+        // Only this sign-in uses the school just picked; a failed one at the wrong school must not
+        // carry it into later silent or fingerprint re-logins.
+        loginSchool = school?.let { username to it }
         val stored = credentialStore.getCredentials(username)?.second
         // The verifier covers a signed-out account: its password is gone, the hash is not.
         val known = (stored != null && stored == password) || credentialStore.verifyOfflinePassword(username, password)
@@ -274,10 +300,12 @@ class AppState @Inject constructor(
     /** Re-login for an already-saved account (Face-ID unlock, silent relaunch) — races
      * [OFFLINE_TIMEOUT_MS] against the real login when a usable cached snapshot exists. */
     private suspend fun loginSaved(username: String) {
+        loginSchool = null
         val password = credentialStore.getCredentials(username)?.second
         if (password == null) {
             // No password stored (was signed out) → offer password re-entry.
             _prefillUsername.value = username
+            _error.value = null
             _showAddAccount.value = true
             _busy.value = false
             _statusText.value = ""
@@ -312,7 +340,7 @@ class AppState @Inject constructor(
         val viaSheet = _showAddAccount.value
         _busy.value = true
         _error.value = null
-        _statusText.value = "Verbinde mit WebUntis…"
+        _statusText.value = dev.plattnericus.pokyh.core.i18n.I18n.s.errors.connecting
 
         val snap: UserSession? = if (allowOffline) diskCache.read(sessionKey(username), UserSession.serializer())?.takeIf { it.studentId > 0 } else null
         // A fingerprint unlock right after returning to the app beats Android releasing the
@@ -335,8 +363,7 @@ class AppState @Inject constructor(
                 if (askForCode(e, username, password, save)) {
                     // The code dialog takes over.
                 } else _error.value = if (e.isNetworkError() && !allowOffline) {
-                    "Ohne Internet lässt sich nur ein Konto öffnen, das auf diesem Gerät schon " +
-                        "einmal angemeldet war — mit dem dort gespeicherten Passwort."
+                    dev.plattnericus.pokyh.core.i18n.I18n.s.errors.offlineNever
                 } else {
                     errorMessage(e)
                 }
@@ -396,12 +423,13 @@ class AppState @Inject constructor(
         var s: UserSession
         var backendOnly = false
         try {
-            s = untisClient.login(username, password, token)
+            s = untisClient.login(username, password, token, schoolFor(username))
             untisAnswered?.set(true)
         } catch (untisError: Throwable) {
             // WebUntis wants the authenticator app's code: the password was right, nothing to
-            // try with a POKYH-only account.
+            // try with a POKYH-only account. An app key is never a POKYH password either.
             if (untisError is dev.plattnericus.pokyh.data.untis.TwoFactorRequiredException) throw untisError
+            if (dev.plattnericus.pokyh.data.untis.AppKey.isKey(password)) throw untisError
             // No (working) WebUntis account → try a direct POKYH-backend login with the same
             // credentials (the backend also knows pure-POKYH accounts).
             s = try {
@@ -422,7 +450,8 @@ class AppState @Inject constructor(
         if (!backendOnly) {
             s = if (s.isStudent || s.isParent) {
                 val role = if (s.isParent) "parent" else "student"
-                when (val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role, renewal)) {
+                val method = if (dev.plattnericus.pokyh.data.untis.AppKey.isKey(password)) "office" else null
+                when (val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role, renewal, s.school, method)) {
                     is BackendClient.UntisLoginResult.Ok -> {
                         var upgraded = s.copy(apiToken = outcome.token, apiRefresh = outcome.refresh)
                         runCatching { backendClient.me(outcome.token) }.getOrNull()?.let { user ->
@@ -456,9 +485,10 @@ class AppState @Inject constructor(
 
     /** Successful online login: persist account + offline snapshot, then swap in the session. */
     private suspend fun finalize(s: UserSession, save: Boolean, password: String, viaSheet: Boolean, fresh: Boolean) {
+        loginSchool = null
         if (save) {
             credentialStore.saveCredentials(s.username, password)
-            upsertAccount(SavedAccount(username = s.username, displayName = s.klasseName.ifEmpty { s.username }, nickname = null, imageUrl = s.imageUrl))
+            upsertAccount(SavedAccount(username = s.username, displayName = s.klasseName.ifEmpty { s.username }, nickname = null, imageUrl = s.imageUrl, school = s.school))
         } else {
             // Silent re-login: still backfill the profile image so the account list / lock
             // screen show the cached picture even when the password wasn't re-saved.
@@ -596,7 +626,7 @@ class AppState @Inject constructor(
     suspend fun approveWebSignIn(code: String): Boolean {
         val s = _session.value ?: throw AppError.sessionExpired
         val password = credentialStore.getCredentials(s.username)?.second
-        val school = if (s.hasUntis) Config.school to java.net.URI(Config.untisBase).host else null
+        val school = if (s.hasUntis) s.schoolRef.loginName to s.schoolRef.server else null
         return withFreshApiToken { token ->
             backendClient.approveQrLogin(
                 code = code,
@@ -610,7 +640,7 @@ class AppState @Inject constructor(
     }
 
     /** The POKYH access token lasts an hour: after a 401 the app signs in to the backend again, as at start, and tries once more. */
-    private suspend fun <T> withFreshApiToken(block: suspend (String) -> T): T {
+    suspend fun <T> withFreshApiToken(block: suspend (String) -> T): T {
         val s = _session.value ?: throw AppError.sessionExpired
         // No POKYH token: offline, or the backend was not reachable at sign-in.
         val token = s.apiToken ?: throw AppError(if (_isOffline.value) I18n.s.common.noConnection else I18n.s.common.failedLater, isNetwork = _isOffline.value)
@@ -626,7 +656,7 @@ class AppState @Inject constructor(
         val fresh: Pair<String, String> = if (s.hasUntis) {
             if (!(s.isStudent || s.isParent)) return null
             val role = if (s.isParent) "parent" else "student"
-            val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role, renewal = true)
+            val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role, renewal = true, school = s.school)
             (outcome as? BackendClient.UntisLoginResult.Ok)?.let { it.token to it.refresh } ?: return null
         } else {
             val password = credentialStore.getCredentials(s.username)?.second ?: return null
@@ -652,7 +682,7 @@ class AppState @Inject constructor(
         // ran past the offline timeout. Say so straight away instead of waiting for the
         // interceptor's second strike, which offline may never arrive: the banner explaining why
         // this session is cached has to be on screen from the moment the session is.
-        serviceHealth.markDown(PokyhService.UNTIS, "Anmeldung nicht möglich", unlessOkSince = loginStartedAt)
+        serviceHealth.markDown(PokyhService.UNTIS, dev.plattnericus.pokyh.core.i18n.I18n.s.errors.signInImpossible, unlessOkSince = loginStartedAt)
         scope.launch { prefsStore.setLastActive(snap.username) }
         keepReconnecting()
     }
@@ -719,7 +749,7 @@ class AppState @Inject constructor(
         offlineLogin = null
         if (save) {
             credentialStore.saveCredentials(s.username, password)
-            upsertAccount(SavedAccount(username = s.username, displayName = s.klasseName.ifEmpty { s.username }, nickname = null, imageUrl = s.imageUrl))
+            upsertAccount(SavedAccount(username = s.username, displayName = s.klasseName.ifEmpty { s.username }, nickname = null, imageUrl = s.imageUrl, school = s.school))
         }
         if (s.hasUntis) diskCache.write(sessionKey(s.username), offlineSnapshot(s), UserSession.serializer())
         _session.value = s
@@ -766,9 +796,8 @@ class AppState @Inject constructor(
         if (!e.isNetworkError()) return e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
         val down = serviceHealth.states.value.unreachable()
         return when {
-            down.isEmpty() -> "Keine Verbindung. Prüfe dein WLAN oder mobiles Netz."
-            else -> "${down.joinToString(" & ") { it.label }} ist nicht erreichbar. " +
-                "Versuch es später noch einmal."
+            down.isEmpty() -> dev.plattnericus.pokyh.core.i18n.I18n.s.errors.checkNetwork
+            else -> I18n.s.system.unreachable(down.joinToString(" & ") { it.label }) + ". " + dev.plattnericus.pokyh.core.i18n.I18n.s.errors.tryLater
         }
     }
 
@@ -847,11 +876,12 @@ class AppState @Inject constructor(
         if (!accountHasPassword(username)) {
             // No saved password → straight to password re-entry (no biometrics needed for that).
             _prefillUsername.value = username
+            _error.value = null
             _showAddAccount.value = true
             return
         }
         _busy.value = true
-        _statusText.value = "Bestätige Identität…"
+        _statusText.value = dev.plattnericus.pokyh.core.i18n.I18n.s.errors.confirming
         loginSaved(username)
     }
 
@@ -867,6 +897,8 @@ class AppState @Inject constructor(
     /** Opens the "add account" flow — a screens-phase LoginScreen reacts to [showAddAccount]. */
     fun addAccount(prefillUsername: String? = null) {
         _prefillUsername.value = prefillUsername
+        // A failed unlock behind it no longer applies: the sheet opens without its error.
+        _error.value = null
         _showAddAccount.value = true
     }
 
@@ -957,10 +989,16 @@ class AppState @Inject constructor(
      * Switch to the Stundenplan tab showing the week (and, in day mode, the day) of [dateNum].
      * Deliberately does not bump [timetableHomeSignal] — that would jump straight back to today.
      */
-    fun openTimetableAt(dateNum: Int) {
+    fun openTimetableAt(dateNum: Int, lessonId: Int? = null) {
+        jumpLesson = lessonId
         _timetableJump.value = dateNum
         _selectedTab.value = AppTab.Timetable
     }
+
+    private var jumpLesson: Int? = null
+
+    /** The lesson whose detail the pending jump opens, once (see [openTimetableAt]). */
+    fun takeJumpLesson(): Int? = jumpLesson.also { jumpLesson = null }
 
     fun consumeTimetableJump() {
         _timetableJump.value = null

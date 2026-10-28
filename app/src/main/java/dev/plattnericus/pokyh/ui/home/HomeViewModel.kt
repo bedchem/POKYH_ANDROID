@@ -47,6 +47,8 @@ import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
 import kotlinx.serialization.builtins.ListSerializer
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.data.model.AbsenceEntry
 
 /**
  * HomeView.swift, ported. No repository layer — timetable/grades/exams load only with a linked
@@ -55,6 +57,7 @@ import kotlinx.serialization.builtins.ListSerializer
  */
 @HiltViewModel
 class HomeViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val appState: AppState,
     private val untisClient: UntisClient,
     private val backendClient: BackendClient,
@@ -65,9 +68,15 @@ class HomeViewModel @Inject constructor(
     private val dishRatingsLive: DishRatingsLive,
 ) : ViewModel() {
 
-    /** `HomeView.RecentGrade` — a flattened, most-recent-first grade entry for the "Zuletzt
-     * eingetragen" section. */
-    data class RecentGrade(val id: Long, val subject: String, val value: Double, val date: Int)
+    /** A grade for "Letzte Noten": the web's `RecentGrade` (components/dashboard/widgets.tsx). */
+    data class RecentGrade(
+        val id: Long,
+        val subject: String,
+        val value: Double,
+        val date: Int,
+        val examType: String = "",
+        val lessonId: Int = 0,
+    )
 
     data class UiState(
         val session: UserSession? = null,
@@ -86,7 +95,8 @@ class HomeViewModel @Inject constructor(
         val examsUnknown: Boolean = false,
         val loadingMensa: Boolean = true,
         val mensaWeek: List<MensaWeekDay> = emptyList(),
-        val mensaWeekLabel: String = "",
+        /** The menu shown is this week's (otherwise next week's). */
+        val mensaThisWeek: Boolean = true,
         /** When the menu was produced, and whether it came off the disk. */
         val mensaSavedAt: Long = 0L,
         val mensaStale: Boolean = false,
@@ -110,6 +120,15 @@ class HomeViewModel @Inject constructor(
         val changesUnknown: Boolean = false,
         val gradeAverage: Double? = null,
         val gradeCount: Int = 0,
+        val subjectCount: Int = 0,
+        /** The inbox's newest messages, for "Nachrichten". */
+        val recentMessages: List<dev.plattnericus.pokyh.data.model.MessagePreview> = emptyList(),
+        val loadingMessages: Boolean = true,
+        val messagesUnavailable: Boolean = false,
+        /** WebUntis lets this account report absences: Home offers "Abwesenheit melden". */
+        val canReport: Boolean = false,
+        /** The absences tile's small print: the rate and the hours missed (see loadAbsenceNote). */
+        val absenceNote: String? = null,
         val weakestSubject: Pair<String, Double>? = null,
         val averageLoaded: Boolean = false,
         val openTodos: List<ApiTodo> = emptyList(),
@@ -271,7 +290,11 @@ class HomeViewModel @Inject constructor(
         }
         _state.update {
             it.copy(
-                upcomingReminders = reminders?.let { list -> visibleReminders(list) }.orEmpty(),
+                // Only what is still to come, as on the web's tile.
+                upcomingReminders = reminders?.let { list ->
+                    val now = java.time.Instant.now()
+                    visibleReminders(list).filter { r -> dev.plattnericus.pokyh.ui.reminders.parseRemindAt(r.remindAt)?.let { !it.isBefore(now) } ?: true }
+                }.orEmpty(),
                 remindersLoaded = true,
                 remindersUnavailable = reminders == null,
             )
@@ -303,19 +326,100 @@ class HomeViewModel @Inject constructor(
                 val backendJob = async { loadBackendWidgets() }
                 if (session?.hasUntis == true) {
                     val todayJob = async { loadToday(session) }
+                    // The Stundenplan's school week and the one after, stored ahead so the tab
+                    // opens on a drawn week instead of a spinner.
+                    launch { preloadTimetable(session) }
                     val gradesJob = async { loadGrades(session) }
                     val examsJob = async { loadExams(session) }
+                    val absencesJob = async { loadAbsenceNote(session) }
+                    val messagesJob = async { loadMessages(session) }
+                    launch { _state.update { it.copy(canReport = runCatching { untisClient.canReportAbsence(session) }.getOrDefault(false)) } }
                     todayJob.await()
                     gradesJob.await()
                     examsJob.await()
+                    absencesJob.await()
+                    messagesJob.await()
                 } else {
-                    _state.update { it.copy(loadingToday = false, loadingGrades = false, examsLoaded = true) }
+                    _state.update { it.copy(loadingToday = false, loadingGrades = false, examsLoaded = true, loadingMessages = false) }
                 }
                 mensaJob.await()
                 backendJob.await()
             }
         } catch (e: Exception) {
             _state.update { it.copy(error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) }
+        }
+    }
+
+    /**
+     * The absences tile's small print, as on the web: the rate and the hours missed when
+     * Abwesenheiten has worked them out for this year's absences ([AbsenceCalc]), the hours alone
+     * otherwise. Shown from the stored copy first.
+     */
+    /** The inbox, as Nachrichten keeps it (same key), the stored copy first. */
+    private suspend fun loadMessages(session: UserSession) {
+        val key = "messages-${session.username.lowercase()}-${dev.plattnericus.pokyh.data.model.MessageFolder.Inbox.rawValue}"
+        val serializer = ListSerializer(dev.plattnericus.pokyh.data.model.MessagePreview.serializer())
+        runCatching { offlineStore.peek(key, serializer) }.getOrNull()?.let { c -> _state.update { it.copy(recentMessages = c.value, loadingMessages = false) } }
+        val fresh = runCatching {
+            offlineStore.load(key, serializer) { untisClient.messages(session, dev.plattnericus.pokyh.data.model.MessageFolder.Inbox) }.value
+        }.getOrNull()
+        _state.update {
+            if (fresh != null) it.copy(recentMessages = fresh, loadingMessages = false, messagesUnavailable = false)
+            else it.copy(loadingMessages = false, messagesUnavailable = it.recentMessages.isEmpty())
+        }
+    }
+
+    /** The exam's day in the Stundenplan. */
+    fun openTimetableAt(dateNum: Int, lessonId: Int? = null) = appState.openTimetableAt(dateNum, lessonId)
+
+    private suspend fun loadAbsenceNote(session: UserSession) {
+        val year = SchoolDates.currentSchoolYear
+        val key = "absences-${session.studentId}-$year"
+        val serializer = ListSerializer(AbsenceEntry.serializer())
+        val calc = dev.plattnericus.pokyh.ui.absences.AbsenceCalc
+        // The school's own minutes, as Abwesenheiten stored them.
+        val official = runCatching {
+            offlineStore.peek("abstimes-${session.studentId}-$year", ListSerializer(dev.plattnericus.pokyh.ui.absences.AbsenceCalc.OfficialMinute.serializer()))?.value
+        }.getOrNull()
+        fun note(list: List<AbsenceEntry>) {
+            val f = calc.figures(list, calc.readCalendar(context, session.studentId, year), official, year)
+            val t = I18n.s.home
+            val hours = Fmt.num(Math.round(f.minutes / 6.0) / 10.0, 1)
+            _state.update { it.copy(absenceNote = f.rate?.let { r -> t.absencesNote(Fmt.fixed(r, 1), hours) } ?: t.absencesHours(hours)) }
+        }
+        runCatching { offlineStore.peek(key, serializer) }.getOrNull()?.let { note(it.value) }
+        runCatching {
+            offlineStore.load(key, serializer) {
+                untisClient.absences(session, session.studentId, SchoolDates.yearStart(year).toString(), SchoolDates.yearEnd(year).toString())
+            }
+        }.getOrNull()?.value?.let { list ->
+            note(list)
+            // Preload the year's lessons (the rate's whole, up to June) in the background, so
+            // Abwesenheiten — "Bisher" and "Ganzes Jahr" — has them before it is opened.
+            viewModelScope.launch {
+                runCatching {
+                    calc.refreshCalendar(
+                        context = context,
+                        studentId = session.studentId,
+                        year = year,
+                        fetchWeek = { monday -> untisClient.timetable(session, session.studentId, monday) },
+                        extraWeeks = calc.absenceWeeks(list),
+                        whole = true,
+                    )
+                }.onSuccess { note(list) }
+            }
+        }
+    }
+
+    private suspend fun preloadTimetable(session: UserSession) {
+        val monday = dev.plattnericus.pokyh.core.util.schoolWeekMonday()
+        for (w in 0..1) {
+            val m = monday.plus(w * 7, DateTimeUnit.DAY)
+            runCatching {
+                offlineStore.load("tt-${session.studentId}-$m", ListSerializer(TimetableEntry.serializer())) {
+                    untisClient.timetable(session, session.studentId, m.toString())
+                }
+            }
         }
     }
 
@@ -359,11 +463,14 @@ class HomeViewModel @Inject constructor(
                 serializer = ListSerializer(SubjectGrades.serializer()),
             ) { untisClient.grades(session, session.studentId, null) }.value
             dev.plattnericus.pokyh.core.util.GradeEntryOrder.observe(subjects)
-            // The grades entered last, newest first — not the latest exam dates (GradeEntryOrder).
-            val items = subjects.flatMap { subj -> subj.grades.filter { it.markDisplayValue > 0 }.map { subj to it } }
+            // As on the web's Home (home/page.tsx parseGrades): the grades entered last, newest
+            // first — not the latest exam dates (GradeEntryOrder, the web's lib/grade-order.ts).
+            val items = subjects.flatMap { subj -> subj.grades.filter { it.markDisplayValue != 0.0 }.map { subj to it } }
                 .sortedWith(dev.plattnericus.pokyh.core.util.GradeEntryOrder.comparator<Pair<SubjectGrades, GradeEntry>> { it.second })
                 .take(3)
-                .map { (subj, g) -> RecentGrade(id = g.id, subject = subj.subjectName, value = g.markDisplayValue, date = g.date) }
+                .map { (subj, g) ->
+                    RecentGrade(id = g.id, subject = subj.subjectName, value = g.markDisplayValue, date = g.date, examType = g.examType, lessonId = subj.lessonId)
+                }
             val values = subjects.flatMap { s -> s.grades.map { g -> g.markDisplayValue } }.filter { v -> v > 0 }
             val weakest = subjects
                 .mapNotNull { s ->
@@ -375,6 +482,7 @@ class HomeViewModel @Inject constructor(
                 it.copy(
                     gradeAverage = if (values.isEmpty()) null else values.average(),
                     gradeCount = values.size,
+                    subjectCount = subjects.size,
                     weakestSubject = weakest,
                     averageLoaded = true,
                 )
@@ -406,7 +514,8 @@ class HomeViewModel @Inject constructor(
         try {
             val today = SchoolDates.todayNum()
             val startMonday = mondayOfWeek(todayLocalDate())
-            val weekStarts = (0..5).map { startMonday.plus(it * 7, DateTimeUnit.DAY) }
+            // Three weeks, as the web: an exam further away is not the next thing to prepare for.
+            val weekStarts = (0..2).map { startMonday.plus(it * 7, DateTimeUnit.DAY) }
             val weeks = coroutineScope {
                 weekStarts.map { monday ->
                     async {
@@ -421,7 +530,13 @@ class HomeViewModel @Inject constructor(
                     }
                 }.awaitAll()
             }
-            examCandidates = weeks.filterNotNull().flatMap { it.value }.filter { it.isExam && it.date >= today }
+            // The exam list (next 14 days) beside the timetable, as the web: a list-only exam counts too.
+            val listed = runCatching {
+                val until = java.time.LocalDate.now().plusDays(14)
+                untisClient.exams(session, today, until.year * 10000 + until.monthValue * 100 + until.dayOfMonth)
+            }.getOrDefault(emptyList())
+            examCandidates = (weeks.filterNotNull().flatMap { it.value }.filter { it.isExam && it.date >= today } + listed.filter { it.date >= today })
+                .distinctBy { "${it.date}-${it.startTime}-${it.subjectName}" }
             val next = nextUpcomingExam(examCandidates)
             val unknown = weeks.any { it == null || (it.stale && it.value.isEmpty()) }
             val all = weeks.filterNotNull().flatMap { it.value }
@@ -453,7 +568,7 @@ class HomeViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     mensaWeek = week,
-                    mensaWeekLabel = if (week.any { day -> day.isToday }) "Diese Woche" else "Nächste Woche",
+                    mensaThisWeek = week.any { day -> day.isToday },
                     loadingMensa = false,
                     mensaSavedAt = mensa.savedAt,
                     mensaStale = mensa.stale,
@@ -552,20 +667,19 @@ class HomeViewModel @Inject constructor(
      */
     private fun mensaWeek(dishes: List<Dish>): List<MensaWeekDay> {
         val today = todayLocalDate()
-        val weekend = today.dayOfWeek == DayOfWeek.SATURDAY || today.dayOfWeek == DayOfWeek.SUNDAY
-        val monday = mondayOfWeek(today).let { if (weekend) it.plus(7, DateTimeUnit.DAY) else it }
-
-        val byDay = linkedMapOf<LocalDate, MutableList<Dish>>()
+        // The days with a menu from today on, in order (web lib/mensa.ts `upcomingDays`): with
+        // nothing left this week, the next day with dishes — next Monday, say — still shows.
+        val byDay = sortedMapOf<LocalDate, MutableList<Dish>>()
         for (dish in dishes) {
             val date = runCatching { LocalDate.parse(dish.date.take(10)) }.getOrNull() ?: continue
+            if (date < today) continue
             byDay.getOrPut(date) { mutableListOf() }.add(dish)
         }
 
-        return (0..4).map { offset ->
-            val date = monday.plus(offset, DateTimeUnit.DAY)
+        return byDay.keys.map { date ->
             MensaWeekDay(
                 date = date,
-                weekday = weekdayNamesDe[date.dayOfWeek.ordinal],
+                weekday = I18n.s.common.weekdays[date.dayOfWeek.ordinal],
                 dateLabel = "%02d.%02d.".format(date.dayOfMonth, date.monthNumber),
                 isToday = date == today,
                 isPast = date < today,
@@ -574,7 +688,6 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private val weekdayNamesDe = listOf("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
 }
 
 /** Is this lesson not happening as timetabled — cancelled, substituted, added, or moved? */

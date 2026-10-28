@@ -115,6 +115,8 @@ object PokyhIcons {
     val clearCache = Ph.ArrowsCounterClockwise
     val pendingSync = Ph.ClockCounterClockwise
     val edit = Ph.PencilSimple
+    /** Reporting someone else's comment. */
+    val report = Ph.Flag
     val privacy = Ph.HandPalm
     val security = Ph.ShieldCheck
     val shield = Ph.Shield
@@ -186,6 +188,10 @@ object PokyhIcons {
     // pasted-in artwork — which is what the PNG doodles they replaced looked like.
 
     val decorSubjects = Ph.Books
+    val decorMessages = Ph.Envelope
+    /** A subject's trend: up (and turned down for falling), level. */
+    val trendUp = Ph.ArrowUpRight
+    val trendFlat = Ph.ArrowRight
     val decorAbsences = Ph.CalendarX
     val decorTodos = Ph.PencilRuler
     val decorReminders = Ph.Bell
@@ -221,6 +227,7 @@ object PokyhIcons {
     val settings = Ph.GearSix
     val language = Ph.Globe
     val support = Ph.Coffee
+    val copy = Ph.Copy
     val absenceCalculator = Ph.Calculator
     val switchCanteen = Ph.ArrowsLeftRight
 }

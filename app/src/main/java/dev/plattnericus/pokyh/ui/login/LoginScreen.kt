@@ -63,8 +63,14 @@ import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.centeredForm
 import dev.plattnericus.pokyh.ui.theme.fadeIn
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.fillMaxHeight
 
-private const val PRIVACY_URL = "https://pokyh.com/legal?view=datenschutz"
+private const val PRIVACY_URL = "https://pokyh.com/legal/datenschutz"
+private const val IMPRINT_URL = "https://pokyh.com/legal/impressum"
+private const val TERMS_URL = "https://pokyh.com/legal/nutzungsbedingungen"
 
 /**
  * Anmeldung. `isAdditional` mirrors the sheet-presented "Konto hinzufügen" / "Mit Passwort
@@ -90,6 +96,12 @@ fun LoginScreen(
 
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
+    // Sign-in in two steps, like WebUntis itself (the web's LoginForm): first the school — any
+    // school on WebUntis, through its public search — then the account. The school is remembered
+    // until the end of the school year, so the next sign-in starts at the password.
+    var school by remember { mutableStateOf(viewModel.rememberedSchool) }
+    var schoolQuery by rememberSaveable { mutableStateOf("") }
+    val search by viewModel.search.collectAsStateWithLifecycle()
     var saveCredentials by rememberSaveable { mutableStateOf(true) }
     var resettingPassword by rememberSaveable { mutableStateOf(false) }
     val passwordFocusRequester = remember { FocusRequester() }
@@ -101,6 +113,7 @@ fun LoginScreen(
     var keys by remember { mutableStateOf(0) }
     var showPassword by remember { mutableStateOf(false) }
     var mascotEvent by remember { mutableStateOf<MascotEvent?>(null) }
+    var taps by remember { mutableLongStateOf(0L) }
     // Several characters arriving at once is the phone filling the form in (autofill, a paste):
     // one event for both fields.
     fun typed(old: String, new: String) {
@@ -124,17 +137,26 @@ fun LoginScreen(
     LaunchedEffect(prefillUsername) {
         prefillUsername?.let {
             username = it
-            passwordFocusRequester.requestFocus()
+            // A saved account signs in at its own school.
+            // An older saved account has no school stored: it was the default one, never
+            // whichever was picked last.
+            if (viewModel.hasAccount(it)) school = viewModel.schoolOf(it) ?: dev.plattnericus.pokyh.data.model.School.Default
+            if (school != null) runCatching { passwordFocusRequester.requestFocus() }
         }
     }
     LaunchedEffect(isAdditional, uiState.showAddAccount) {
         if (isAdditional && !uiState.showAddAccount) onCancel()
     }
 
+    // How the chosen school signs in (Office 365, a password, both), as on the web.
+    val loginOptions by viewModel.loginOptions.collectAsStateWithLifecycle()
+    var officeOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(school) { viewModel.loadLoginOptions(school) }
+
     fun submit() {
         if (username.isBlank() || password.isBlank()) return
         focusManager.clearFocus()
-        viewModel.submit(username, password, saveCredentials)
+        viewModel.submit(username, password, saveCredentials, school)
     }
 
     // Login/Lock render straight into the window (not inside the tab shell's Scaffold, which is
@@ -149,12 +171,41 @@ fun LoginScreen(
                 }
             },
         ) { innerPadding ->
+            // Wide windows, as the web's desktop sign-in: the mascot large on a panel of its own
+            // beside the form; phones get it small above the form.
+            val wideLogin = !isAdditional && dev.plattnericus.pokyh.ui.theme.widthClass() == dev.plattnericus.pokyh.ui.theme.WidthClass.Expanded
+            val mascotState = LoginMascotState(
+                focus = focus,
+                username = username,
+                showPassword = showPassword,
+                loading = uiState.busy,
+                keys = keys,
+                event = mascotEvent,
+            )
+            Row(Modifier.fillMaxSize().padding(innerPadding)) {
+            if (wideLogin) {
+                Box(
+                    Modifier
+                        .weight(0.55f)
+                        .fillMaxHeight()
+                        .padding(16.dp)
+                        .background(PokyhTheme.colors.card, androidx.compose.foundation.shape.RoundedCornerShape(28.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoginMascotBadge(
+                        state = mascotState,
+                        modifier = Modifier.padding(32.dp).fillMaxWidth(),
+                        onTap = { taps++; mascotEvent = MascotEvent(MascotEventKind.Tap, taps) },
+                        maxWidth = 560.dp,
+                    )
+                }
+            }
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .weight(if (wideLogin) 0.45f else 1f)
+                    .fillMaxHeight()
                     .verticalScroll(rememberScrollState())
-                    .padding(innerPadding)
-                    .centeredForm()
+                    .centeredForm(maxWidth = if (wideLogin) 420.dp else 480.dp)
                     .padding(horizontal = PokyhSpacing.screenH),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -166,31 +217,42 @@ fun LoginScreen(
                     modifier = Modifier.fadeIn(),
                 ) {
                     // The mascot in place of the logo, as on the web's sign-in page on phones.
-                    LoginMascotBadge(
-                        state = LoginMascotState(
-                            focus = focus,
-                            username = username,
-                            showPassword = showPassword,
-                            loading = uiState.busy,
-                            keys = keys,
-                            event = mascotEvent,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text("POKYH", style = PokyhType.wordmark, color = PokyhTheme.colors.textPrimary)
-                    Text(
-                        text = t.tagline,
-                        style = PokyhType.callout,
-                        color = PokyhTheme.colors.textSecondary,
-                    )
+                    if (!wideLogin) {
+                        LoginMascotBadge(
+                            state = mascotState,
+                            modifier = Modifier.fillMaxWidth(),
+                            onTap = { taps++; mascotEvent = MascotEvent(MascotEventKind.Tap, taps) },
+                        )
+                    }
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(t.signIn, style = PokyhType.display.copy(fontSize = 44.sp, lineHeight = 44.sp), color = PokyhTheme.colors.textPrimary)
+                        Spacer(Modifier.height(8.dp))
+                        Text(t.subtitle, style = PokyhType.callout, color = PokyhTheme.colors.textTertiary)
+                    }
                 }
 
                 Spacer(Modifier.height(PokyhSpacing.xxl))
 
-                Column(
+                val chosen = school
+                if (chosen == null) {
+                    SchoolStep(
+                        query = schoolQuery,
+                        onQuery = { schoolQuery = it; viewModel.searchSchools(it) },
+                        search = search,
+                        last = viewModel.rememberedSchool,
+                        // Remembered as soon as it is picked, as on the web.
+                        onPick = { picked -> school = picked; schoolQuery = ""; viewModel.pickSchool(picked) },
+                    )
+                } else Column(
                     modifier = Modifier.fillMaxWidth().fadeIn(delayMillis = 50),
                     verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
                 ) {
+                    // Choosing another keeps this one offered first in the list (web LoginForm).
+                    SchoolChip(chosen, onChange = { school = null })
+                    if (loginOptions?.office365 == true) {
+                        OfficeButton(onClick = { officeOpen = true }, showOr = loginOptions?.password != false)
+                    }
+                    if (loginOptions?.password != false) {
                     PokyhTextField(
                         value = username,
                         onValueChange = { typed(username, it); username = it },
@@ -238,6 +300,7 @@ fun LoginScreen(
                         ),
                         keyboardActions = KeyboardActions(onGo = { submit() }),
                     )
+                    }
 
                     if (viewModel.biometricAvailable) {
                         Row(
@@ -285,6 +348,7 @@ fun LoginScreen(
                         )
                     }
 
+                    if (loginOptions?.password != false) {
                     Spacer(Modifier.height(PokyhSpacing.xs))
                     PokyhPrimaryButton(
                         text = if (uiState.busy) uiState.statusText.ifEmpty { t.signingIn } else t.signIn,
@@ -293,6 +357,7 @@ fun LoginScreen(
                         loading = uiState.busy,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    }
                     PokyhTextButton(
                         text = t.forgotPassword,
                         onClick = { resettingPassword = true },
@@ -301,38 +366,157 @@ fun LoginScreen(
                 }
 
                 Spacer(Modifier.height(PokyhSpacing.xxl))
-                Text(
-                    text = t.hint,
-                    style = PokyhType.footnote,
-                    color = PokyhTheme.colors.textTertiary,
-                    textAlign = TextAlign.Center,
-                )
-                // Die Datenschutzerklärung dort, wo Daten erhoben werden (Art. 13 DSGVO).
+                // The fine print in one line, as on the web: age, then the privacy policy where the
+                // data is entered (Art. 13 DSGVO), the imprint and the terms.
                 val uriHandler = LocalUriHandler.current
-                Spacer(Modifier.height(PokyhSpacing.xs))
-                Text(
-                    text = t.privacyNote,
-                    style = PokyhType.footnote,
-                    color = PokyhTheme.colors.textTertiary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = PokyhSpacing.xxl),
-                )
-                Text(
-                    text = t.privacyRead,
-                    style = PokyhType.footnote,
-                    color = PokyhTheme.colors.accentText,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .clickable { uriHandler.openUri(PRIVACY_URL) }
-                        .padding(PokyhSpacing.xs),
-                )
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(t.ageShort, style = PokyhType.caption, color = PokyhTheme.colors.textTertiary)
+                    listOf(t.privacyLink to PRIVACY_URL, t.imprint to IMPRINT_URL, t.terms to TERMS_URL).forEach { (label, url) ->
+                        Text(
+                            label,
+                            style = PokyhType.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                            color = PokyhTheme.colors.textTertiary,
+                            modifier = Modifier.clickable { uriHandler.openUri(url) },
+                        )
+                    }
+                }
                 Spacer(Modifier.height(PokyhSpacing.huge))
+            }
             }
         }
     }
 
     if (resettingPassword) {
-        PasswordResetSheet(viewModel = viewModel, initialUsername = username, onDismiss = { resettingPassword = false })
+        PasswordResetSheet(viewModel = viewModel, initialUsername = username, onDismiss = { resettingPassword = false }, school = school)
+    }
+    val officeSchool = school
+    if (officeOpen && officeSchool != null) {
+        OfficeSignInSheet(
+            school = officeSchool,
+            initialUser = username,
+            busy = uiState.busy,
+            error = uiState.error,
+            onSubmit = { u, k ->
+                username = u
+                viewModel.submit(u, dev.plattnericus.pokyh.data.untis.AppKey.PREFIX + k, saveCredentials, officeSchool)
+            },
+            onDismiss = { officeOpen = false },
+        )
+    }
+}
+
+/** Initials and a tone per school, so results are told apart at a glance (the web's SchoolBadge). */
+@Composable
+private fun SchoolBadge(school: dev.plattnericus.pokyh.data.model.School) {
+    val words = school.name.split(Regex("[\\s\\-–]+")).filter { w -> w.firstOrNull()?.isLetterOrDigit() == true }
+    val initials = (words.take(2).joinToString("") { it.take(1) }.ifEmpty { school.loginName.take(2) }).uppercase()
+    val tones = dev.plattnericus.pokyh.ui.theme.PokyhDecorative.all(PokyhTheme.colors.isDark)
+    val tone = tones[Math.floorMod(school.loginName.hashCode(), tones.size)]
+    Box(
+        Modifier.size(40.dp).background(tone.fill, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(initials, style = PokyhType.footnote.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold), color = tone.ink)
+    }
+}
+
+/** A school as a row: its badge, its name and its address. */
+@Composable
+private fun SchoolRow(school: dev.plattnericus.pokyh.data.model.School, caption: String? = null, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = PokyhSpacing.md, vertical = PokyhSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+    ) {
+        SchoolBadge(school)
+        Column(Modifier.weight(1f)) {
+            if (caption != null) Text(caption, style = PokyhType.caption, color = PokyhTheme.colors.textTertiary)
+            Text(school.name.ifEmpty { school.loginName }, style = PokyhType.callout.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = PokyhTheme.colors.textPrimary, maxLines = 2)
+            if (school.address.isNotBlank()) Text(school.address, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** Step one: the school, found through WebUntis' public school search. */
+@Composable
+private fun SchoolStep(
+    query: String,
+    onQuery: (String) -> Unit,
+    search: LoginViewModel.Search,
+    last: dev.plattnericus.pokyh.data.model.School?,
+    onPick: (dev.plattnericus.pokyh.data.model.School) -> Unit,
+) {
+    val t = dev.plattnericus.pokyh.core.i18n.strings().login
+    Column(Modifier.fillMaxWidth().fadeIn(delayMillis = 50), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+        PokyhTextField(
+            value = query,
+            onValueChange = onQuery,
+            placeholder = t.schoolPlaceholder,
+            leadingIcon = PokyhIcons.search,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Search),
+            trailing = if (query.isNotEmpty()) {
+                {
+                    PokyhIconButton(
+                        icon = PokyhIcons.close,
+                        contentDescription = t.schoolClear,
+                        onClick = { onQuery("") },
+                        tint = PokyhTheme.colors.textTertiary,
+                        size = 32.dp,
+                        iconSize = 16.dp,
+                    )
+                }
+            } else null,
+        )
+        val message = when (search) {
+            is LoginViewModel.Search.Result -> when (val a = search.answer) {
+                dev.plattnericus.pokyh.data.backend.BackendClient.SchoolSearch.Short -> t.schoolShort
+                dev.plattnericus.pokyh.data.backend.BackendClient.SchoolSearch.TooMany -> t.schoolTooMany
+                dev.plattnericus.pokyh.data.backend.BackendClient.SchoolSearch.Rate -> t.schoolRate
+                dev.plattnericus.pokyh.data.backend.BackendClient.SchoolSearch.Failed -> t.schoolError
+                is dev.plattnericus.pokyh.data.backend.BackendClient.SchoolSearch.Done -> if (a.schools.isEmpty()) t.schoolNone else null
+            }
+            else -> null
+        }
+        if (search is LoginViewModel.Search.Searching) {
+            androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.md), color = Brand.accent)
+        }
+        if (message != null) Text(message, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary, modifier = Modifier.padding(horizontal = PokyhSpacing.md))
+        val results = ((search as? LoginViewModel.Search.Result)?.answer as? dev.plattnericus.pokyh.data.backend.BackendClient.SchoolSearch.Done)?.schools.orEmpty()
+        results.forEach { s -> SchoolRow(s, onClick = { onPick(s) }) }
+        if (query.isEmpty() && last != null) SchoolRow(last, caption = t.schoolLast, onClick = { onPick(last) })
+    }
+}
+
+/** The chosen school above the account form, with the way back to choose another. */
+@Composable
+private fun SchoolChip(school: dev.plattnericus.pokyh.data.model.School, onChange: () -> Unit) {
+    val t = dev.plattnericus.pokyh.core.i18n.strings().login
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PokyhTheme.colors.cardAlt, androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+            .padding(start = PokyhSpacing.sm, end = PokyhSpacing.xs, top = PokyhSpacing.sm, bottom = PokyhSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+    ) {
+        SchoolBadge(school)
+        Column(Modifier.weight(1f)) {
+            Text(school.name.ifEmpty { school.loginName }, style = PokyhType.callout.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = PokyhTheme.colors.textPrimary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(PokyhIcons.locked, contentDescription = null, tint = PokyhTheme.colors.textTertiary, modifier = Modifier.size(11.dp))
+                Text(t.serverShort(school.server), style = PokyhType.caption, color = PokyhTheme.colors.textTertiary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+        }
+        PokyhIconButton(icon = PokyhIcons.close, contentDescription = t.schoolChange, onClick = onChange, tint = PokyhTheme.colors.textTertiary, size = 36.dp, iconSize = 15.dp)
     }
 }
 

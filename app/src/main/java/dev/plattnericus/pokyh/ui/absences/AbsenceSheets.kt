@@ -88,6 +88,7 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
     var reason by remember { mutableStateOf<AbsenceReason?>(null) }
     var text by remember { mutableStateOf("") }
     var pickingReason by remember { mutableStateOf(false) }
+    var pickingLessons by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.openForm() }
 
@@ -105,14 +106,43 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
         }
     }
 
+    // What was reported, under "Gemeldet" (web doneDetail).
+    val fmt = remember { DateTimeFormatter.ofPattern("EEE d.M.", dev.plattnericus.pokyh.core.i18n.I18n.lang.value.locale) }
+    val reportedRange = run {
+        val f = startTime ?: return@run null
+        val e = endTime ?: return@run null
+        val hm = DateTimeFormatter.ofPattern("HH:mm")
+        if (startDate == endDate) "${startDate.format(fmt)} ${f.format(hm)} – ${e.format(hm)}" else "${startDate.format(fmt)} ${f.format(hm)} – ${endDate.format(fmt)} ${e.format(hm)}"
+    }
     AbsenceSheetFrame(
-        title = if (pickingReason) t.reason else t.reportTitle,
+        title = when {
+            pickingReason -> t.reason
+            pickingLessons -> t.chooseLessons
+            else -> t.reportTitle
+        },
         done = form.done,
         doneText = t.reported,
-        onBack = if (pickingReason) ({ pickingReason = false }) else null,
+        doneDetail = reportedRange,
+        onBack = when {
+            pickingReason -> ({ pickingReason = false })
+            pickingLessons -> ({ pickingLessons = false })
+            else -> null
+        },
         onDismiss = onDismiss,
     ) {
-        if (pickingReason) {
+        if (pickingLessons) {
+            LessonPicker(
+                viewModel = viewModel,
+                initial = startDate,
+                onTake = { day, from, to ->
+                    startDate = day
+                    endDate = day
+                    startTime = from
+                    endTime = to
+                    pickingLessons = false
+                },
+            )
+        } else if (pickingReason) {
             ReasonList(
                 reasons = form.meta?.reasons,
                 failed = form.metaFailed,
@@ -120,13 +150,27 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
                 onSelect = { reason = it; pickingReason = false },
             )
         } else {
+            // Who it is for.
+            val name = viewModel.personName?.takeIf { it.isNotBlank() } ?: t.me
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(t.forLabel, style = PokyhType.footnote.semibold(), color = PokyhTheme.colors.textPrimary)
+                Row(
+                    Modifier.fillMaxWidth().nestedSurface(PokyhShapes.lg).padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    dev.plattnericus.pokyh.ui.components.InitialAvatar(name = name, size = 36.dp)
+                    Text(name, style = PokyhType.body, color = PokyhTheme.colors.textPrimary)
+                }
+            }
+            // Changing the start keeps the end on the same day, never before the start (web).
             DateTimeField(
                 label = t.from,
                 date = startDate,
                 time = startTime,
                 enabled = !form.saving,
-                onDate = { startDate = it; if (endDate < it) endDate = it },
-                onTime = { startTime = it },
+                onDate = { startDate = it; endDate = it; val s = startTime; val e = endTime; if (s != null && e != null && e < s) endTime = s },
+                onTime = { startTime = it; val e = endTime; if (it != null && e != null && startDate == endDate && e < it) endTime = it },
             )
             DateTimeField(
                 label = t.until,
@@ -135,6 +179,12 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
                 enabled = !form.saving,
                 onDate = { endDate = it },
                 onTime = { endTime = it },
+            )
+            dev.plattnericus.pokyh.ui.components.PokyhTextButton(
+                text = t.fromTimetable,
+                icon = PokyhIcons.timetable,
+                onClick = { pickingLessons = true },
+                enabled = !form.saving,
             )
             ReasonField(reason = reason, enabled = !form.saving, onClick = { pickingReason = true })
             PokyhTextField(
@@ -158,7 +208,7 @@ fun ReportAbsenceSheet(viewModel: AbsencesViewModel, onDismiss: () -> Unit) {
                     val chosen = reason
                     when {
                         from == null || to == null -> viewModel.formError(t.errChooseRange)
-                        !endDate.atTime(to).isAfter(startDate.atTime(from)) -> viewModel.formError(t.errEndAfterStart)
+                        endDate.atTime(to).isBefore(startDate.atTime(from)) -> viewModel.formError(t.errEndAfterStart)
                         chosen == null -> viewModel.formError(t.errChooseReason)
                         else -> viewModel.report(
                             startDate = yyyyMMdd(startDate),
@@ -276,7 +326,7 @@ fun ExcuseAbsenceSheet(
                             teachers == null -> "…"
                             form.teachersFailed -> t.exToSchool
                             teachers.isNotEmpty() -> teachers.joinToString(", ")
-                            else -> strings().common.unknown
+                            else -> t.notAvailable
                         },
                         style = PokyhType.body,
                         color = if (!teachers.isNullOrEmpty()) colors.textPrimary else colors.textTertiary,
@@ -304,7 +354,7 @@ fun ExcuseAbsenceSheet(
                 enabled = !noTeacher,
                 onClick = {
                     val chosen = reason
-                    if (chosen == null) viewModel.formError(t.errChooseReason)
+                    if (chosen == null) viewModel.formError(t.exPick)
                     else viewModel.excuse(absences, chosen, text)
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -579,3 +629,61 @@ private fun localDateOf(n: Int): LocalDate? =
 
 private fun localTimeOf(hhmm: Int): LocalTime? =
     runCatching { LocalTime.of(hhmm / 100, hhmm % 100) }.getOrNull()
+
+/**
+ * "Aus Stundenplan wählen": one day's lessons to tick; the range goes from the first chosen
+ * lesson's start to the last one's end (web TimetableLessonPicker). The day moves back and forth.
+ */
+@Composable
+private fun LessonPicker(viewModel: AbsencesViewModel, initial: LocalDate, onTake: (LocalDate, LocalTime, LocalTime) -> Unit) {
+    val t = strings().absences
+    val colors = PokyhTheme.colors
+    var day by remember { mutableStateOf(initial) }
+    var lessons by remember { mutableStateOf<List<dev.plattnericus.pokyh.data.model.TimetableEntry>?>(null) }
+    var picked by remember { mutableStateOf(setOf<Int>()) }
+    LaunchedEffect(day) {
+        lessons = null
+        picked = emptySet()
+        lessons = viewModel.lessonsOn(day)
+    }
+    val fmt = remember { DateTimeFormatter.ofPattern("EEEE, d. MMMM", dev.plattnericus.pokyh.core.i18n.I18n.lang.value.locale) }
+    Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
+        Row(Modifier.fillMaxWidth().nestedSurface(PokyhShapes.lg).padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            dev.plattnericus.pokyh.ui.components.PokyhIconButton(icon = PokyhIcons.chevronLeft, contentDescription = t.prevDay, onClick = { day = day.minusDays(1) })
+            Text(day.format(fmt).replaceFirstChar { it.titlecase() }, style = PokyhType.callout.semibold(), color = colors.textPrimary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            dev.plattnericus.pokyh.ui.components.PokyhIconButton(icon = PokyhIcons.chevronRight, contentDescription = t.nextDay, onClick = { day = day.plusDays(1) })
+        }
+        val list = lessons
+        when {
+            list == null -> dev.plattnericus.pokyh.ui.components.SkeletonBlock(height = 48.dp)
+            list.isEmpty() -> Text(t.noLessonsDay, style = PokyhType.callout, color = colors.textSecondary)
+            else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                list.forEachIndexed { i, l ->
+                    val on = i in picked
+                    Row(
+                        Modifier.fillMaxWidth().clip(PokyhShapes.lg).then(if (on) Modifier.accentSurface(PokyhShapes.lg) else Modifier.nestedSurface(PokyhShapes.lg))
+                            .clickable { picked = if (on) picked - i else picked + i }.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(if (on) PokyhIcons.radioOn else PokyhIcons.radioOff, contentDescription = null, tint = if (on) Brand.accent else colors.textTertiary, modifier = Modifier.size(20.dp))
+                        Text("%02d:%02d".format(l.startTime / 100, l.startTime % 100) + " – " + "%02d:%02d".format(l.endTime / 100, l.endTime % 100), style = PokyhType.footnote.semibold(), color = colors.textSecondary)
+                        Text(l.subjectName.ifEmpty { l.subjectLong } + if (l.isCancelled) t.cancelledSuffix else "", style = PokyhType.callout, color = colors.textPrimary, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+        PokyhPrimaryButton(
+            text = t.takeLessons(picked.size),
+            enabled = picked.isNotEmpty(),
+            onClick = {
+                val chosen = picked.mapNotNull { list?.getOrNull(it) }
+                if (chosen.isEmpty()) return@PokyhPrimaryButton
+                val from = chosen.minOf { it.startTime }
+                val to = chosen.maxOf { it.endTime }
+                onTake(day, LocalTime.of(from / 100, from % 100), LocalTime.of(to / 100, to % 100))
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}

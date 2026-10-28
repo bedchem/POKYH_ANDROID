@@ -84,6 +84,7 @@ import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.floatingSurface
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import dev.plattnericus.pokyh.core.i18n.strings
 
 /**
  * Hosts admin announcement popups for the signed-in app. Checks on every return to the
@@ -218,7 +219,7 @@ private fun AnnouncementPopupDialog(
                         } else {
                             PokyhIconButton(
                                 icon = PokyhIcons.close,
-                                contentDescription = "Schließen",
+                                contentDescription = strings().common.close,
                                 onClick = onClose,
                                 tint = colors.textSecondary,
                                 tinted = true,
@@ -242,7 +243,7 @@ private fun AnnouncementPopupDialog(
                     // Equal weights on both sides keep the dots exactly centred.
                     Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                         if (stack.index > 0) {
-                            PokyhTextButton(text = "Zurück", onClick = onBack, icon = PokyhIcons.chevronLeft, color = colors.textSecondary)
+                            PokyhTextButton(text = strings().common.back, onClick = onBack, icon = PokyhIcons.chevronLeft, color = colors.textSecondary)
                         }
                     }
                     when {
@@ -260,7 +261,7 @@ private fun AnnouncementPopupDialog(
                     }
                     Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                         PokyhPrimaryButton(
-                            text = if (stack.isLast) "Fertig" else "Weiter",
+                            text = if (stack.isLast) strings().common.done else strings().system.next,
                             onClick = onNext,
                             enabled = !locked,
                             compact = true,
@@ -314,7 +315,7 @@ private fun CountdownRing(elapsedMs: Long, totalMs: Long) {
         Modifier
             .size(36.dp)
             .background(colors.cardAlt, CircleShape)
-            .semantics { contentDescription = "Schließen in $seconds Sekunden möglich" },
+            .semantics { contentDescription = dev.plattnericus.pokyh.core.i18n.I18n.s.system.closeIn(seconds) },
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.matchParentSize().padding(3.dp)) {
@@ -357,7 +358,7 @@ private fun PopupDots(count: Int, current: Int, canSelect: (Int) -> Boolean, onS
                         onClick = { onSelect(i) },
                     )
                     .semantics {
-                        contentDescription = "Mitteilung ${i + 1} von $count"
+                        contentDescription = dev.plattnericus.pokyh.core.i18n.I18n.s.system.popupOf(i + 1, count)
                         selected = active
                     }
                     .padding(horizontal = 3.dp),

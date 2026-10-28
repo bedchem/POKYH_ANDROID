@@ -54,12 +54,14 @@ object MensaSchedule {
     private fun parseDishDate(raw: String): LocalDate? =
         runCatching { LocalDate.parse(raw.take(10)) }.getOrNull()
 
-    private fun label(date: LocalDate, today: LocalDate): String {
+    /** "Heute", "Morgen", or "Donnerstag, 30. Oktober" in the language in use (the web's dayLabel). */
+    fun label(date: LocalDate, today: LocalDate = todayLocalDate()): String {
         val tomorrow = today.plus(1, DateTimeUnit.DAY)
+        val t = dev.plattnericus.pokyh.core.i18n.I18n.s
         return when (date) {
-            today -> "Heute"
-            tomorrow -> "Morgen"
-            else -> "${weekdayName(date.dayOfWeek)}, ${date.dayOfMonth}. ${monthName(date.month)}"
+            today -> t.mensa.today
+            tomorrow -> t.mensa.tomorrow
+            else -> "${t.common.weekdays[date.dayOfWeek.ordinal]}, ${t.common.dayMonth(date.dayOfMonth, date.monthNumber)}"
         }
     }
 
@@ -100,6 +102,7 @@ class MensaViewModel @Inject constructor(
     private val backendClient: BackendClient,
     private val dishRatingsLive: DishRatingsLive,
 ) : ViewModel() {
+    val mensaAvailable: StateFlow<Boolean?> = backendClient.mensaAvailable
 
     data class UiState(
         val loading: Boolean = true,
@@ -265,6 +268,9 @@ class DishDetailViewModel @Inject constructor(
         /** Rating and commenting need the POKYH server. */
         val canInteract: Boolean = true,
         val comments: List<CommentUiItem> = emptyList(),
+        val commentsLoading: Boolean = true,
+        /** May delete anyone's comment (moderation). */
+        val isAdmin: Boolean = false,
         val error: String? = null,
     )
 
@@ -293,6 +299,7 @@ class DishDetailViewModel @Inject constructor(
                             ratings = stored ?: it.ratings,
                             ratingsUnavailable = offline && stored == null,
                             canInteract = false,
+                            commentsLoading = false,
                         )
                     }
                     return@collectLatest
@@ -324,7 +331,7 @@ class DishDetailViewModel @Inject constructor(
         runCatching { backendClient.dishes() }
             .onSuccess { list ->
                 val dish = list.firstOrNull { it.id == dishId }
-                _ui.update { it.copy(loading = false, dish = dish, error = if (dish == null) "Gericht nicht gefunden." else null) }
+                _ui.update { it.copy(loading = false, dish = dish, error = if (dish == null) dev.plattnericus.pokyh.core.i18n.I18n.s.mensa.dishNotFound else null) }
             }
             .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) } }
     }
@@ -334,6 +341,9 @@ class DishDetailViewModel @Inject constructor(
             .onSuccess { r -> applyServerRatings(r) }
         runCatching { backendClient.dishComments(dishId, token) }
             .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
+        _ui.update { it.copy(commentsLoading = false) }
+        // Admins may remove anyone's comment, as on the web.
+        runCatching { backendClient.me(token) }.onSuccess { me -> _ui.update { it.copy(isAdmin = me.isAdmin) } }
     }
 
     /**
@@ -417,10 +427,10 @@ class DishDetailViewModel @Inject constructor(
      * without touching anything real, and so the refetch (which brings the server's own id)
      * doesn't leave a duplicate behind.
      */
-    fun addComment(body: String) {
-        val token = appState.session.value?.apiToken ?: return
+    fun addComment(body: String, done: (Boolean) -> Unit) {
+        val token = appState.session.value?.apiToken ?: return done(false)
         val trimmed = body.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty()) return done(false)
 
         val pendingId = PENDING_COMMENT_PREFIX + Clock.System.now().toEpochMilliseconds()
         val pending = CommentUiItem(
@@ -434,6 +444,7 @@ class DishDetailViewModel @Inject constructor(
 
         viewModelScope.launch {
             val posted = runCatching { backendClient.createDishComment(dishId, trimmed, token) }
+            done(posted.isSuccess)
             if (posted.isFailure) {
                 _ui.update { it.copy(comments = it.comments.filterNot { c -> c.id == pendingId }) }
                 return@launch
@@ -448,6 +459,18 @@ class DishDetailViewModel @Inject constructor(
                         state.copy(comments = state.comments.map { c -> if (c.id == pendingId) real else c })
                     }
                 }
+        }
+    }
+
+    fun editComment(item: CommentUiItem, body: String, done: (Boolean) -> Unit) {
+        val token = appState.session.value?.apiToken ?: return done(false)
+        viewModelScope.launch {
+            val ok = runCatching { backendClient.updateDishComment(dishId, item.id, body, token) }.isSuccess
+            done(ok)
+            if (ok) {
+                runCatching { backendClient.dishComments(dishId, token) }
+                    .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
+            }
         }
     }
 
@@ -482,6 +505,7 @@ private fun ApiComment.toUi(): CommentUiItem = CommentUiItem(
     body = body,
     createdAtEpochMs = parseEpochMs(createdAt) ?: 0L,
     editedAtEpochMs = updatedAt?.takeIf { it != createdAt }?.let(::parseEpochMs),
+    stars = stars,
 )
 
 private fun parseEpochMs(raw: String): Long? = runCatching { Instant.parse(raw).toEpochMilliseconds() }.getOrNull()

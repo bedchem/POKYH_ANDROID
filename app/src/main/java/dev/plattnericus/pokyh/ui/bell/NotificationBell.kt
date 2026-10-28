@@ -73,6 +73,7 @@ import javax.inject.Inject
 import kotlin.math.roundToLong
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import dev.plattnericus.pokyh.ui.components.HeaderDropdown
 
 @HiltViewModel
 class BellViewModel @Inject constructor(val store: BellStore) : ViewModel()
@@ -91,6 +92,13 @@ fun NotificationBell(onNavigate: (String) -> Unit, viewModel: BellViewModel = hi
     val t = strings().bell
     var open by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { store.start() }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            store.tick()
+        }
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { store.resumed() }
 
     // The bell rings once whenever the count goes up.
     val ring = remember { Animatable(0f) }
@@ -117,23 +125,27 @@ fun NotificationBell(onNavigate: (String) -> Unit, viewModel: BellViewModel = hi
         if (state.newCount > 0) {
             UnreadBadge(count = state.newCount, modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp))
         }
-    }
 
-    if (open) {
-        BellSheet(
-            state = state,
+        // Drops down from the bell as on the web: as wide as a phone allows.
+        HeaderDropdown(
+            expanded = open,
             onDismiss = {
                 open = false
                 store.seeAll()
             },
-            onPick = { item ->
-                open = false
-                store.seeAll()
-                onNavigate(routeOf(item.target))
-            },
-            onClear = store::clear,
-            onSeen = store::seeAll,
-        )
+            width = null,
+        ) {
+            BellPanel(
+                state = state,
+                onPick = { item ->
+                    open = false
+                    store.seeAll()
+                    onNavigate(routeOf(item.target))
+                },
+                onClear = store::clear,
+                onSeen = store::seeAll,
+            )
+        }
     }
 }
 
@@ -146,16 +158,14 @@ private fun routeOf(target: BellFeed.BellTarget): String = when (target) {
 }
 
 @Composable
-private fun BellSheet(
+private fun BellPanel(
     state: BellStore.State,
-    onDismiss: () -> Unit,
     onPick: (BellFeed.Item) -> Unit,
     onClear: (List<String>) -> Unit,
     onSeen: () -> Unit,
 ) {
     val t = strings().bell
     val colors = PokyhTheme.colors
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
     // What was new when the sheet opened keeps its dot while it is open.
     val shown = remember { state.fresh }
@@ -175,14 +185,9 @@ private fun BellSheet(
     val staying = items.filter { it.key !in leaving }
     val newShown = staying.count { it.key in shown || it.key in state.fresh }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = colors.card,
-        shape = PokyhShapes.topXxl,
-    ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.lg).padding(bottom = PokyhSpacing.xxl)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)) {
+    run {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 6.dp).padding(bottom = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 46.dp).padding(start = 10.dp)) {
                 Text(t.title, style = PokyhType.title3, color = colors.textPrimary)
                 if (newShown > 0) {
                     Spacer(Modifier.width(PokyhSpacing.sm))
@@ -203,7 +208,7 @@ private fun BellSheet(
                     }
                 }
             }
-            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 state.streak?.let { StreakCard(it) }
                 when {
                     state.loading -> repeat(3) {
@@ -230,7 +235,7 @@ private fun BellSheet(
                             BellRow(item, state.now, fresh = item.key in shown || item.key in state.fresh, leaving = item.key in leaving, onPick = { onPick(item) }, onClear = { clearAway(listOf(item.key)) })
                         }
                         if (state.feed.current.isNotEmpty() && state.feed.recent.isNotEmpty()) {
-                            Box(Modifier.fillMaxWidth().padding(vertical = PokyhSpacing.sm).height(1.dp).background(colors.separator))
+                            Spacer(Modifier.height(PokyhSpacing.md))
                         }
                         state.feed.recent.forEach { item ->
                             BellRow(item, state.now, fresh = item.key in shown || item.key in state.fresh, leaving = item.key in leaving, onPick = { onPick(item) }, onClear = { clearAway(listOf(item.key)) })

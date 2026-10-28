@@ -160,7 +160,8 @@ class ProfileViewModel @Inject constructor(
                 if (creds == null) {
                     _switchError.value = dev.plattnericus.pokyh.core.i18n.I18n.s.profile.noSavedPassword(username)
                 } else {
-                    val fresh = untisClient.login(creds.first, creds.second)
+                    val school = accounts.value.firstOrNull { it.username == username }?.school ?: dev.plattnericus.pokyh.data.model.School.Default
+                    val fresh = untisClient.login(creds.first, creds.second, school = school)
                     val keptNickname = accounts.value.firstOrNull { it.username == username }?.nickname
                     _accountOverrides.value = _accountOverrides.value + (
                         username to SavedAccount(
@@ -209,6 +210,9 @@ class ProfileViewModel @Inject constructor(
             appState.setThemeMode(PokyhThemeMode.System)
             _accountOverrides.value = emptyMap()
             clearDiskCaches(keepSignIn = false)
+            // The recap's stored weeks and the remembered school are kept outside the stores above.
+            context.getSharedPreferences("pokyh_recapweeks", Context.MODE_PRIVATE).edit().clear().apply()
+            dev.plattnericus.pokyh.data.storage.SchoolChoice.forget(context)
             _clearing.value = null
             // Last, so nothing above races a screen that is already gone: this swaps the root to
             // Login, which is what actually signs the user out.
@@ -311,14 +315,14 @@ class ProfileViewModel @Inject constructor(
             appendLine("studentId=${s.studentId}  personType=${s.personType ?: "—"}")
             appendLine("klasseId=${s.klasseId}  klasseName=${s.klasseName.ifEmpty { "—" }}")
             appendLine("isParent=${s.isParent}  isStudent=${s.isStudent}  hasUntis=${s.hasUntis}")
-            appendLine("stableUid=${if (s.stableUid.isNullOrEmpty()) "—" else "vorhanden"}")
+            appendLine("stableUid=${if (s.stableUid.isNullOrEmpty()) "—" else "✓"}")
             appendLine("classId=${s.classId ?: "—"}")
-            appendLine("apiToken=${if (s.apiToken.isNullOrEmpty()) "nein" else "vorhanden"}")
+            appendLine("apiToken=${if (s.apiToken.isNullOrEmpty()) "—" else "✓"}")
             appendLine()
             appendLine("backendStatus=${status.diagnosticLabel()}")
-            if (backendReachable != null) appendLine("backendErreichbar=${if (backendReachable) "ja" else "nein"}")
+            if (backendReachable != null) appendLine("backendReachable=${if (backendReachable) "✓" else "✗"}")
             appendLine()
-            append("App-Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            append("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         }
     }
 

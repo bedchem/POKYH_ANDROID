@@ -60,7 +60,9 @@ class GradeSubjectViewModel @Inject constructor(
 
     init {
         load()
-        viewModelScope.launch { _draft.value = prefsStore.gradeDrafts.first()[subjectId] ?: GradeDraftEntry() }
+        _draft.value = SessionDrafts.map[subjectId] ?: GradeDraftEntry()
+        // Drafts kept by older versions forever: dropped once.
+        viewModelScope.launch { if (prefsStore.gradeDrafts.first().isNotEmpty()) prefsStore.setGradeDrafts(emptyMap()) }
     }
 
     fun retry() = load()
@@ -111,12 +113,16 @@ class GradeSubjectViewModel @Inject constructor(
     /** "Rechner zurücksetzen". */
     fun resetDraft() = persist(GradeDraftEntry())
 
+    /** A quick-test grade (4–10) straight from its button. */
+    fun addCustomValue(value: Double) = persist(_draft.value.copy(customGrades = _draft.value.customGrades + value))
+
     private fun persist(newDraft: GradeDraftEntry) {
         _draft.value = newDraft
-        viewModelScope.launch {
-            val all = prefsStore.gradeDrafts.first().toMutableMap()
-            if (newDraft.isEmpty) all.remove(subjectId) else all[subjectId] = newDraft
-            prefsStore.setGradeDrafts(all)
-        }
+        if (newDraft.isEmpty) SessionDrafts.map.remove(subjectId) else SessionDrafts.map[subjectId] = newDraft
     }
+}
+
+/** What-if drafts for the time the app runs (the web keeps them in session storage). */
+private object SessionDrafts {
+    val map = java.util.concurrent.ConcurrentHashMap<Int, GradeDraftEntry>()
 }

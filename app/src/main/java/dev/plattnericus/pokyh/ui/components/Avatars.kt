@@ -98,10 +98,10 @@ fun PokyhAvatar(
  * The credentials a WebUntis-hosted image request has to carry. Same pair every WebUntis call in
  * [dev.plattnericus.pokyh.data.untis.UntisClient] sends.
  */
-data class UntisImageAuth(val sessionId: String, val bearerToken: String) {
+data class UntisImageAuth(val sessionId: String, val bearerToken: String, val school: dev.plattnericus.pokyh.data.model.School = dev.plattnericus.pokyh.data.model.School.Default) {
     companion object {
         fun of(session: UserSession?): UntisImageAuth? = session?.let {
-            if (it.sessionId.isBlank()) null else UntisImageAuth(it.sessionId, it.bearerToken)
+            if (it.sessionId.isBlank()) null else UntisImageAuth(it.sessionId, it.bearerToken, it.schoolRef)
         }
     }
 }
@@ -142,7 +142,7 @@ fun UntisAvatar(
     cacheKey: String? = null,
 ) {
     val context = LocalContext.current
-    val resolved = remember(rawImageUrl) { resolveUntisImageUrl(rawImageUrl) }
+    val resolved = remember(rawImageUrl, auth?.school) { resolveUntisImageUrl(rawImageUrl, auth?.school ?: dev.plattnericus.pokyh.data.model.School.Default) }
     val diskCache = remember { ImageDiskCache(context.applicationContext) }
     val scope = rememberCoroutineScope()
     val stored by produceState<ByteArray?>(initialValue = null, cacheKey) {
@@ -180,7 +180,7 @@ fun UntisAvatar(
                     )
                     .httpHeaders(
                         NetworkHeaders.Builder()
-                            .set("Cookie", "JSESSIONID=${auth.sessionId}; schoolname=\"${Config.schoolCookie}\"")
+                            .set("Cookie", "JSESSIONID=${auth.sessionId}; schoolname=\"${auth.school.cookie}\"")
                             .apply {
                                 if (auth.bearerToken.isNotEmpty()) {
                                     set("Authorization", "Bearer ${auth.bearerToken}")
@@ -208,14 +208,14 @@ fun UntisAvatar(
  * rather than upgraded — the same "only fetch from the WebUntis domain family" caution the web
  * route applies, since this value comes from a server response.
  */
-internal fun resolveUntisImageUrl(raw: String?): String? {
+internal fun resolveUntisImageUrl(raw: String?, school: dev.plattnericus.pokyh.data.model.School = dev.plattnericus.pokyh.data.model.School.Default): String? {
     val url = raw?.trim().orEmpty()
     if (url.isEmpty()) return null
 
     if (url.startsWith("https://")) return url
     if (url.startsWith("http://")) return null
 
-    val base = runCatching { URI(Config.untisBase) }.getOrNull() ?: return null
+    val base = runCatching { URI(school.base) }.getOrNull() ?: return null
     val scheme = base.scheme ?: return null
     val authority = base.authority ?: return null
     val path = if (url.startsWith("/")) url else "/$url"

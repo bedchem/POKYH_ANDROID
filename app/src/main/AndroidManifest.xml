@@ -12,6 +12,16 @@
     <!-- In-app updates from GitHub releases (core/update/AppUpdater). Android still asks the
          user to confirm every install. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- The QR scanner ("Am Computer anmelden", ui/settings/QrScanner.kt), asked for on first use.
+         Not required: the app installs on a phone without a camera, it just can't scan there. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature
+        xmlns:tools="http://schemas.android.com/tools"
+        android:name="android.hardware.camera.any"
+        android:required="false"
+        tools:replace="android:required" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
         android:name=".PokyhApplication"
@@ -29,11 +39,6 @@
         tools:targetApi="37"
         xmlns:tools="http://schemas.android.com/tools">
 
-        <!-- The QR scanner ("Am Computer anmelden") is downloaded with the app, not on first use. -->
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="barcode_ui" />
-
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -42,6 +47,16 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- The website's sign-in QR code read with the phone's own camera: a link to
+                 api.pokyh.com/l/<code> (backend QR_LINK_BASE) opens the app, which asks to
+                 confirm once it is unlocked (ui/settings/WebSignIn.kt, WebSignInLink). The
+                 backend's /.well-known/assetlinks.json lets Android open it here without asking. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="api.pokyh.com" android:pathPrefix="/l/" />
             </intent-filter>
         </activity>
 

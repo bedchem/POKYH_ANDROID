@@ -36,6 +36,8 @@ import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
 import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.i18n.strings
 
 /**
  * One tile of the hub — either navigates to [route], or (when [route] is null, i.e. "Noten")
@@ -66,53 +68,23 @@ fun SchoolHubScreen(
     // Ordered by how often it's actually opened, school-wide before personal: grades first,
     // then the two things you look up about yourself, then the class, then what the class owes,
     // and your own private list last.
-    val items = remember(state.isParent) {
+    val lang = strings().lang
+    val unread = rememberUnreadMessageCount()
+    // What has no tab of its own, in the web's order (components/app/nav.ts HUB_ITEMS); the
+    // WebUntis pages only for an account with WebUntis.
+    val items = remember(state.hasUntis, lang, unread) {
         buildList {
-            add(HubItem("Noten", "Alle Fächer & Bewertungen", PokyhIcons.decorSubjects, route = null))
-            add(
-                HubItem(
-                    title = "Abwesenheiten",
-                    subtitle = "Fehlstunden & Entschuldigungen",
-                    glyph = PokyhIcons.decorAbsences,
-                    route = PokyhDestinations.ABSENCES,
-                ),
-            )
-            add(
-                HubItem(
-                    title = "Klasse",
-                    subtitle = "Übersicht, Prüfungen & Mitglieder",
-                    glyph = PokyhIcons.decorClassMembers,
-                    route = PokyhDestinations.CLASSROOM,
-                ),
-            )
-            add(
-                HubItem(
-                    title = "Klassenbuch",
-                    subtitle = "Einträge & Vermerke",
-                    glyph = PokyhIcons.decorClassRegister,
-                    route = PokyhDestinations.CLASSREG_EVENTS,
-                ),
-            )
-            // Eltern-/Erziehungsberechtigtenkonten haben eigene Todos und sehen die Klasse, aber
-            // KEINE Klassen-Erinnerungen.
-            if (!state.isParent) {
-                add(
-                    HubItem(
-                        title = "Erinnerungen",
-                        subtitle = "Hausaufgaben & Termine der Klasse",
-                        glyph = PokyhIcons.decorReminders,
-                        route = PokyhDestinations.REMINDERS,
-                    ),
-                )
+            val t = I18n.s.school
+            if (state.hasUntis) {
+                add(HubItem(I18n.s.nav.messages, if (unread > 0) t.unread(unread) else t.messagesInfo, PokyhIcons.decorMessages, route = PokyhDestinations.MESSAGES))
+                add(HubItem(t.absences, t.absencesInfo, PokyhIcons.decorAbsences, route = PokyhDestinations.ABSENCES))
             }
-            add(
-                HubItem(
-                    title = "Eigene Todos",
-                    subtitle = "Deine persönliche Aufgabenliste",
-                    glyph = PokyhIcons.decorTodos,
-                    route = PokyhDestinations.TODOS,
-                ),
-            )
+            add(HubItem(t.todos, t.todosInfo, PokyhIcons.decorTodos, route = PokyhDestinations.TODOS))
+            add(HubItem(t.reminders, t.remindersInfo, PokyhIcons.decorReminders, route = PokyhDestinations.REMINDERS))
+            if (state.hasUntis) {
+                add(HubItem(t.classreg, t.classregInfo, PokyhIcons.decorClassRegister, route = PokyhDestinations.CLASSREG_EVENTS))
+                add(HubItem(t.klasse, t.klasseInfo, PokyhIcons.decorClassMembers, route = PokyhDestinations.CLASSROOM))
+            }
         }
     }
 
@@ -121,12 +93,13 @@ fun SchoolHubScreen(
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
-                title = "Schule",
+                title = strings().nav.school,
+                eyebrow = state.subtitle.ifEmpty { null },
                 nav = TopBarNav.None,
                 actions = {
                     TabRootActions(
                         avatarContent = { CurrentUserAvatar() },
-                        unreadMessages = rememberUnreadMessageCount(),
+                        unreadMessages = unread,
                         onMessages = { onNavigate(PokyhDestinations.MESSAGES) },
                         onProfile = { onNavigate(PokyhDestinations.PROFILE) },
                         onNavigate = onNavigate,

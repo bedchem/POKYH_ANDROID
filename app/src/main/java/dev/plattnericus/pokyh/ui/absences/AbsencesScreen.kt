@@ -82,6 +82,8 @@ import dev.plattnericus.pokyh.ui.theme.slideInTrailing
 import java.util.Locale
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
+import dev.plattnericus.pokyh.ui.components.SkeletonBlock
+import androidx.compose.foundation.layout.widthIn
 
 /**
  * Abwesenheiten — the web app's page for the phone: the Fehlquote as the hero (how much of the
@@ -96,14 +98,18 @@ import kotlinx.datetime.LocalDate
 fun AbsencesScreen(
     onNavigateBack: () -> Unit = {},
     onNavigate: (String) -> Unit = {},
+    /** Opened from Home's "Abwesenheit melden": the report sheet as soon as reporting is allowed. */
+    openReport: Boolean = false,
     viewModel: AbsencesViewModel = hiltViewModel(),
 ) {
     val t = strings().absences
     val year by viewModel.year.collectAsStateWithLifecycle()
     val exact by viewModel.exact.collectAsStateWithLifecycle()
     val absences by viewModel.absences.collectAsStateWithLifecycle()
-    val minutesMap by viewModel.minutesMap.collectAsStateWithLifecycle()
-    val totalPossibleMins by viewModel.totalPossibleMins.collectAsStateWithLifecycle()
+    val figures by viewModel.figures.collectAsStateWithLifecycle()
+    val calcBusy by viewModel.calcBusy.collectAsStateWithLifecycle()
+    val wholeYear by viewModel.wholeYear.collectAsStateWithLifecycle()
+    val minutesMap = figures.perAbsence
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val canReport by viewModel.canReport.collectAsStateWithLifecycle()
@@ -111,18 +117,22 @@ fun AbsencesScreen(
     val excuses by viewModel.excuses.collectAsStateWithLifecycle()
     var yearMenuExpanded by remember { mutableStateOf(false) }
     var reporting by remember { mutableStateOf(false) }
+    var reportOpened by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(canReport) {
+        if (openReport && canReport && !reportOpened) { reportOpened = true; reporting = true }
+    }
     var excusing by remember { mutableStateOf<Pair<AbsenceEntry, String>?>(null) }
     var noViewer by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val noPdf = strings().common.noPdfApp
 
-    fun getMin(e: AbsenceEntry) = minutesMap[e.id] ?: (e.hours * 50)
+    fun getMin(e: AbsenceEntry) = minutesMap[e.id] ?: 0
     fun fmt(m: Int) = formatAbsenceMinutes(m, exact)
 
-    val totalMinutes = absences.sumOf(::getMin)
-    val excusedMinutes = absences.filter { it.isExcused }.sumOf(::getMin)
+    val totalMinutes = figures.minutes
+    val excusedMinutes = figures.excusedMinutes
     val unexcusedMinutes = totalMinutes - excusedMinutes
-    val rate = if (totalPossibleMins > 0) (totalMinutes.toDouble() / totalPossibleMins * 100).coerceAtMost(100.0) else 0.0
+    val whole = wholeYear && viewModel.canWhole()
     val groups = remember(absences, minutesMap, t) { groupAbsencesByMonth(absences, minutesMap) }
 
     Scaffold(
@@ -185,9 +195,18 @@ fun AbsencesScreen(
                     ) {
                         item(key = "rate") {
                             RateCard(
-                                rate = rate,
-                                missed = fmt(totalMinutes),
-                                possible = fmt(totalPossibleMins),
+                                rate = figures.rate,
+                                rateText = when {
+                                    figures.possible != null ->
+                                        if (whole) t.ofLessonsYear(fmt(totalMinutes), fmt(figures.possible!!)) else t.ofLessons(fmt(totalMinutes), fmt(figures.possible!!))
+                                    calcBusy -> t.rateCounting
+                                    else -> null
+                                },
+                                calcBusy = calcBusy,
+                                canWhole = viewModel.canWhole(),
+                                wholeYear = wholeYear,
+                                onWholeYear = viewModel::setWholeYear,
+                                onRetry = viewModel::refreshCalendar,
                                 totalLabel = fmt(totalMinutes),
                                 excusedLabel = fmt(excusedMinutes),
                                 unexcusedLabel = fmt(unexcusedMinutes),
@@ -223,7 +242,9 @@ fun AbsencesScreen(
                                     onNavigate(
                                         PokyhDestinations.absenceCalculator(
                                             absentHours = if (year == SchoolDates.currentSchoolYear) totalMinutes / 60.0 else null,
-                                            totalHours = if (year == SchoolDates.currentSchoolYear && totalPossibleMins > 1) totalPossibleMins / 60.0 else null,
+                                            // Both: the year so far and the whole year, to switch between there.
+                                            totalHours = if (year == SchoolDates.currentSchoolYear) viewModel.soFarMinutes()?.let { it / 60.0 } else null,
+                                            yearHours = if (year == SchoolDates.currentSchoolYear) viewModel.wholeYearMinutes()?.let { it / 60.0 } else null,
                                         ),
                                     )
                                 },
@@ -281,9 +302,14 @@ fun AbsencesScreen(
 /** The Fehlquote, coloured by how much it is, the hours behind it and the excused share. */
 @Composable
 private fun RateCard(
-    rate: Double,
-    missed: String,
-    possible: String,
+    rate: Double?,
+    /** "… von … Unterricht bisher", "Wird berechnet …", or null: not every week has loaded. */
+    rateText: String?,
+    calcBusy: Boolean,
+    canWhole: Boolean,
+    wholeYear: Boolean,
+    onWholeYear: (Boolean) -> Unit,
+    onRetry: () -> Unit,
     totalLabel: String,
     excusedLabel: String,
     unexcusedLabel: String,
@@ -294,18 +320,50 @@ private fun RateCard(
     val t = strings().absences
     val colors = PokyhTheme.colors
     val rateColor = when {
+        rate == null -> colors.textTertiary
         rate < 5.0 -> Brand.success
         rate < 15.0 -> PokyhDecorative.butter(colors.isDark).ink
         else -> Brand.danger
     }
     val share by animateFloatAsState(targetValue = excusedShare, animationSpec = tween(700), label = "excusedShare")
     PokyhCard(modifier = modifier) {
-        PokyhLabel(t.rate, color = colors.textSecondary)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PokyhLabel(t.rate, color = colors.textSecondary, modifier = Modifier.weight(1f))
+            // The rate against the lessons so far, or against every lesson of the school year.
+            if (canWhole) {
+                dev.plattnericus.pokyh.ui.components.PokyhSegmentedControl(
+                    options = listOf(false, true),
+                    selected = wholeYear,
+                    onSelect = onWholeYear,
+                    label = { if (it) t.spanYear else t.spanSoFar },
+                    modifier = Modifier.widthIn(max = 220.dp),
+                )
+            }
+        }
         Spacer(Modifier.size(PokyhSpacing.sm))
-        val number = String.format(Locale.ROOT, "%.1f", rate).replace('.', strings().common.decimal)
-        Text("$number %", style = PokyhType.statLarge.monospacedDigits(), color = rateColor)
+        when {
+            rate != null -> {
+                val number = String.format(Locale.ROOT, "%.1f", rate).replace('.', strings().common.decimal)
+                Text("$number %", style = PokyhType.statLarge.monospacedDigits(), color = rateColor)
+            }
+            calcBusy -> SkeletonBlock(height = 44.dp, width = 150.dp)
+            else -> Text("–", style = PokyhType.statLarge, color = rateColor)
+        }
         Spacer(Modifier.size(PokyhSpacing.sm))
-        Text(t.ofLessons(missed, possible), style = PokyhType.footnote, color = colors.textSecondary)
+        if (rateText != null) {
+            Text(rateText, style = PokyhType.footnote, color = colors.textSecondary)
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
+                Text(t.rateMissing, style = PokyhType.footnote, color = colors.textSecondary, modifier = Modifier.weight(1f, fill = false))
+                Text(
+                    t.rateRetry,
+                    style = PokyhType.footnote.semibold(),
+                    color = colors.textPrimary,
+                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                    modifier = Modifier.clickable(onClick = onRetry),
+                )
+            }
+        }
         Spacer(Modifier.size(PokyhSpacing.xl))
         // Excused against unexcused: green for the excused share, red for the rest.
         Row(

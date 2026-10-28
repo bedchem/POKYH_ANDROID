@@ -62,6 +62,18 @@ class CommonStrings(
     /** "21. Mai" in short months: "21. Mai" / "21 mag" / "21 May". */
     val dayMonthShort: (day: Int, month: Int) -> String,
     val schoolYear: (Int) -> String,
+    val comments: String,
+    val noComments: String,
+    val writeComment: String,
+    val you: String,
+    val ratedStars: (Int) -> String,
+    val noCommentsHint: String,
+    val commentFailed: String,
+    val sending: String,
+    val editComment: String,
+    val reportComment: String,
+    val reportSubject: String,
+    val reportBody: (url: String, author: String, date: String, id: String, text: String) -> String,
 )
 
 private val deMonths = listOf("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember")
@@ -123,6 +135,18 @@ val CommonDe = CommonStrings(
     dayMonth = { d, m -> "$d. ${deMonths[m - 1]}" },
     dayMonthShort = { d, m -> "$d. ${deMonthsShort[m - 1]}" },
     schoolYear = { "Schuljahr $it/${(it + 1) % 100}" },
+    comments = "Kommentare",
+    noComments = "Noch keine Kommentare.",
+    writeComment = "Kommentar schreiben…",
+    you = "Du",
+    ratedStars = { "$it von 5 Sternen" },
+    noCommentsHint = "Schreib den ersten.",
+    commentFailed = "Das hat nicht geklappt. Versuch es noch einmal.",
+    sending = "Wird gesendet …",
+    editComment = "Bearbeiten",
+    reportComment = "Kommentar melden",
+    reportSubject = "Meldung eines Inhalts auf POKYH",
+    reportBody = { url, author, date, id, text -> "Hallo POKYH-Team,\n\nich melde diesen Inhalt (Art. 16 Digital Services Act):\n\nWo: $url\nKommentar von „$author“ vom $date (ID $id):\n„$text“\n\nWarum der Inhalt rechtswidrig ist oder gegen die Nutzungsbedingungen verstößt:\n\n\nMein Name und meine E-Mail-Adresse:\n\n\nIch bestätige, dass meine Angaben nach bestem Wissen richtig und vollständig sind." },
 )
 
 val CommonIt = CommonStrings(
@@ -177,6 +201,18 @@ val CommonIt = CommonStrings(
     dayMonth = { d, m -> "$d ${itMonths[m - 1]}" },
     dayMonthShort = { d, m -> "$d ${itMonthsShort[m - 1]}" },
     schoolYear = { "Anno scolastico $it/${(it + 1) % 100}" },
+    comments = "Commenti",
+    noComments = "Ancora nessun commento.",
+    writeComment = "Scrivi un commento…",
+    you = "Tu",
+    ratedStars = { "$it stelle su 5" },
+    noCommentsHint = "Scrivi il primo.",
+    commentFailed = "Non è andato a buon fine. Riprova.",
+    sending = "Invio in corso …",
+    editComment = "Modifica",
+    reportComment = "Segnala commento",
+    reportSubject = "Segnalazione di un contenuto su POKYH",
+    reportBody = { url, author, date, id, text -> "Ciao team di POKYH,\n\nsegnalo questo contenuto (art. 16 Digital Services Act):\n\nDove: $url\nCommento di «$author» del $date (ID $id):\n«$text»\n\nPerché il contenuto è illegale o viola le condizioni d’uso:\n\n\nIl mio nome e il mio indirizzo e-mail:\n\n\nConfermo che le mie indicazioni sono esatte e complete secondo scienza e coscienza." },
 )
 
 val CommonEn = CommonStrings(
@@ -231,4 +267,16 @@ val CommonEn = CommonStrings(
     dayMonth = { d, m -> "$d ${enMonths[m - 1]}" },
     dayMonthShort = { d, m -> "$d ${enMonthsShort[m - 1]}" },
     schoolYear = { "School year $it/${(it + 1) % 100}" },
+    comments = "Comments",
+    noComments = "No comments yet.",
+    writeComment = "Write a comment…",
+    you = "You",
+    ratedStars = { "$it out of 5 stars" },
+    noCommentsHint = "Write the first one.",
+    commentFailed = "That didn’t work. Please try again.",
+    sending = "Sending …",
+    editComment = "Edit",
+    reportComment = "Report comment",
+    reportSubject = "Report of content on POKYH",
+    reportBody = { url, author, date, id, text -> "Hello POKYH team,\n\nI am reporting this content (Art. 16 Digital Services Act):\n\nWhere: $url\nComment by “$author” on $date (ID $id):\n“$text”\n\nWhy the content is illegal or breaks the terms of use:\n\n\nMy name and e-mail address:\n\n\nI confirm that my information is accurate and complete to the best of my knowledge." },
 )

@@ -78,6 +78,11 @@ import dev.plattnericus.pokyh.ui.theme.smoothCorner
 import dev.plattnericus.pokyh.ui.theme.statusTone
 import dev.plattnericus.pokyh.ui.theme.subjectTone
 import kotlinx.datetime.LocalDate
+import dev.plattnericus.pokyh.core.i18n.I18n
+import dev.plattnericus.pokyh.core.i18n.strings
+import dev.plattnericus.pokyh.ui.pixel.PixelSprite
+import dev.plattnericus.pokyh.ui.pixel.holidaySprite
+import dev.plattnericus.pokyh.ui.components.PixelSpriteArt
 
 /**
  * The week grid — six day columns (Mo–Sa) against a time axis built from the week's own lesson
@@ -145,7 +150,15 @@ fun WeekGrid(
         val maxMins = remember(allEntries) {
             allEntries.maxOfOrNull { Fmt.minutes(it.endTime) } ?: TIMETABLE_PERIODS.last().endMinute
         }
-        val totalHeight = remember(minMins, maxMins) { maxOf(380.dp, ((maxMins - minMins) * PX_PER_MINUTE).dp) }
+        // The school day spread over the height there is, as the web's fitted grid, so the whole
+        // day shows without scrolling: at least 0.62 dp a minute (a lesson's text still fits),
+        // at most 2.4. Without a bounded height, the fixed scale.
+        val pxPerMinute = if (constraints.hasBoundedHeight) {
+            ((maxHeight.value - GridHeaderRoom.value - PokyhSpacing.xxxl.value) / maxOf(1, maxMins - minMins)).coerceIn(0.62f, 2.4f)
+        } else {
+            PX_PER_MINUTE
+        }
+        val totalHeight = ((maxMins - minMins) * pxPerMinute).dp
         // **Numbered only when the numbers are this school's.** [TIMETABLE_PERIODS] is one
         // school's bell schedule; on a timetable that doesn't use it, "1./2./3." next to the
         // clock would be confidently wrong. If most lessons don't start on a known period
@@ -169,6 +182,7 @@ fun WeekGrid(
             set.filter { it >= minMins - 2 && it <= maxMins + 2 }
         }
 
+        androidx.compose.runtime.CompositionLocalProvider(LocalPxPerMinute provides pxPerMinute) {
         Column(
             modifier = Modifier
                 .verticalScroll(rememberScrollState())
@@ -228,8 +242,15 @@ fun WeekGrid(
             }
             }
         }
+        }
     }
 }
+
+/** Dp per minute of the shown week's grid (see [WeekGrid]). */
+private val LocalPxPerMinute = androidx.compose.runtime.staticCompositionLocalOf { PX_PER_MINUTE }
+
+/** The day header row and its gap above the grid. */
+private val GridHeaderRoom = 64.dp
 
 /**
  * Minutes since midnight on the school's clock (the zone the lesson times are in), re-read every
@@ -270,7 +291,7 @@ private fun NowIndicator(
     if (minute < minMins || minute > maxMins) return
 
     val lineThickness = 1.5.dp
-    val y = ((minute - minMins) * PX_PER_MINUTE).dp
+    val y = ((minute - minMins) * LocalPxPerMinute.current).dp
     val gridStart = gutter + colGap
     val columnStart = gridStart + (colW + colGap) * todayIndex
 
@@ -325,11 +346,11 @@ private fun WeekGridHeaderRow(
             verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
             if (weekNumber != null) {
-                Text("KW $weekNumber", style = PokyhType.caption2, color = colors.textTertiary, maxLines = 1)
+                Text(strings().timetable.cw(weekNumber), style = PokyhType.caption2, color = colors.textTertiary, maxLines = 1)
             }
             dates.firstOrNull()?.let { first ->
                 Text(
-                    text = monthShortDe(first.monthNumber),
+                    text = strings().common.monthsShort[first.monthNumber - 1],
                     style = PokyhType.caption.semibold(),
                     color = colors.textSecondary,
                     maxLines = 1,
@@ -367,21 +388,6 @@ private fun WeekGridHeaderRow(
     }
 }
 
-private fun monthShortDe(monthNumber: Int): String = when (monthNumber) {
-    1 -> "Jän."
-    2 -> "Feb."
-    3 -> "März"
-    4 -> "Apr."
-    5 -> "Mai"
-    6 -> "Juni"
-    7 -> "Juli"
-    8 -> "Aug."
-    9 -> "Sep."
-    10 -> "Okt."
-    11 -> "Nov."
-    12 -> "Dez."
-    else -> ""
-}
 
 // ── Time axis ───────────────────────────────────────────────────────────────
 
@@ -401,7 +407,7 @@ private fun TimeAxis(
     val colors = PokyhTheme.colors
     Box(Modifier.width(gutter).height(height)) {
         for (p in visiblePeriods) {
-            val top = (((p.startMinute + p.endMinute) / 2 - minMins) * PX_PER_MINUTE).dp - 9.dp
+            val top = (((p.startMinute + p.endMinute) / 2 - minMins) * LocalPxPerMinute.current).dp - 9.dp
             Text(
                 text = "${p.number}.",
                 style = PokyhType.timeAxisPeriod,
@@ -412,7 +418,7 @@ private fun TimeAxis(
             )
         }
         for (m in boundaryTimes) {
-            val top = ((m - minMins) * PX_PER_MINUTE).dp - 6.dp
+            val top = ((m - minMins) * LocalPxPerMinute.current).dp - 6.dp
             Text(
                 text = hhmm(m),
                 style = PokyhType.timeAxisBoundary,
@@ -647,7 +653,7 @@ private fun DayColumn(
             .height(height),
     ) {
         for (m in boundaryTimes) {
-            val top = ((m - minMins) * PX_PER_MINUTE).dp
+            val top = ((m - minMins) * LocalPxPerMinute.current).dp
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -661,18 +667,19 @@ private fun DayColumn(
             // Nothing. See the function doc.
         } else if (kind != DayKind.NORMAL) {
             SpecialDayCard(
-                spec = specialDaySpecFor(kind),
+                spec = specialDaySpecFor(kind, month = dayNum / 100 % 100, holidayName = dev.plattnericus.pokyh.core.util.holidayNameOn(dayNum)),
                 modifier = Modifier
                     .width(width)
                     .height(height - 4.dp)
                     .offset(y = 2.dp),
                 compact = true,
                 plate = true,
+                onClick = if (kind != DayKind.ALL_CANCELLED && kind != DayKind.HOLIDAY) slots.firstOrNull()?.let { s -> { onTap(s) } } else null,
             )
         } else {
             cells.forEach { cell ->
-                val top = ((cell.startMinute - minMins) * PX_PER_MINUTE).dp
-                val rawHeight = ((cell.endMinute - cell.startMinute) * PX_PER_MINUTE).dp
+                val top = ((cell.startMinute - minMins) * LocalPxPerMinute.current).dp
+                val rawHeight = ((cell.endMinute - cell.startMinute) * LocalPxPerMinute.current).dp
                 val h = maxOf(MinCellHeight, rawHeight)
                 // Both edges are computed from the per-mille span and the gap is taken off the
                 // *leading* one, so the trailing lane still ends flush with the column. Taking
@@ -704,12 +711,20 @@ private fun DayColumn(
                     }
                 }
             }
+            // A whole day away and excused (or reported in advance): its band gets the pixel
+            // scene of a day in bed, as on the web.
+            val lessonCells = cells.filterNot { it.isCancelled }
+            val excusedDay = absenceBands.size == 1 && absenceBands[0].mark != AbsenceMark.ABSENT &&
+                lessonCells.isNotEmpty() &&
+                absenceBands[0].startMinute <= lessonCells.minOf { it.startMinute } &&
+                absenceBands[0].endMinute >= lessonCells.maxOf { it.endMinute }
             absenceBands.forEach { band ->
                 AbsenceOverlay(
                     band = band,
                     width = width,
-                    top = ((band.startMinute - minMins) * PX_PER_MINUTE).dp,
-                    height = ((band.endMinute - band.startMinute) * PX_PER_MINUTE).dp,
+                    top = ((band.startMinute - minMins) * LocalPxPerMinute.current).dp,
+                    height = ((band.endMinute - band.startMinute) * LocalPxPerMinute.current).dp,
+                    wholeDay = excusedDay,
                 )
             }
         }
@@ -727,7 +742,7 @@ private fun DayColumn(
  * even that does not fit.
  */
 @Composable
-private fun AbsenceOverlay(band: AbsenceBand, width: Dp, top: Dp, height: Dp) {
+private fun AbsenceOverlay(band: AbsenceBand, width: Dp, top: Dp, height: Dp, wholeDay: Boolean = false) {
     val isDark = PokyhTheme.colors.isDark
     val absent = band.mark == AbsenceMark.ABSENT
     val fill = if (isDark) Color(0xE014171D) else Color(0xE6CBD5E1)
@@ -751,13 +766,16 @@ private fun AbsenceOverlay(band: AbsenceBand, width: Dp, top: Dp, height: Dp) {
             .padding(horizontal = 2.dp),
         contentAlignment = Alignment.Center,
     ) {
-        PokyhFittedText(
-            text = if (width < 110.dp) band.mark.shortLabel else band.mark.label,
-            style = PokyhType.gridCellSubject.copy(fontSize = 13.sp, lineHeight = 15.sp, fontWeight = FontWeight.ExtraBold),
-            color = ink,
-            maxLines = 1,
-            minScale = 0.5f,
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (wholeDay) PixelSpriteArt(PixelSprite.Excused, width = minOf(120.dp, width * 0.78f))
+            PokyhFittedText(
+                text = if (width < 110.dp) band.mark.shortLabel else band.mark.label,
+                style = PokyhType.gridCellSubject.copy(fontSize = 13.sp, lineHeight = 15.sp, fontWeight = FontWeight.ExtraBold),
+                color = ink,
+                maxLines = 1,
+                minScale = 0.5f,
+            )
+        }
     }
 }
 
@@ -1065,12 +1083,20 @@ private fun cellTone(entry: TimetableEntry, kind: SlotKind, isDark: Boolean): Su
 
 private fun hhmm(totalMinutes: Int): String = "%02d:%02d".format(totalMinutes / 60, totalMinutes % 60)
 
-/** `SpecialDayCard`'s `config` table (TimetableView.swift), ported to a [SpecialDaySpec]. */
-fun specialDaySpecFor(kind: DayKind): SpecialDaySpec = when (kind) {
-    DayKind.HOLIDAY -> SpecialDaySpec(PokyhIcons.holiday, Brand.orange, "Ferien", "Kein Unterricht")
-    DayKind.WEEKEND -> SpecialDaySpec(PokyhIcons.weekend, Brand.success, "Wochenende", "Frei")
-    DayKind.ALL_CANCELLED -> SpecialDaySpec(PokyhIcons.failed, Brand.danger, "Entfall", "Alle Stunden ausgefallen")
-    DayKind.ALL_REPLACEMENT -> SpecialDaySpec(PokyhIcons.replacement, Brand.accent, "Vertretung", "Tag durchgehend ersetzt")
-    DayKind.FULL_DAY_EVENT -> SpecialDaySpec(PokyhIcons.timetable, Brand.accent, "Veranstaltung", "Ganztägig")
-    DayKind.NORMAL -> SpecialDaySpec(PokyhIcons.timetable, Brand.accent, "", "")
+/**
+ * `SpecialDayCard`'s `config` table (TimetableView.swift), ported to a [SpecialDaySpec], with the
+ * web's pixel scenes for the days without lessons: a holiday looks like the time of year of
+ * [month] (1–12), the weekend stays as it is.
+ */
+fun specialDaySpecFor(kind: DayKind, month: Int = 0, holidayName: String? = null): SpecialDaySpec {
+    val t = I18n.s.timetable
+    return when (kind) {
+        // The break's own name ("Herbstferien") where the school's holidays are known.
+        DayKind.HOLIDAY -> SpecialDaySpec(PokyhIcons.holiday, Brand.orange, holidayName ?: t.holiday, t.noLessons, sprite = if (month in 1..12) holidaySprite(month, wholeWeek = false) else null)
+        DayKind.WEEKEND -> SpecialDaySpec(PokyhIcons.weekend, Brand.success, t.weekend, t.free)
+        DayKind.ALL_CANCELLED -> SpecialDaySpec(PokyhIcons.failed, Brand.danger, t.cancelled, t.allCancelled, sprite = PixelSprite.Cancelled)
+        DayKind.ALL_REPLACEMENT -> SpecialDaySpec(PokyhIcons.replacement, Brand.accent, t.substitution, t.allReplaced, sprite = PixelSprite.Swap)
+        DayKind.FULL_DAY_EVENT -> SpecialDaySpec(PokyhIcons.timetable, Brand.accent, t.event, t.allDay, sprite = PixelSprite.Event)
+        DayKind.NORMAL -> SpecialDaySpec(PokyhIcons.timetable, Brand.accent, "", "")
+    }
 }

@@ -166,10 +166,14 @@ fun PokyhNavHost(
                 onNavigateBack = { navController.popBackStack() },
             )
         }
-        composable(PokyhDestinations.ABSENCES) {
+        composable(
+            route = "${PokyhDestinations.ABSENCES}?report={report}",
+            arguments = listOf(androidx.navigation.navArgument("report") { type = androidx.navigation.NavType.BoolType; defaultValue = false }),
+        ) { entry ->
             dev.plattnericus.pokyh.ui.absences.AbsencesScreen(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigate = { route -> navController.navigate(route) },
+                openReport = entry.arguments?.getBoolean("report") == true,
             )
         }
         composable(
@@ -177,13 +181,24 @@ fun PokyhNavHost(
             arguments = listOf(
                 navArgument("absent") { type = NavType.StringType; defaultValue = "" },
                 navArgument("total") { type = NavType.StringType; defaultValue = "" },
+                navArgument("year") { type = NavType.StringType; defaultValue = "" },
             ),
         ) { entry ->
             dev.plattnericus.pokyh.ui.absences.AbsenceCalculatorScreen(
                 absent = entry.arguments?.getString("absent").orEmpty(),
                 total = entry.arguments?.getString("total").orEmpty(),
+                yearTotal = entry.arguments?.getString("year").orEmpty(),
                 onNavigateBack = { navController.popBackStack() },
             )
+        }
+        composable(PokyhDestinations.SEARCH) {
+            dev.plattnericus.pokyh.ui.search.SearchScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onNavigate = { route -> navController.navigate(route) },
+            )
+        }
+        composable(PokyhDestinations.DEVICES) {
+            dev.plattnericus.pokyh.ui.settings.DevicesScreen(onNavigateBack = { navController.popBackStack() })
         }
         composable(PokyhDestinations.SETTINGS) {
             dev.plattnericus.pokyh.ui.settings.SettingsScreen(
@@ -191,8 +206,12 @@ fun PokyhNavHost(
                 onNavigate = { route -> navController.navigate(route) },
             )
         }
-        composable(PokyhDestinations.MESSAGES) {
+        composable(
+            route = "${PokyhDestinations.MESSAGES}?compose={compose}",
+            arguments = listOf(androidx.navigation.navArgument("compose") { type = androidx.navigation.NavType.BoolType; defaultValue = false }),
+        ) { entry ->
             dev.plattnericus.pokyh.ui.messages.MessagesScreen(
+                openCompose = entry.arguments?.getBoolean("compose") == true,
                 onMessageClick = { id, reply -> navController.navigate(PokyhDestinations.messageDetail(id, reply)) },
                 onNavigateBack = { navController.popBackStack() },
             )

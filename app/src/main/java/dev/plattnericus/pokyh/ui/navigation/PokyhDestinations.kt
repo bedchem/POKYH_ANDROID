@@ -16,8 +16,10 @@ object PokyhDestinations {
     const val REMINDERS = "reminders"
     const val REMINDER_DETAIL = "reminders/{reminderId}"
     const val ABSENCES = "absences"
-    const val ABSENCE_CALC = "absences/calc?absent={absent}&total={total}"
+    const val ABSENCE_CALC = "absences/calc?absent={absent}&total={total}&year={year}"
     const val SETTINGS = "settings"
+    const val DEVICES = "settings/devices"
+    const val SEARCH = "search"
     const val MESSAGES = "messages"
     const val MESSAGE_DETAIL = "messages/{id}?reply={reply}"
     const val CLASSREG_EVENTS = "classreg_events"
@@ -33,13 +35,19 @@ object PokyhDestinations {
      * nothing and showed "Fach nicht gefunden". */
     fun gradeSubject(subjectId: Int, year: Int): String = "grades/$subjectId?year=$year"
     fun dishDetail(dishId: String): String = "mensa/$dishId"
+    /** Nachrichten with "Mitteilung verfassen" open (Home's "Nachricht schreiben"). */
+    fun messagesCompose(): String = "$MESSAGES?compose=true"
+    /** Abwesenheiten with "Abwesenheit melden" open (Home's button). */
+    fun absencesReport(): String = "$ABSENCES?report=true"
     fun reminderDetail(reminderId: String): String = "reminders/$reminderId"
     /** [reply]: opened from the inbox, so "Antworten" is offered (sent and draft messages have none). */
     fun messageDetail(id: Int, reply: Boolean = false): String = "messages/$id?reply=$reply"
 
     /** The calculator, filled in with the year's own numbers when there are any (hours). */
-    fun absenceCalculator(absentHours: Double? = null, totalHours: Double? = null): String =
-        "absences/calc?absent=${absentHours?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: ""}&total=${totalHours?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: ""}"
+    fun absenceCalculator(absentHours: Double? = null, totalHours: Double? = null, yearHours: Double? = null): String {
+        fun f(v: Double?) = v?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: ""
+        return "absences/calc?absent=${f(absentHours)}&total=${f(totalHours)}&year=${f(yearHours)}"
+    }
 }
 
 /** Store.swift `AppTab` — the 5 bottom-navigation roots; [route] is that tab's NavHost start destination. */

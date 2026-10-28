@@ -10,8 +10,18 @@ class Strings(
     val absences: AbsencesStrings,
     val profile: ProfileStrings,
     val settings: SettingsStrings,
+    val account: AccountStrings,
     val bell: BellStrings,
     val nav: NavStrings,
+    val home: HomeStrings,
+    val timetable: TimetableStrings,
+    val mensa: MensaStrings,
+    val errors: ErrorStrings,
+    val system: SystemStrings,
+    val tasks: TasksStrings,
+    val messages: MessagesStrings,
+    val school: SchoolStrings,
+    val search: SearchStrings,
 )
 
 val StringsDe = Strings(
@@ -23,8 +33,18 @@ val StringsDe = Strings(
     absences = AbsencesDe,
     profile = ProfileDe,
     settings = SettingsDe,
+    account = AccountDe,
     bell = BellDe,
     nav = NavDe,
+    home = HomeDe,
+    timetable = TimetableDe,
+    mensa = MensaDe,
+    errors = ErrorDe,
+    system = SystemDe,
+    tasks = TasksDe,
+    messages = MessagesDe,
+    school = SchoolDe,
+    search = SearchDe,
 )
 
 val StringsIt = Strings(
@@ -36,8 +56,18 @@ val StringsIt = Strings(
     absences = AbsencesIt,
     profile = ProfileIt,
     settings = SettingsIt,
+    account = AccountIt,
     bell = BellIt,
     nav = NavIt,
+    home = HomeIt,
+    timetable = TimetableIt,
+    mensa = MensaIt,
+    errors = ErrorIt,
+    system = SystemIt,
+    tasks = TasksIt,
+    messages = MessagesIt,
+    school = SchoolIt,
+    search = SearchIt,
 )
 
 val StringsEn = Strings(
@@ -49,6 +79,16 @@ val StringsEn = Strings(
     absences = AbsencesEn,
     profile = ProfileEn,
     settings = SettingsEn,
+    account = AccountEn,
     bell = BellEn,
     nav = NavEn,
+    home = HomeEn,
+    timetable = TimetableEn,
+    mensa = MensaEn,
+    errors = ErrorEn,
+    system = SystemEn,
+    tasks = TasksEn,
+    messages = MessagesEn,
+    school = SchoolEn,
+    search = SearchEn,
 )

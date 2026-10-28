@@ -76,13 +76,13 @@ private fun PrivacyNoticeBanner(notice: PrivacyNoticePrompt, onAcknowledge: susp
     var failed by remember(notice) { mutableStateOf(false) }
 
     val title = when (notice.kind) {
-        PrivacyNoticePrompt.Kind.First -> "Datenschutzerklärung"
-        PrivacyNoticePrompt.Kind.Updated -> "Datenschutzerklärung aktualisiert"
+        PrivacyNoticePrompt.Kind.First -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.privacy
+        PrivacyNoticePrompt.Kind.Updated -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.privacyUpdated
     }
     // Kept short; what the notice says is behind the link.
     val message = when (notice.kind) {
-        PrivacyNoticePrompt.Kind.First -> "Wie POKYH mit deinen Daten umgeht, steht in der Datenschutzerklärung."
-        PrivacyNoticePrompt.Kind.Updated -> "Wir haben unsere Datenschutzerklärung aktualisiert."
+        PrivacyNoticePrompt.Kind.First -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.privacyFirst
+        PrivacyNoticePrompt.Kind.Updated -> dev.plattnericus.pokyh.core.i18n.I18n.s.system.privacyChanged
     }
 
     Column(
@@ -108,18 +108,18 @@ private fun PrivacyNoticeBanner(notice: PrivacyNoticePrompt, onAcknowledge: susp
                 Text(title, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
                 Text(message, style = PokyhType.footnote, color = PokyhTheme.colors.textSecondary)
                 Text(
-                    text = "Datenschutzerklärung lesen",
+                    text = dev.plattnericus.pokyh.core.i18n.I18n.s.system.privacyRead,
                     style = PokyhType.footnote,
                     color = PokyhTheme.colors.accentText,
                     modifier = Modifier.clickable { uriHandler.openUri(PRIVACY_URL) },
                 )
                 if (failed) {
-                    Text("Das hat nicht geklappt. Bitte versuche es noch einmal.", style = PokyhType.footnote, color = Brand.danger)
+                    Text(dev.plattnericus.pokyh.core.i18n.I18n.s.system.privacyFailed, style = PokyhType.footnote, color = Brand.danger)
                 }
             }
         }
         PokyhPrimaryButton(
-            text = "Verstanden",
+            text = dev.plattnericus.pokyh.core.i18n.I18n.s.system.understood,
             loading = saving,
             compact = true,
             modifier = Modifier.fillMaxWidth(),

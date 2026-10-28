@@ -101,6 +101,13 @@ data class PokyhColors(
     val border: Color,
     /** Hairline *between rows inside* a card. Lighter than [border]. */
     val separator: Color,
+    /**
+     * The thin rule above each row of the settings and the profile — the web's `--line`. Those
+     * two pages set their rows out on the canvas under rules, with no card around them.
+     */
+    val line: Color,
+    /** [Brand.danger] at a weight readable as small text — the web's `--danger-ink`. */
+    val dangerText: Color,
     val textPrimary: Color,
     val textSecondary: Color,
     val textTertiary: Color,
@@ -122,6 +129,8 @@ val LightPokyhColors = PokyhColors(
     nav = Color(0xFFEBE7E0),
     border = Color(0xFFE7E2D9),
     separator = Color(0xFFF0ECE5),
+    line = Color(0xFFE0D9CE),
+    dangerText = Color(0xFFB91C1C),
     textPrimary = Color(0xFF1C1A17),
     textSecondary = Color(0xFF6C655C),
     textTertiary = Color(0xFFA39B90),
@@ -162,6 +171,8 @@ val DarkPokyhColors = PokyhColors(
     nav = Color(0xFF212126),
     border = Color(0xFF303036),
     separator = Color(0xFF232327),
+    line = Color(0xFF2E2E34),
+    dangerText = Color(0xFFF87171),
     textPrimary = Color(0xFFF2F2F4),
     textSecondary = Color(0xFF9C9CA2),
     textTertiary = Color(0xFF67676E),
@@ -293,9 +304,10 @@ fun senderColor(name: String): Color {
 fun avatarColorFromHue(hue01: Double): Color = hsv((hue01 * 360.0).toFloat(), 0.60f, 0.55f)
 
 /**
- * Grade color ramp, Italian 1–10 scale, positive at/above 6 (Theme.swift `Palette.grade(_:)`).
- *   value >= 6 : lerp RGB(134,239,172) -> RGB(21,128,61)  over t = (v-6)/4
- *   value <  6 : lerp RGB(239,68,68)   -> RGB(127,29,29)  over t = (6-v)/5
+ * Grade color ramp, Italian 1–10 scale, as the web's lib/colors.ts:
+ *   value >= 6.4 : lerp #86EFAC -> #15803D over t = (v-6.4)/3.6
+ *   6.0 ..< 6.4  : orange #F97316 (only just passing)
+ *   value <  6   : lerp #FCA5A5 -> #991B1B over t = (6-v)/5
  */
 fun gradeColor(value: Double): Color {
     fun lerp(a: Double, b: Double, t: Double): Double = a + (b - a) * t.coerceIn(0.0, 1.0)
@@ -307,12 +319,12 @@ fun gradeColor(value: Double): Color {
         )
     val greenLight = Triple(134.0, 239.0, 172.0)
     val greenDark = Triple(21.0, 128.0, 61.0)
-    val redNormal = Triple(239.0, 68.0, 68.0)
-    val redDark = Triple(127.0, 29.0, 29.0)
-    return if (value >= 6.0) {
-        mix(greenLight, greenDark, (value - 6.0) / (10.0 - 6.0))
-    } else {
-        mix(redNormal, redDark, (6.0 - value) / (6.0 - 1.0))
+    val redLight = Triple(252.0, 165.0, 165.0)
+    val redDark = Triple(153.0, 27.0, 27.0)
+    return when {
+        value >= 6.4 -> mix(greenLight, greenDark, (value - 6.4) / (10.0 - 6.4))
+        value >= 6.0 -> Color(0xFFF97316)
+        else -> mix(redLight, redDark, (6.0 - value) / (6.0 - 1.0))
     }
 }
 

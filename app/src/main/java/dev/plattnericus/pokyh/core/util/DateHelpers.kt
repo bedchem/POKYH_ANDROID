@@ -36,6 +36,19 @@ private val LocalDate.isoDayNumber: Int
 /** Montag der Woche, die `date` enthält (ISO-8601, firstWeekday = 2 = Montag). */
 fun mondayOfWeek(date: LocalDate): LocalDate = date.minus(date.isoDayNumber - 1, DateTimeUnit.DAY)
 
+/**
+ * Monday of the week that counts as "this week" (web lib/school-week.ts): once the school week is
+ * over it has nothing left to come, so from Saturday 17:00 on the next week takes its place.
+ */
+fun schoolWeekMonday(now: java.time.LocalDateTime = java.time.LocalDateTime.now()): LocalDate {
+    val monday = mondayOfWeek(LocalDate(now.year, now.monthValue, now.dayOfMonth))
+    val over = now.dayOfWeek == java.time.DayOfWeek.SUNDAY || (now.dayOfWeek == java.time.DayOfWeek.SATURDAY && now.hour >= 17)
+    return if (over) monday.plus(7, DateTimeUnit.DAY) else monday
+}
+
+/** Whether "this week" is already the coming calendar week (Saturday evening, Sunday). */
+fun weekRolledOver(): Boolean = schoolWeekMonday() != mondayOfWeek(todayLocalDate())
+
 /** Montag…Sonntag der Woche, die `date` enthält. */
 fun weekRange(date: LocalDate): ClosedRange<LocalDate> {
     val monday = mondayOfWeek(date)
@@ -62,6 +75,12 @@ object SchoolDates {
 
     /** ISO-String (yyyy-MM-dd) des Montags der Woche, die `date` enthält. */
     fun mondayIso(date: LocalDate = todayLocalDate()): String = mondayOfWeek(date).toString()
+
+    /** September of the school year a YYYYMMDD day belongs to. */
+    fun schoolYearOf(dateNum: Int): Int {
+        val year = dateNum / 10000
+        return if (dateNum / 100 % 100 >= 9) year else year - 1
+    }
 
     val currentSchoolYear: Int
         get() {

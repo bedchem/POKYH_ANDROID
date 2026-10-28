@@ -51,6 +51,7 @@ import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.floatingSurface
 import dev.plattnericus.pokyh.ui.theme.popIn
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 /**
  * Root composable. Switches between the Login/Lock screens and the authed 5-tab shell by
@@ -94,7 +95,7 @@ fun PokyhApp(appState: AppState) {
         }
 
         if (busy && phase == AppState.Phase.Authed) {
-            SwitchingOverlay(statusText.ifEmpty { "Lädt…" })
+            SwitchingOverlay(statusText.ifEmpty { dev.plattnericus.pokyh.core.i18n.strings().nav.switching })
         }
 
         // Above every screen and its top bar: an outage is a property of the app, not of
@@ -152,6 +153,12 @@ fun PokyhApp(appState: AppState) {
         // check, the privacy notice or the update prompt is on screen so they never stack.
         if (phase == AppState.Phase.Authed && !showSuccessFlash && privacyNotice == null && updateState == AppUpdater.State.Idle) {
             dev.plattnericus.pokyh.ui.popups.AnnouncementPopupHost()
+        }
+
+        // A recap ("Dein Schuljahr") as a story over everything; it opens by itself once, when no
+        // device of the account has shown it yet.
+        if (phase == AppState.Phase.Authed && !showSuccessFlash) {
+            dev.plattnericus.pokyh.ui.recap.RecapHost()
         }
 
         // ProfileScreen's "Konto hinzufügen" row (ProfileViewModel.addAccount -> AppState.
@@ -231,6 +238,32 @@ private fun AuthedShell(appState: AppState) {
         }
     }
 
+    // A tapped notification's screen (a new grade's subject, a message, a reminder). This shell
+    // only exists once the app is unlocked, so a notification tapped while it was locked — or
+    // not running — waits for the lock screen and lands here after it. A tab's own root is
+    // selected like a tap on the bar; anything else is pushed onto the tab that is open.
+    val notificationRoute by dev.plattnericus.pokyh.core.notifications.NotificationRoute.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(notificationRoute) {
+        val route = notificationRoute ?: return@LaunchedEffect
+        // The graph is set and the start screen is there before anything is pushed.
+        navController.currentBackStackEntryFlow.first()
+        dev.plattnericus.pokyh.core.notifications.NotificationRoute.consumed(route)
+        val tab = AppTab.entries.firstOrNull { it.route == route }
+        if (tab != null) appState.selectTab(tab) else runCatching { navController.navigate(route) }
+    }
+
+    // The website's sign-in code, read with the phone's own camera: the same confirmation as
+    // after scanning it in the app ("Am Computer anmelden"). Like the notifications above, it
+    // waits for the lock screen (or signing in) when the app wasn't open.
+    val webSignIn = dev.plattnericus.pokyh.ui.settings.rememberWebSignIn(appState)
+    val webSignInCode by dev.plattnericus.pokyh.ui.settings.WebSignInLink.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(webSignInCode) {
+        val code = webSignInCode ?: return@LaunchedEffect
+        dev.plattnericus.pokyh.ui.settings.WebSignInLink.consumed(code)
+        webSignIn.open(code)
+    }
+    dev.plattnericus.pokyh.ui.settings.WebSignInDialogs(webSignIn)
+
     // The other direction: the system back button pops the stack without going through the
     // bar, so it could land on another tab's root while the bar still highlighted the old one.
     // Whenever the stack settles on a tab root, that tab becomes the selection. `shownTab` is
@@ -247,31 +280,45 @@ private fun AuthedShell(appState: AppState) {
         }
     }
 
-    Scaffold(
-        modifier = Modifier.appBackground(),
-        containerColor = PokyhTheme.colors.bg,
-        bottomBar = {
-            PokyhBottomNav(
-                items = buildList {
-                    add(PokyhNavItem(AppTab.Home, PokyhIcons.tabHome, "Home"))
-                    if (hasUntis) add(PokyhNavItem(AppTab.Timetable, PokyhIcons.tabTimetable, "Stundenplan"))
-                    add(PokyhNavItem(AppTab.School, PokyhIcons.tabSchool, "Schule"))
-                    if (hasUntis) add(PokyhNavItem(AppTab.Grades, PokyhIcons.tabGrades, "Noten"))
-                    add(PokyhNavItem(AppTab.Mensa, PokyhIcons.tabMensa, "Mensa"))
-                },
-                selected = effectiveTab,
-                onSelect = { appState.selectTab(it) },
+    val unreadMessages by appState.unreadMessages.collectAsStateWithLifecycle()
+    val mensaAvailable by appState.mensaAvailable.collectAsStateWithLifecycle()
+    val navItems = buildList {
+        val nav = dev.plattnericus.pokyh.core.i18n.strings().nav
+        add(PokyhNavItem(AppTab.Home, PokyhIcons.tabHome, nav.home))
+        if (hasUntis) add(PokyhNavItem(AppTab.Timetable, PokyhIcons.tabTimetable, nav.timetable))
+        add(PokyhNavItem(AppTab.School, PokyhIcons.tabSchool, nav.school, badge = if (hasUntis) unreadMessages else 0))
+        if (hasUntis) add(PokyhNavItem(AppTab.Grades, PokyhIcons.tabGrades, nav.grades))
+        if (mensaAvailable != false) add(PokyhNavItem(AppTab.Mensa, PokyhIcons.tabMensa, nav.mensa))
+    }
+    // The tabs follow the window, as the web's frame does: a bar along the bottom on phones, a
+    // floating one on mid-size windows, a side bar on wide ones (tablets on their side).
+    val width = dev.plattnericus.pokyh.ui.theme.widthClass()
+    Row(Modifier.fillMaxSize().background(PokyhTheme.colors.bg)) {
+        if (width == dev.plattnericus.pokyh.ui.theme.WidthClass.Expanded) {
+            dev.plattnericus.pokyh.ui.navigation.PokyhSideNav(items = navItems, selected = effectiveTab, onSelect = { appState.selectTab(it) })
+        }
+        Scaffold(
+            modifier = Modifier.weight(1f),
+            containerColor = PokyhTheme.colors.bg,
+            bottomBar = {
+                when (width) {
+                    dev.plattnericus.pokyh.ui.theme.WidthClass.Compact ->
+                        PokyhBottomNav(items = navItems, selected = effectiveTab, onSelect = { appState.selectTab(it) })
+                    dev.plattnericus.pokyh.ui.theme.WidthClass.Medium ->
+                        dev.plattnericus.pokyh.ui.navigation.PokyhFloatingNav(items = navItems, selected = effectiveTab, onSelect = { appState.selectTab(it) })
+                    dev.plattnericus.pokyh.ui.theme.WidthClass.Expanded -> Unit
+                }
+            },
+        ) { innerPadding ->
+            PokyhNavHost(
+                navController = navController,
+                startDestination = startRoute,
+                // Consumed, not just applied: the tab screens are Scaffolds of their own, and an
+                // inner Scaffold still sees the raw navigation-bar inset and pads for it a second
+                // time — a bare strip of canvas between the content and the nav bar.
+                modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding).fillMaxSize(),
             )
-        },
-    ) { innerPadding ->
-        PokyhNavHost(
-            navController = navController,
-            startDestination = startRoute,
-            // Consumed, not just applied: the tab screens are Scaffolds of their own, and an
-            // inner Scaffold still sees the raw navigation-bar inset and pads for it a second
-            // time — a bare strip of canvas between the content and the nav bar.
-            modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding).fillMaxSize(),
-        )
+        }
     }
 }
 

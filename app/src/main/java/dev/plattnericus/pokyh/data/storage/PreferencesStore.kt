@@ -53,6 +53,7 @@ class PreferencesStore @Inject constructor(
         val HOME_LAYOUT = stringPreferencesKey("pokyh_home_layout")
         val POPUPS_SEEN = stringPreferencesKey("pokyh_popups_seen")
         val UPDATE_SNOOZED_UNTIL = longPreferencesKey("pokyh_update_snoozed_until")
+        val GRADES_SORT = stringPreferencesKey("pokyh_grades_sort")
 
         const val KEY_PREFIX = "pokyh_"
     }
@@ -234,6 +235,15 @@ class PreferencesStore @Inject constructor(
     // ── Alles löschen ────────────────────────────────────────────────────────
 
     /** Entfernt jeden Preference-Key mit dem `pokyh_`-Präfix — keine hartkodierte Liste. */
+    // ── Noten: the subjects' order ──────────────────────────────────────────
+
+    /** The order picked for the subjects on Noten (a [dev.plattnericus.pokyh.ui.grades.GradesViewModel.SortMode] name). */
+    val gradesSort: Flow<String?> = context.dataStore.data.map { it[GRADES_SORT] }
+
+    suspend fun setGradesSort(value: String) {
+        context.dataStore.edit { it[GRADES_SORT] = value }
+    }
+
     suspend fun clearAll() {
         context.dataStore.edit { prefs ->
             val toRemove = prefs.asMap().keys.filter { it.name.startsWith(KEY_PREFIX) }

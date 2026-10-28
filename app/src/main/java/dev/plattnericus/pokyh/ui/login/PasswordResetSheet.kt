@@ -43,13 +43,14 @@ import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.accentSurface
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.clickable
 
 /**
  * "Passwort vergessen", as on the web's sign-in page: username and the e-mail address stored in
  * WebUntis; WebUntis then sends a link to set a new password. POKYH never sees a password here.
  */
 @Composable
-fun PasswordResetSheet(viewModel: LoginViewModel, initialUsername: String, onDismiss: () -> Unit) {
+fun PasswordResetSheet(viewModel: LoginViewModel, initialUsername: String, onDismiss: () -> Unit, school: dev.plattnericus.pokyh.data.model.School? = null) {
     val state by viewModel.reset.collectAsStateWithLifecycle()
     var username by remember { mutableStateOf(initialUsername.trim()) }
     var email by remember { mutableStateOf("") }
@@ -142,9 +143,22 @@ fun PasswordResetSheet(viewModel: LoginViewModel, initialUsername: String, onDis
                     icon = PokyhIcons.sendMessage,
                     loading = state.sending,
                     enabled = username.isNotBlank() && email.isNotBlank(),
-                    onClick = { viewModel.requestPasswordReset(username, email) },
+                    onClick = { viewModel.requestPasswordReset(username, email, school) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // WebUntis' own page of the school, as on the web.
+                if (school != null) {
+                    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                    Text(
+                        strings().login.resetOfficial + " ↗",
+                        style = PokyhType.footnote.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                        color = PokyhTheme.colors.textSecondary,
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.CenterHorizontally)
+                            .clickable { uriHandler.openUri("https://${school.server}/WebUntis/?school=${school.query}#/basic/resetPassword") }
+                            .padding(8.dp),
+                    )
+                }
             }
         }
     }

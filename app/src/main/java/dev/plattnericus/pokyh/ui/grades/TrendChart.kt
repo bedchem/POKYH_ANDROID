@@ -1,238 +1,187 @@
 package dev.plattnericus.pokyh.ui.grades
-import androidx.compose.foundation.layout.*
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import dev.plattnericus.pokyh.core.i18n.strings
 import dev.plattnericus.pokyh.core.util.Fmt
 import dev.plattnericus.pokyh.ui.theme.Brand
-import dev.plattnericus.pokyh.ui.theme.PokyhIcons
-import dev.plattnericus.pokyh.ui.theme.PokyhTheme
-import dev.plattnericus.pokyh.ui.components.PokyhLabel
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
 import dev.plattnericus.pokyh.ui.theme.PokyhSpacing
+import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
-import dev.plattnericus.pokyh.ui.theme.cardSurface
 import dev.plattnericus.pokyh.ui.theme.gradeColor
-import kotlin.math.roundToInt
+import kotlin.math.floor
 
-private val ChartHeight = 130.dp
-private val YTicks = listOf(10.0, 8.0, 6.0, 4.0, 2.0)
+/** One grade on the trend: a teacher's (with its date) or one of the student's own to try out. */
+data class TrendPoint(val value: Double, val date: Int?, val label: String, val own: Boolean)
 
 /**
- * Notenverlauf sparkline — Canvas port of SwiftUI `TrendChart` (raw grades + running average +
- * linear-regression trend line). Caller only renders this when there are >= 2 [values] (matches
- * `if chronological.count >= 2 { TrendChart(...) }` at the GradeSubjectView call site).
+ * The grades over the school year, as the web's TrendChart: each grade a dot (below 6 red, the
+ * student's own hollow on a dashed line), the running average as a line, the band under 6
+ * tinted, dates along the bottom. The axis runs from min(4, the lowest grade) to 10 with a line
+ * at every grade. Tapping a dot shows its card: date · what it was · grade · average so far.
  */
 @Composable
-fun TrendChart(values: List<Double>, modifier: Modifier = Modifier) {
-    val cumulativeAverages = remember(values) {
+fun TrendChart(points: List<TrendPoint>, modifier: Modifier = Modifier) {
+    val colors = PokyhTheme.colors
+    var selected by remember(points) { mutableStateOf<Int?>(null) }
+    val running = remember(points) {
         var sum = 0.0
-        values.mapIndexed { i, v -> sum += v; sum / (i + 1) }
+        points.mapIndexed { i, p -> sum += p.value; sum / (i + 1) }
     }
-    val finalAvg = cumulativeAverages.lastOrNull() ?: 0.0
-    val avgColor = gradeColor(finalAvg)
-    val regression = remember(values) { linearRegression(values) }
-    val trendArrow = when {
-        regression == null -> "→"
-        regression.first > 0.05 -> "↗"
-        regression.first < -0.05 -> "↘"
-        else -> "→"
-    }
+    val lowest = points.minOfOrNull { it.value } ?: 6.0
+    val yMin = floor(minOf(4.0, lowest)).coerceAtLeast(1.0)
+    val yMax = 10.0
+    val axisW = 22.dp
+    val chartH = 200.dp
+    val avgColor = gradeColor(running.lastOrNull() ?: 6.0)
 
-    val separatorColor = PokyhTheme.colors.separator
-    val textTertiary = PokyhTheme.colors.textTertiary
-    val gradePts = remember(values) { pointsFor(values) }
-    val avgPts = remember(cumulativeAverages) { pointsFor(cumulativeAverages) }
-
-    Column(
-        modifier = modifier.fillMaxWidth().cardSurface().padding(PokyhSpacing.card),
-        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
-    ) {
-        // Header + legend.
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(PokyhIcons.gradeTrend, contentDescription = null, tint = PokyhTheme.colors.textSecondary, modifier = Modifier.size(13.dp))
-            PokyhLabel(strings().grades.trend, color = PokyhTheme.colors.textSecondary)
-            Spacer(Modifier.weight(1f))
-            LegendDot(Brand.accent.copy(alpha = 0.6f), strings().grades.trendGrades)
-            LegendDot(avgColor, "Ø")
-            LegendDot(Brand.orange, strings().grades.trendLabel(trendArrow))
-        }
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Y-Achse (Note): 5 ticks evenly spread over the chart height, same approximation the
-            // iOS VStack-with-Spacer layout uses.
-            Column(
-                modifier = Modifier.width(16.dp).height(ChartHeight),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.SpaceBetween,
+    Column(modifier.fillMaxWidth().background(colors.card, PokyhShapes.xl).padding(PokyhSpacing.card), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().height(chartH)) {
+            val plotW = constraints.maxWidth.toFloat()
+            Canvas(
+                Modifier.fillMaxWidth().height(chartH).pointerInput(points) {
+                    detectTapGestures { tap ->
+                        val w = size.width - axisW.toPx()
+                        val hit = points.indices.minByOrNull { i -> kotlin.math.abs(xOf(i, points.size, w, axisW.toPx()) - tap.x) }
+                        selected = if (hit == selected) null else hit
+                    }
+                },
             ) {
-                YTicks.forEach { t -> Text(Fmt.num(t, digits = 0), style = PokyhType.caption2, color = textTertiary) }
-            }
-
-            BoxWithConstraints(modifier = Modifier.weight(1f).height(ChartHeight)) {
-                val density = LocalDensity.current
-                val wPx = with(density) { maxWidth.toPx() }
-                val hPx = with(density) { maxHeight.toPx() }
-
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val w = size.width
-                    val h = size.height
-                    fun px(p: RelPoint) = Offset(p.x * w, yFor(p.y, h))
-
-                    // Hilfslinien je Note.
-                    YTicks.forEach { t ->
-                        val y = yFor(t, h)
-                        val isSix = t == 6.0
-                        drawLine(
-                            color = (if (isSix) Brand.tint else separatorColor).copy(alpha = if (isSix) 0.5f else 0.4f),
-                            start = Offset(0f, y),
-                            end = Offset(w, y),
-                            strokeWidth = (if (isSix) 1f else 0.5f).dp.toPx(),
-                            pathEffect = if (isSix) PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx())) else null,
-                        )
-                    }
-
-                    // Einzelnoten – feine Linie + Punkte.
-                    if (gradePts.isNotEmpty()) {
-                        val path = Path().apply {
-                            val first = px(gradePts.first())
-                            moveTo(first.x, first.y)
-                            gradePts.drop(1).forEach { val o = px(it); lineTo(o.x, o.y) }
-                        }
-                        drawPath(path, color = Brand.accent.copy(alpha = 0.45f), style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                        gradePts.forEach { drawCircle(color = Brand.accent, radius = 2.5.dp.toPx(), center = px(it)) }
-                    }
-
-                    // Kumulativer Durchschnitt (laufender Mittelwert).
-                    if (avgPts.isNotEmpty()) {
-                        val path = Path().apply {
-                            val first = px(avgPts.first())
-                            moveTo(first.x, first.y)
-                            avgPts.drop(1).forEach { val o = px(it); lineTo(o.x, o.y) }
-                        }
-                        drawPath(path, color = avgColor, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-                    }
-
-                    // Trend-„Stich": dünne lineare Regression.
-                    regression?.let { (slope, intercept) ->
-                        val y0 = yFor(intercept, h)
-                        val y1 = yFor(slope * (values.size - 1) + intercept, h)
-                        drawLine(
-                            color = Brand.orange.copy(alpha = 0.85f),
-                            start = Offset(0f, y0),
-                            end = Offset(w, y1),
-                            strokeWidth = 1.2.dp.toPx(),
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 3.dp.toPx())),
-                        )
-                    }
-
-                    // Endpunkt = aktueller Gesamtschnitt.
-                    avgPts.lastOrNull()?.let { drawCircle(color = avgColor, radius = 3.5.dp.toPx(), center = px(it)) }
+                val left = axisW.toPx()
+                val w = size.width - left
+                val h = size.height
+                fun y(v: Double) = (h - (v.coerceIn(yMin, yMax) - yMin) / (yMax - yMin) * h).toFloat()
+                // The band under 6.
+                drawRect(Brand.danger.copy(alpha = 0.07f), topLeft = Offset(left, y(6.0)), size = Size(w, h - y(6.0)))
+                // A line at every grade.
+                var g = yMin
+                while (g <= yMax + 0.001) {
+                    drawLine(colors.textTertiary.copy(alpha = if (g == 6.0) 0.45f else 0.15f), Offset(left, y(g)), Offset(size.width, y(g)), strokeWidth = if (g == 6.0) 1.5.dp.toPx() else 1.dp.toPx())
+                    g += 1.0
                 }
-
-                // Label „Ø X" — SwiftUI `.position()` centers the view AT the point; Compose's
-                // `offset` anchors the top-left instead, so this measures the badge first, then
-                // places it centered at the same (clamped) pixel position.
-                avgPts.lastOrNull()?.let { last ->
-                    CenteredBadge(xPx = last.x * wPx, yPx = yFor(last.y, hPx), color = avgColor, label = "Ø ${Fmt.num(finalAvg)}")
+                // The running average.
+                if (points.size > 1) {
+                    val path = Path()
+                    running.forEachIndexed { i, a -> val p = Offset(xOf(i, points.size, w, left), y(a)); if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y) }
+                    drawPath(path, avgColor, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                // The grades: the own ones on a dashed line from the last teacher grade.
+                val firstOwn = points.indexOfFirst { it.own }
+                if (firstOwn > 0) {
+                    val path = Path()
+                    for (i in (firstOwn - 1) until points.size) {
+                        val p = Offset(xOf(i, points.size, w, left), y(points[i].value))
+                        if (i == firstOwn - 1) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+                    }
+                    drawPath(path, colors.textTertiary, style = Stroke(width = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))))
+                }
+                points.forEachIndexed { i, p ->
+                    val c = Offset(xOf(i, points.size, w, left), y(p.value))
+                    val tone = if (p.value < 6) Brand.danger else colors.textPrimary
+                    val r = if (selected == i) 6.dp.toPx() else 4.5.dp.toPx()
+                    if (p.own) {
+                        drawCircle(colors.card, r, c)
+                        drawCircle(tone, r, c, style = Stroke(width = 2.dp.toPx()))
+                    } else {
+                        drawCircle(tone, r, c)
+                    }
                 }
             }
+            // The axis' grades.
+            var g = yMin
+            while (g <= yMax + 0.001) {
+                val top = chartH * ((yMax - g) / (yMax - yMin)).toFloat()
+                Text(
+                    g.toInt().toString(),
+                    style = PokyhType.caption2,
+                    color = colors.textTertiary,
+                    modifier = Modifier.width(axisW).offset(y = top - 7.dp),
+                )
+                g += 1.0
+            }
+            // The tapped grade's card.
+            selected?.let { i ->
+                val p = points[i]
+                val w = plotW - with(androidx.compose.ui.platform.LocalDensity.current) { axisW.toPx() }
+                val xPx = xOf(i, points.size, w, with(androidx.compose.ui.platform.LocalDensity.current) { axisW.toPx() })
+                val xDp = with(androidx.compose.ui.platform.LocalDensity.current) { xPx.toDp() }
+                Column(
+                    Modifier
+                        .offset(x = (xDp - 70.dp).coerceIn(0.dp, maxWidth - 140.dp), y = 0.dp)
+                        .width(140.dp)
+                        .background(colors.nested, PokyhShapes.md)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Text(listOfNotNull(p.date?.let { Fmt.dateShort(it) }, p.label.ifBlank { null }).joinToString(" · "), style = PokyhType.caption2, color = colors.textSecondary, maxLines = 2)
+                    Text(Fmt.num(p.value), style = PokyhType.headline.copy(fontWeight = FontWeight.ExtraBold), color = gradeColor(p.value))
+                    Text("Ø " + Fmt.num(running[i]), style = PokyhType.caption2, color = colors.textTertiary)
+                }
+            }
         }
-
-        // X-Achse (Reihenfolge der Noten).
-        Row(modifier = Modifier.fillMaxWidth().padding(start = 24.dp)) {
-            Text(strings().grades.gradeN(1), style = PokyhType.caption2, color = textTertiary)
-            Spacer(Modifier.weight(1f))
-            Text(strings().grades.gradeN(values.size), style = PokyhType.caption2, color = textTertiary)
+        // Dates along the bottom: the first, the middle and the last grade's.
+        val dated = points.withIndex().filter { it.value.date != null }
+        if (dated.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(start = axisW)) {
+                val shown = listOfNotNull(dated.first(), dated.getOrNull(dated.size / 2)?.takeIf { dated.size > 2 }, dated.last().takeIf { dated.size > 1 })
+                shown.forEachIndexed { idx, iv ->
+                    Text(
+                        Fmt.dateShort(iv.value.date!!),
+                        style = PokyhType.caption2,
+                        color = colors.textTertiary,
+                        modifier = Modifier.weight(1f),
+                        textAlign = when (idx) {
+                            0 -> androidx.compose.ui.text.style.TextAlign.Start
+                            shown.lastIndex -> androidx.compose.ui.text.style.TextAlign.End
+                            else -> androidx.compose.ui.text.style.TextAlign.Center
+                        },
+                    )
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).background(avgColor, PokyhShapes.pill))
+            Text(strings().grades.average, style = PokyhType.caption, color = colors.textSecondary)
+            if (points.any { it.own }) {
+                Box(Modifier.size(10.dp).background(colors.card, PokyhShapes.pill).padding(2.dp).background(colors.textTertiary, PokyhShapes.pill))
+                Text(strings().grades.ownGrade, style = PokyhType.caption, color = colors.textSecondary)
+            }
         }
     }
 }
 
-/** Measures the "Ø X" capsule, then places its CENTER at the clamped pixel position
- * `(min(maxWidth - 22dp, xPx), max(9dp, yPx - 12dp))` — the same clamp as SwiftUI's
- * `.position(x: min(w - 22, last.x), y: max(9, last.y - 12))`. */
-@Composable
-private fun CenteredBadge(xPx: Float, yPx: Float, color: Color, label: String) {
-    Layout(content = {
-        Box(modifier = Modifier.background(color, PokyhShapes.pill).padding(horizontal = 6.dp, vertical = 2.dp)) {
-            Text(label, style = PokyhType.badgeChip, color = Brand.onAccent)
-        }
-    }) { measurables, constraints ->
-        val placeable = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
-        val clampedX = minOf((constraints.maxWidth - 22.dp.roundToPx()).toFloat(), xPx)
-        val clampedY = maxOf(9.dp.roundToPx().toFloat(), yPx - 12.dp.roundToPx())
-        layout(constraints.maxWidth, constraints.maxHeight) {
-            placeable.placeRelative((clampedX - placeable.width / 2f).roundToInt(), (clampedY - placeable.height / 2f).roundToInt())
-        }
-    }
-}
-
-@Composable
-private fun LegendDot(color: Color, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        Box(Modifier.size(6.dp).background(color, PokyhShapes.pill))
-        Text(text, style = PokyhType.caption2, color = PokyhTheme.colors.textTertiary)
-    }
-}
-
-/** A value already mapped to `x` in `[0,1]` and `y` as the raw grade/average (1..10). */
-private data class RelPoint(val x: Float, val y: Double)
-
-/** Maps a value series evenly over `x`, matching SwiftUI `TrendChart.points(_:in:)`. */
-private fun pointsFor(values: List<Double>): List<RelPoint> = when {
-    values.isEmpty() -> emptyList()
-    values.size == 1 -> listOf(RelPoint(0.5f, values[0]))
-    else -> values.mapIndexed { idx, v -> RelPoint(idx.toFloat() / (values.size - 1).toFloat(), v) }
-}
-
-/** Note (1..10, clamped) -> Y pixel position within a chart of height `h`. */
-private fun yFor(v: Double, h: Float): Float = h - ((v.coerceIn(1.0, 10.0) - 1.0) / 9.0 * h).toFloat()
-
-/** Linear regression (x = index, y = grade) for the trend line, matching `TrendChart.regression`. */
-private fun linearRegression(values: List<Double>): Pair<Double, Double>? {
-    val n = values.size
-    if (n < 2) return null
-    val meanX = (n - 1) / 2.0
-    val meanY = values.sum() / n
-    var num = 0.0
-    var den = 0.0
-    for (i in 0 until n) {
-        val dx = i - meanX
-        num += dx * (values[i] - meanY)
-        den += dx * dx
-    }
-    if (den == 0.0) return null
-    val slope = num / den
-    return slope to (meanY - slope * meanX)
+private fun xOf(i: Int, n: Int, width: Float, left: Float): Float {
+    val pad = 12f
+    if (n <= 1) return left + width / 2
+    return left + pad + (width - 2 * pad) * i / (n - 1)
 }

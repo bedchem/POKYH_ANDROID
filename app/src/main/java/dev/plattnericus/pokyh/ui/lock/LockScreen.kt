@@ -74,6 +74,15 @@ import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.centeredForm
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import kotlinx.coroutines.launch
+import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.mutableLongStateOf
+import dev.plattnericus.pokyh.core.i18n.strings
+import dev.plattnericus.pokyh.ui.login.LoginMascotBadge
+import dev.plattnericus.pokyh.ui.login.CENTERED_MASCOT_ASPECT
+import androidx.compose.foundation.layout.aspectRatio
+import dev.plattnericus.pokyh.ui.login.LoginMascotState
+import dev.plattnericus.pokyh.ui.login.MascotEvent
+import dev.plattnericus.pokyh.ui.login.MascotEventKind
 
 /**
  * Sperrbildschirm. Auto-attempts biometric unlock once on first composition. The saved-accounts
@@ -107,6 +116,10 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
     val biometricAuthenticator = remember(activity) { activity?.let { BiometricAuthenticator(it) } }
     val biometricAvailable = viewModel.biometricAvailable && biometricAuthenticator != null
     val showFallback = problem != null || failures >= 3
+    val t = strings().login
+    // The mascot greets whoever comes back, and answers a tap.
+    var mascotEvent by remember { mutableStateOf<MascotEvent?>(null) }
+    var taps by remember { mutableLongStateOf(0L) }
 
     fun attemptUnlock(username: String? = null) {
         val authenticator = biometricAuthenticator
@@ -114,8 +127,8 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
             if (promptOpen || busy) return
             promptOpen = true
             authenticator.authenticate(
-                title = "Entsperren",
-                subtitle = "Mit Biometrie oder Geräte-PIN anmelden",
+                title = t.lockTitle,
+                subtitle = t.lockSubtitle,
                 onSuccess = {
                     promptOpen = false
                     problem = null
@@ -124,14 +137,14 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
                         // The identity check passed — anything failing now is the login, and the
                         // message says so instead of blaming the fingerprint.
                         if (!ok && !viewModel.showAddAccount.value) {
-                            problem = viewModel.error.value ?: "Anmeldung fehlgeschlagen. Bitte erneut versuchen."
+                            problem = viewModel.error.value ?: t.lockFailed
                         }
                     }
                 },
                 onError = { message ->
                     promptOpen = false
                     failures++
-                    problem = message.ifBlank { "Biometrie nicht verfügbar." }
+                    problem = message.ifBlank { t.lockNoBiometric }
                 },
                 onFailed = {},
                 onCancel = { promptOpen = false },
@@ -162,12 +175,16 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
     LaunchedEffect(Unit) {
         viewModel.showAddAccount.collect { if (it) showAddAccountSheet = true }
     }
+    // Signing in by hand: the failed unlock's message no longer applies.
+    LaunchedEffect(showAddAccountSheet) {
+        if (showAddAccountSheet) problem = null
+    }
 
     val statusText = when {
-        busy -> statusTextRaw.ifEmpty { "Anmelden…" }
-        problem != null -> problem + "\nWähle ein Konto oder melde dich mit Passwort an."
-        showFallback -> "Entsperren nicht möglich.\nWähle ein Konto oder melde dich mit Passwort an."
-        else -> "Mit Biometrie entsperren"
+        busy -> statusTextRaw.ifEmpty { t.signingIn }
+        problem != null -> problem + "\n" + t.lockChoose
+        showFallback -> t.lockUnavailable + "\n" + t.lockChoose
+        else -> t.lockPrompt
     }
 
     // See LoginScreen — these two screens are outside the tab shell's Scaffold and own their insets.
@@ -181,7 +198,30 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
         ) {
             Spacer(Modifier.weight(1f))
 
-            UnlockMark(busy = busy, modifier = Modifier.fadeIn())
+            // The mascot, as on the sign-in screen, while the accounts are offered; the mark with
+            // the unlock turning around it while one signs in.
+            // One fixed room for both, each centred in it: the crossfade's box used to take the
+            // mascot's size and put the smaller mark at its top left, until the mascot was gone
+            // and the box shrank — the mark jumped to the middle and everything below moved up.
+            Crossfade(
+                targetState = busy,
+                label = "lockMark",
+                modifier = Modifier.widthIn(max = 320.dp).fillMaxWidth().aspectRatio(CENTERED_MASCOT_ASPECT).fadeIn(),
+            ) { unlocking ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (unlocking) {
+                        UnlockMark(busy = true)
+                    } else {
+                        LoginMascotBadge(
+                            state = LoginMascotState(event = mascotEvent, welcomeBack = true),
+                            modifier = Modifier.fillMaxWidth(),
+                            onTap = { taps++; mascotEvent = MascotEvent(MascotEventKind.Tap, taps) },
+                            maxWidth = 320.dp,
+                            centered = true,
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(PokyhSpacing.xl))
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -189,12 +229,15 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
                 modifier = Modifier.fadeIn(delayMillis = 50),
             ) {
                 Text("POKYH", style = PokyhType.wordmark, color = PokyhTheme.colors.textPrimary)
-                Crossfade(targetState = statusText, label = "lockStatus") { text ->
+                // As wide as the column, so a message of another length crossfades in the middle
+                // instead of at the left edge of the one before it.
+                Crossfade(targetState = statusText, label = "lockStatus", modifier = Modifier.fillMaxWidth()) { text ->
                     Text(
                         text = text,
                         style = PokyhType.callout,
                         color = if (showFallback) Brand.danger else PokyhTheme.colors.textSecondary,
                         textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -231,7 +274,7 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
                     }
 
                     PokyhSecondaryButton(
-                        text = "Manuell anmelden",
+                        text = t.lockManual,
                         onClick = { viewModel.addAccount(); showAddAccountSheet = true },
                         icon = PokyhIcons.password,
                         modifier = Modifier
@@ -250,7 +293,7 @@ fun LockScreen(viewModel: LockViewModel = hiltViewModel()) {
                 exit = fadeOut(tween(PokyhMotion.durationFast)),
             ) {
                 PokyhTextButton(
-                    text = "Anderes Konto hinzufügen",
+                    text = t.lockAddOther,
                     icon = PokyhIcons.addAccount,
                     onClick = { viewModel.addAccount(); showAddAccountSheet = true },
                     modifier = Modifier
@@ -344,9 +387,12 @@ private fun UnlockMark(busy: Boolean, modifier: Modifier = Modifier) {
                 )
             }
         }
+        // Round, like the ring turning around it: the mark's square corners would stick out of it.
         PokyhMark(
             size = markSize,
-            modifier = Modifier.graphicsLayer { scaleX = breath; scaleY = breath },
+            modifier = Modifier
+                .graphicsLayer { scaleX = breath; scaleY = breath }
+                .clip(androidx.compose.foundation.shape.CircleShape),
         )
     }
 }
@@ -360,7 +406,7 @@ private fun OrDivider(modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
     ) {
         HorizontalDivider(modifier = Modifier.weight(1f), color = lineColor)
-        Text("oder", style = PokyhType.caption, color = PokyhTheme.colors.textTertiary)
+        Text(strings().login.lockOr, style = PokyhType.caption, color = PokyhTheme.colors.textTertiary)
         HorizontalDivider(modifier = Modifier.weight(1f), color = lineColor)
     }
 }
@@ -377,7 +423,7 @@ private fun AccountChooser(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
     ) {
-        PokyhLabel("Gespeicherte Konten")
+        PokyhLabel(strings().login.lockSaved)
         PokyhListCard(items = accounts) { acc ->
             PokyhRow(
                 title = acc.username,
@@ -400,7 +446,7 @@ private fun AccountChooser(
                         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
                     ) {
                         if (acc.username == defaultUsername) {
-                            MiniBadge("Standard", Brand.accent, icon = PokyhIcons.starFilled)
+                            MiniBadge(strings().login.lockDefault, Brand.accent, icon = PokyhIcons.starFilled)
                         }
                         Icon(
                             imageVector = PokyhIcons.biometrics,

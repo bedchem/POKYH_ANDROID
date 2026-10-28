@@ -76,6 +76,9 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.launch
+import dev.plattnericus.pokyh.core.i18n.strings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.width
 
 /** Klassen-Erinnerungen — the same swipe-to-delete tile-row list as Todos, so the two screens
  * that sit next to each other in the School hub behave identically. */
@@ -98,35 +101,37 @@ fun RemindersScreen(
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
-                title = "Klassen-Erinnerungen",
-                eyebrow = if (visible.isEmpty()) null else "${visible.size} anstehend",
+                title = strings().tasks.reminders,
+                // Only what is still to come counts, as on the web.
+                eyebrow = visible.count { (parseRemindAt(it.remindAt) ?: Instant.MAX) >= Instant.now() }
+                    .takeIf { it > 0 }?.let { strings().tasks.upcoming(it) },
                 nav = TopBarNav.Back(onNavigateBack),
             )
         },
         floatingActionButton = {
             if ((hasBackend && hasClass) || ui.offline) {
-                PokyhFab(text = "Neu", icon = PokyhIcons.add, onClick = { showAdd = true })
+                PokyhFab(text = strings().tasks.new, icon = PokyhIcons.add, onClick = { showAdd = true })
             }
         },
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                !hasBackend && !ui.offline && !ui.offlineCopy -> BackendUnavailableView(feature = "Erinnerungen", status = backendStatus)
+                !hasBackend && !ui.offline && !ui.offlineCopy -> BackendUnavailableView(feature = strings().tasks.remindersFeature, status = backendStatus)
                 ui.loading && ui.reminders.isEmpty() -> ListSkeleton()
                 ui.error != null && ui.reminders.isEmpty() && ui.pending.isEmpty() ->
                     ErrorStateView(message = ui.error!!, onRetry = viewModel::refresh)
                 !hasClass && !ui.offline && !ui.offlineCopy -> EmptyStateView(
                     sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Search,
-                    title = "Keine Klasse",
-                    subtitle = "Du bist noch keiner Klasse beigetreten.",
+                    title = strings().tasks.noClass,
+                    subtitle = strings().tasks.noClassText,
                 )
                 visible.isEmpty() && ui.pending.isEmpty() -> EmptyStateView(
                     sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Bell,
-                    title = "Keine Erinnerungen",
+                    title = strings().tasks.remindersEmpty,
                     subtitle = if (ui.offline) {
-                        "Du bist offline. Neue Erinnerungen werden gesendet, sobald du wieder Internet hast."
+                        strings().tasks.remindersOffline
                     } else {
-                        "Lege eine Klassen-Erinnerung an, um sie hier zu sehen."
+                        strings().tasks.remindersEmptyText
                     },
                 )
                 else -> LazyColumn(
@@ -146,13 +151,28 @@ fun RemindersScreen(
                             onDelete = { viewModel.deletePending(item) },
                         )
                     }
-                    items(visible, key = { it.id }) { reminder ->
-                        ReminderSwipeRow(
-                            reminder = reminder,
-                            onClick = { onReminderClick(reminder.id) },
-                            onDelete = { viewModel.delete(reminder) },
-                        )
+                    // As on the web: what is due first, then one section per day ("Heute · …").
+                    val now = Instant.now()
+                    val due = visible.filter { (parseRemindAt(it.remindAt) ?: Instant.MAX) < now }
+                    val days = visible.filter { (parseRemindAt(it.remindAt) ?: Instant.MAX) >= now }
+                        .groupBy { parseRemindAt(it.remindAt)?.atZone(ZoneId.systemDefault())?.toLocalDate() }
+                    fun section(key: String, title: String, list: List<ApiReminder>, overdue: Boolean) {
+                        item(key = "h-$key") { PokyhLabel(title, Modifier.padding(top = PokyhSpacing.sm)) }
+                        items(list, key = { it.id }) { reminder ->
+                            val mine = (ui.stableUid != null && reminder.createdBy == ui.stableUid) || reminder.createdByUsername.equals(session?.username, ignoreCase = true)
+                            ReminderSwipeRow(
+                                reminder = reminder,
+                                mine = mine,
+                                overdue = overdue,
+                                // Only the creator, or an admin, may delete it.
+                                canDelete = mine || ui.isAdmin,
+                                onClick = { onReminderClick(reminder.id) },
+                                onDelete = { viewModel.delete(reminder) },
+                            )
+                        }
                     }
+                    if (due.isNotEmpty()) section("due", dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.due, due, overdue = true)
+                    days.forEach { (date, list) -> section(date.toString(), date?.let { reminderDayTitle(it) }.orEmpty(), list, overdue = false) }
                 }
             }
         }
@@ -161,14 +181,19 @@ fun RemindersScreen(
     if (showAdd) {
         AddReminderSheet(
             submitting = ui.submitting,
-            onDismiss = { showAdd = false },
+            error = ui.addError,
+            onDismiss = { showAdd = false; viewModel.clearAddError() },
             onAdd = { title, body, remindAt -> viewModel.addReminder(title, body, remindAt) { showAdd = false } },
         )
     }
 }
 
 @Composable
-private fun ReminderSwipeRow(reminder: ApiReminder, onClick: () -> Unit, onDelete: () -> Unit) {
+private fun ReminderSwipeRow(reminder: ApiReminder, mine: Boolean, overdue: Boolean, canDelete: Boolean, onClick: () -> Unit, onDelete: () -> Unit) {
+    if (!canDelete) {
+        ReminderRow(reminder = reminder, mine = mine, overdue = overdue, onClick = onClick)
+        return
+    }
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
@@ -184,16 +209,23 @@ private fun ReminderSwipeRow(reminder: ApiReminder, onClick: () -> Unit, onDelet
         modifier = Modifier.fadeIn(),
         backgroundContent = { SwipeToDeleteBackground(dismissState.dismissDirection) },
     ) {
-        ReminderRow(reminder = reminder, onClick = onClick)
+        ReminderRow(reminder = reminder, mine = mine, overdue = overdue, onClick = onClick)
     }
 }
 
 @Composable
-private fun ReminderRow(reminder: ApiReminder, onClick: () -> Unit) {
+private fun ReminderRow(reminder: ApiReminder, mine: Boolean, overdue: Boolean, onClick: () -> Unit) {
     val colors = PokyhTheme.colors
+    val at = parseRemindAt(reminder.remindAt)
+    // The web's row: the time, the title with its text and who added it, the countdown on the right.
     PokyhTileRow(onClick = onClick, verticalAlignment = Alignment.Top) {
-        IconTile(icon = PokyhIcons.reminders, color = Brand.accent, size = 40.dp)
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
+        Text(
+            at?.atZone(ZoneId.systemDefault())?.format(TimeFormatter).orEmpty(),
+            style = PokyhType.footnote.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+            color = colors.textPrimary,
+            modifier = Modifier.width(46.dp).padding(top = 2.dp),
+        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
             Text(reminder.title, style = PokyhType.headline, color = colors.textPrimary)
             if (reminder.body.isNotEmpty()) {
                 Text(
@@ -204,22 +236,70 @@ private fun ReminderRow(reminder: ApiReminder, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            parseRemindAt(reminder.remindAt)?.let { instant ->
-                StatusLabel(text = dueText(instant), color = Brand.orange, icon = PokyhIcons.timetable)
-            }
+            Text(
+                if (mine) strings().common.you else strings().tasks.by(reminder.createdByUsername.ifEmpty { reminder.createdByName }),
+                style = PokyhType.caption,
+                color = colors.textTertiary,
+            )
         }
+        if (at != null) CountdownPill(at, overdue)
+    }
+}
+
+/** "in 3 Tagen", "in 5 Std.", "Gleich" or "Fällig" (web `timeUntil`). */
+internal fun timeUntil(at: Instant, now: Instant = Instant.now()): String {
+    val t = dev.plattnericus.pokyh.core.i18n.I18n.s.tasks
+    val diff = at.toEpochMilli() - now.toEpochMilli()
+    if (diff < 0) return t.due
+    val h = (diff / 3_600_000L).toInt()
+    val d = h / 24
+    return when {
+        d > 1 -> t.inDays(d)
+        d == 1 -> t.inDay
+        h > 0 -> t.inHours(h)
+        else -> t.soon
     }
 }
 
 @Composable
-private fun AddReminderSheet(
+internal fun CountdownPill(at: Instant, overdue: Boolean) {
+    val colors = PokyhTheme.colors
+    val tone = dev.plattnericus.pokyh.ui.theme.PokyhDecorative.blush(colors.isDark)
+    Text(
+        timeUntil(at),
+        style = PokyhType.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+        color = if (overdue) tone.ink else colors.textSecondary,
+        modifier = Modifier
+            .background(if (overdue) tone.fill else colors.nested, PokyhShapes.pill)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
+}
+
+/** "Heute · Mittwoch, 29. Oktober", "Morgen · …" or the date alone. */
+private fun reminderDayTitle(date: LocalDate): String {
+    val l = dev.plattnericus.pokyh.core.i18n.I18n.lang.value
+    val long = DateTimeFormatter.ofPattern(dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.dayLong, l.locale).format(date)
+        .replaceFirstChar { it.titlecase(l.locale) }
+    val today = LocalDate.now()
+    return when (date) {
+        today -> dev.plattnericus.pokyh.core.i18n.I18n.s.mensa.today + " · " + long
+        today.plusDays(1) -> dev.plattnericus.pokyh.core.i18n.I18n.s.mensa.tomorrow + " · " + long
+        else -> long
+    }
+}
+
+@Composable
+internal fun AddReminderSheet(
     submitting: Boolean,
+    error: String?,
     onDismiss: () -> Unit,
     onAdd: (title: String, body: String, remindAtIso: String) -> Unit,
+    /** Editing this reminder instead of adding one. */
+    editing: ApiReminder? = null,
 ) {
-    var title by remember { mutableStateOf("") }
-    var body by remember { mutableStateOf("") }
-    val now = remember { LocalDateTime.now() }
+    var title by remember { mutableStateOf(editing?.title.orEmpty()) }
+    var body by remember { mutableStateOf(editing?.body.orEmpty()) }
+    val now = remember { editing?.let { parseRemindAt(it.remindAt) }?.atZone(ZoneId.systemDefault())?.toLocalDateTime() ?: LocalDateTime.now() }
     var dateMillis by remember {
         mutableStateOf(now.toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
     }
@@ -248,27 +328,27 @@ private fun AddReminderSheet(
                 .padding(bottom = PokyhSpacing.xxl),
             verticalArrangement = Arrangement.spacedBy(PokyhSpacing.lg),
         ) {
-            Text("Neue Erinnerung", style = PokyhType.title1, color = PokyhTheme.colors.textPrimary)
+            Text(if (editing != null) strings().tasks.editReminder else strings().tasks.newReminder, style = PokyhType.title1, color = PokyhTheme.colors.textPrimary)
 
             PokyhTextField(
                 value = title,
                 onValueChange = { title = it },
-                placeholder = "Titel",
-                label = "Titel",
+                placeholder = strings().tasks.title,
+                label = strings().tasks.titleField,
                 modifier = Modifier.fillMaxWidth(),
             )
             PokyhTextField(
                 value = body,
                 onValueChange = { body = it },
-                placeholder = "Optional",
-                label = "Beschreibung",
+                placeholder = strings().common.optional,
+                label = strings().tasks.descriptionField,
                 singleLine = false,
                 minLines = 2,
                 modifier = Modifier.fillMaxWidth(),
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
-                PokyhLabel("Erinnern am", color = PokyhTheme.colors.textSecondary)
+                PokyhLabel(strings().tasks.remindOn, color = PokyhTheme.colors.textSecondary)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -292,19 +372,20 @@ private fun AddReminderSheet(
             }
 
             Spacer(Modifier.size(PokyhSpacing.xs))
+            if (error != null) Text(error, style = PokyhType.footnote, color = Brand.danger)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 PokyhTextButton(
-                    text = "Abbrechen",
+                    text = strings().common.cancel,
                     onClick = ::dismiss,
                     color = PokyhTheme.colors.textSecondary,
                 )
                 Spacer(Modifier.weight(1f))
                 PokyhPrimaryButton(
-                    text = "Hinzufügen",
+                    text = if (editing != null) strings().tasks.saveChanges else strings().tasks.add,
                     onClick = {
                         val remindAt = pickedDate.atTime(time).atZone(ZoneId.systemDefault()).toInstant().toString()
                         onAdd(title.trim(), body, remindAt)
@@ -322,7 +403,7 @@ private fun AddReminderSheet(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 PokyhTextButton(
-                    text = "Übernehmen",
+                    text = strings().tasks.apply,
                     onClick = {
                         datePickerState.selectedDateMillis?.let { dateMillis = it }
                         showDatePicker = false
@@ -331,7 +412,7 @@ private fun AddReminderSheet(
             },
             dismissButton = {
                 PokyhTextButton(
-                    text = "Abbrechen",
+                    text = strings().common.cancel,
                     onClick = { showDatePicker = false },
                     color = PokyhTheme.colors.textSecondary,
                 )
@@ -353,7 +434,7 @@ private fun AddReminderSheet(
             containerColor = PokyhTheme.colors.card,
             confirmButton = {
                 PokyhTextButton(
-                    text = "Übernehmen",
+                    text = strings().tasks.apply,
                     onClick = {
                         time = LocalTime.of(timePickerState.hour, timePickerState.minute)
                         showTimePicker = false
@@ -362,7 +443,7 @@ private fun AddReminderSheet(
             },
             dismissButton = {
                 PokyhTextButton(
-                    text = "Abbrechen",
+                    text = strings().common.cancel,
                     onClick = { showTimePicker = false },
                     color = PokyhTheme.colors.textSecondary,
                 )
@@ -372,13 +453,18 @@ private fun AddReminderSheet(
     }
 }
 
-private val DueDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("d. MMM yyyy", Locale.GERMAN)
-private val TimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.GERMAN)
+/** "21. Okt. 2026" / "21 ott 2026" / "21 Oct 2026", in the language in use. */
+private val DueDateFormatter: DateTimeFormatter
+    get() = dev.plattnericus.pokyh.core.i18n.I18n.lang.value.let { l ->
+        DateTimeFormatter.ofPattern(if (l == dev.plattnericus.pokyh.core.i18n.Lang.De) "d. MMM yyyy" else "d MMM yyyy", l.locale)
+    }
+private val TimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
 
 /** Nur aktuelle Erinnerungen: abgelaufene (länger als 1 Tag vorbei) ausblenden, chronologisch
  * sortiert (nächste zuerst) — port of `RemindersView.visibleReminders`. */
 internal fun visibleReminders(list: List<ApiReminder>): List<ApiReminder> {
-    val cutoff = Instant.now().minusSeconds(86_400)
+    // Kept 25 hours after they were due, as on the web.
+    val cutoff = Instant.now().minusSeconds(25 * 3600L)
     return list
         .map { it to (parseRemindAt(it.remindAt) ?: Instant.MAX) }
         .filter { (_, instant) -> !instant.isBefore(cutoff) }

@@ -47,6 +47,9 @@ import dev.plattnericus.pokyh.ui.theme.PokyhType.medium
 import dev.plattnericus.pokyh.ui.theme.appBackground
 import dev.plattnericus.pokyh.ui.theme.fadeIn
 import dev.plattnericus.pokyh.ui.theme.subjectColor
+import dev.plattnericus.pokyh.core.i18n.strings
+import androidx.compose.ui.unit.sp
+import dev.plattnericus.pokyh.core.util.Fmt
 
 /** One dish: image, rating, nutrients, allergens, comments. */
 @Composable
@@ -63,8 +66,8 @@ fun DishDetailScreen(
         containerColor = colors.bg,
         topBar = {
             PokyhTopBar(
-                title = dish?.name ?: "Gericht",
-                eyebrow = dish?.category?.ifEmpty { null },
+                // The name stands large under the picture, as on the web.
+                title = dish?.category?.ifEmpty { null } ?: strings().mensa.dish,
                 nav = TopBarNav.Back(onBack),
             )
         },
@@ -72,7 +75,7 @@ fun DishDetailScreen(
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
                 dish == null && ui.loading -> MediaDetailSkeleton()
-                dish == null -> ErrorStateView(message = ui.error ?: "Gericht nicht gefunden.")
+                dish == null -> ErrorStateView(message = ui.error ?: strings().mensa.dishNotFound)
                 else -> Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -81,52 +84,54 @@ fun DishDetailScreen(
                         .padding(bottom = PokyhSpacing.xxxl),
                     verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
                 ) {
-                    DishImage(
-                        dish = dish,
-                        height = 210.dp,
-                        modifier = Modifier.clip(PokyhShapes.xxl).fadeIn(),
-                    )
+                    // The photo large; without one the dish on its pixel plate, as on the web.
+                    if (!dish.imageUrl.isNullOrBlank()) {
+                        DishImage(
+                            dish = dish,
+                            height = 210.dp,
+                            modifier = Modifier.clip(PokyhShapes.xxl).fadeIn(),
+                        )
+                    } else {
+                        PixelPlate(style = foodStyleOf(dish), seed = dish.id, modifier = Modifier.fillMaxWidth().fadeIn())
+                    }
 
+                    // The day it's served, the name, the stars and kcal, the text and the diet tags.
                     Column(
                         modifier = Modifier.fadeIn(delayMillis = 40),
-                        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        if (dish.category.isNotEmpty()) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
-                                TagChip(
-                                    text = dish.category.uppercase(),
-                                    color = subjectColor(dish.category),
-                                    large = true,
-                                )
-                                val price = dish.price
-                                if (price != null && price > 0) {
-                                    TagChip(
-                                        text = String.format("%.2f €", price),
-                                        color = colors.textSecondary,
-                                        large = true,
-                                    )
-                                }
-                            }
+                        val day = dishDayLabel(dish)
+                        if (day.isNotEmpty()) {
+                            Text(day, style = PokyhType.callout.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = colors.textTertiary)
                         }
+                        Text(
+                            dish.name,
+                            style = PokyhType.display.copy(fontSize = 34.sp, lineHeight = 36.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold),
+                            color = colors.textPrimary,
+                        )
+                        DishMetaLine(dish, ui.ratings, ui.ratingsUnavailable)
                         val desc = dish.description
                         if (!desc.isNullOrEmpty()) {
                             Text(desc, style = PokyhType.body, color = colors.textSecondary)
                         }
+                        DietTags(dish.tags, Modifier.padding(top = 4.dp))
+                        val price = dish.price
+                        if (price != null && price > 0) {
+                            TagChip(text = Fmt.fixed(price, 2) + " €", color = colors.textSecondary)
+                        }
                     }
 
-                    PokyhSection(title = "Bewertung", modifier = Modifier.fadeIn(delayMillis = 80)) {
+                    PokyhSection(title = strings().mensa.rating, modifier = Modifier.fadeIn(delayMillis = 80)) {
                         PokyhCard {
                             if (ui.ratingsUnavailable) {
                                 Text(
-                                    text = "Du bist offline – die Bewertung wurde auf diesem Gerät noch nicht gespeichert.",
+                                    text = strings().mensa.ratingNotSaved,
                                     style = PokyhType.callout,
                                     color = colors.textSecondary,
                                 )
                             } else {
-                                StarRating(
-                                    average = ui.ratings.average,
-                                    count = ui.ratings.count,
-                                    myRating = ui.ratings.myRating,
+                                DishRatingBlock(
+                                    ratings = ui.ratings,
                                     onRate = if (ui.canInteract) viewModel::rate else null,
                                 )
                             }
@@ -136,22 +141,23 @@ fun DishDetailScreen(
                     NutrientsSection(dish, modifier = Modifier.fadeIn(delayMillis = 120))
 
                     if (dish.allergens.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
-                            PokyhLabel("Allergene")
-                            Text(
-                                text = dish.allergens.joinToString(", "),
-                                style = PokyhType.footnote,
-                                color = colors.textSecondary,
-                            )
+                        PokyhSection(title = strings().mensa.allergens) {
+                            AllergenChips(dish.allergens)
                         }
                     }
 
                     CommentSection(
-                        title = "Kommentare",
+                        title = strings().common.comments,
                         comments = ui.comments,
                         currentUserId = viewModel.currentUserId,
+                        ratings = ui.ratings.ratings,
                         onAdd = viewModel::addComment,
                         onDelete = viewModel::deleteComment,
+                        onEdit = viewModel::editComment,
+                        isAdmin = ui.isAdmin,
+                        loading = ui.commentsLoading,
+                        canWrite = ui.canInteract,
+                        reportWhere = "https://pokyh.com/canteen/" + dish.id,
                         modifier = Modifier.fadeIn(delayMillis = 160),
                     )
                 }
@@ -180,13 +186,14 @@ private fun NutrientsSection(dish: Dish, modifier: Modifier = Modifier) {
     val colors = PokyhTheme.colors
     val items = buildList {
         dish.calories?.let { add(it.toInt().toString() to "kcal") }
-        dish.protein?.let { add("${it.toInt()} g" to "Protein") }
-        dish.carbs?.let { add("${it.toInt()} g" to "KH") }
-        dish.fat?.let { add("${it.toInt()} g" to "Fett") }
+        val t = dev.plattnericus.pokyh.core.i18n.I18n.s.mensa
+        dish.protein?.let { add("${it.toInt()} g" to t.protein) }
+        dish.carbs?.let { add("${it.toInt()} g" to t.carbsShort) }
+        dish.fat?.let { add("${it.toInt()} g" to t.fat) }
     }
     if (items.isEmpty()) return
 
-    PokyhSection(title = "Nährwerte", modifier = modifier) {
+    PokyhSection(title = strings().mensa.nutrition, modifier = modifier) {
         PokyhCard {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -194,31 +201,19 @@ private fun NutrientsSection(dish: Dish, modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
             ) {
                 Text(
-                    text = "Pro 100 g",
+                    text = strings().mensa.per100,
                     style = PokyhType.caption.medium(),
                     color = colors.textSecondary,
                     modifier = Modifier.weight(1f),
                 )
-                MiniBadge("Geschätzt", Brand.warning, icon = PokyhIcons.info)
+                MiniBadge(strings().mensa.estimated, Brand.warning, icon = PokyhIcons.info)
             }
             Spacer(Modifier.size(PokyhSpacing.lg))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                items.forEach { (value, label) ->
-                    PokyhStat(
-                        value = value,
-                        label = label,
-                        modifier = Modifier.weight(1f),
-                        alignment = Alignment.CenterHorizontally,
-                    )
-                }
-            }
+            // The figures as the web's tiles, with the macros' shares as one bar.
+            DishNutrition(dish)
             Spacer(Modifier.size(PokyhSpacing.md))
             Text(
-                text = "Geschätzte Angaben pro 100 g — keine Laborwerte. Die tatsächliche Portion " +
-                    "kann abweichen.",
+                text = strings().mensa.estimatedNote,
                 style = PokyhType.caption2,
                 color = colors.textTertiary,
                 modifier = Modifier.fillMaxWidth(),

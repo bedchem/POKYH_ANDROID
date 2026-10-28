@@ -13,6 +13,16 @@ class NavStrings(
     val settings: String,
     val arrangeHome: String,
     val switching: String,
+    val accountMenu: String,
+    val website: String,
+    val actionTheme: String,
+    val language: String,
+    val student: String,
+    val guardian: String,
+    val logout: String,
+    val logoutConfirm: String,
+    val scanQr: String,
+    val notifications: String,
 )
 
 val NavDe = NavStrings(
@@ -27,6 +37,16 @@ val NavDe = NavStrings(
     settings = "Einstellungen",
     arrangeHome = "Startseite anordnen",
     switching = "Lädt…",
+    accountMenu = "Konto-Menü",
+    website = "Startseite",
+    actionTheme = "Hell/Dunkel umschalten",
+    language = "Sprache",
+    student = "Schüler/in",
+    guardian = "Erziehungsberechtigt",
+    logout = "Abmelden",
+    logoutConfirm = "Wirklich abmelden?",
+    scanQr = "QR-Code scannen",
+    notifications = "Benachrichtigungen",
 )
 
 val NavIt = NavStrings(
@@ -41,6 +61,16 @@ val NavIt = NavStrings(
     settings = "Impostazioni",
     arrangeHome = "Riordina la home",
     switching = "Caricamento…",
+    accountMenu = "Menu dell’account",
+    website = "Pagina iniziale",
+    actionTheme = "Cambia chiaro/scuro",
+    language = "Lingua",
+    student = "Studente/ssa",
+    guardian = "Genitore",
+    logout = "Esci",
+    logoutConfirm = "Vuoi davvero uscire?",
+    scanQr = "Scansiona il codice QR",
+    notifications = "Notifiche",
 )
 
 val NavEn = NavStrings(
@@ -55,4 +85,14 @@ val NavEn = NavStrings(
     settings = "Settings",
     arrangeHome = "Arrange home",
     switching = "Loading…",
+    accountMenu = "Account menu",
+    website = "Homepage",
+    actionTheme = "Toggle light/dark",
+    language = "Language",
+    student = "Student",
+    guardian = "Guardian",
+    logout = "Log out",
+    logoutConfirm = "Really log out?",
+    scanQr = "Scan QR code",
+    notifications = "Notifications",
 )

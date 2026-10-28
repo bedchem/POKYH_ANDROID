@@ -122,7 +122,8 @@ class ClassViewModel @Inject constructor(
         viewModelScope.launch {
             _overview.value = _overview.value.copy(loading = true)
             val today = todayLocalDate()
-            val thisMonday = mondayOfWeek(today)
+            // The school week: from Saturday 17:00 the coming one, as on the web.
+            val thisMonday = dev.plattnericus.pokyh.core.util.schoolWeekMonday()
             val nextMonday = thisMonday.plus(7, DateTimeUnit.DAY)
             val weekAfter = thisMonday.plus(14, DateTimeUnit.DAY)
             // "Letzte 3 Monate", as a YYYYMMDD threshold.

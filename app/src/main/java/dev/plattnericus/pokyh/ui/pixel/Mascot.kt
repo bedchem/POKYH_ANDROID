@@ -262,9 +262,24 @@ private const val LINE = 6
 fun bubble(text: String, x: Int, y: Int, maxWidth: Int = Int.MAX_VALUE): Sprite {
     val lines = wrapText(text, maxWidth)
     val widths = lines.map { textPixels(it).width }
+    return drawBubble(lines, widths, bx = x + 2, x = x, y = y)
+}
+
+/**
+ * The same bubble centred over [cx], its tail under the middle pointing down-left to (cx - 2, y):
+ * for the mascot standing on its own in the middle, its words above its head (the lock screen).
+ */
+fun bubbleAbove(text: String, cx: Int, y: Int, maxWidth: Int = Int.MAX_VALUE): Sprite {
+    val lines = wrapText(text, maxWidth)
+    val widths = lines.map { textPixels(it).width }
+    val bw = widths.max() + 8
+    return drawBubble(lines, widths, bx = cx - bw / 2, x = cx - 3, y = y)
+}
+
+/** The bubble's rows of text in a box at [bx], its bottom over (x, y), the tail's tip at (x + 1, y). */
+private fun drawBubble(lines: List<String>, widths: List<Int>, bx: Int, x: Int, y: Int): Sprite {
     val bw = widths.max() + 8
     val bh = lines.size * LINE + 5
-    val bx = x + 2
     val by = y - 2 - bh
     val s = Sprite()
     s.mass(soft(bx, by, bw, bh, 3.0) + listOf(Pt(x + 3, y - 2), Pt(x + 4, y - 2), Pt(x + 2, y - 1), Pt(x + 3, y - 1), Pt(x + 1, y)), "pp")

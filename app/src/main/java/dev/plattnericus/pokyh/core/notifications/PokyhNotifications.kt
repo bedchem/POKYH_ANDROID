@@ -15,6 +15,8 @@ import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.plattnericus.pokyh.R
 import dev.plattnericus.pokyh.core.util.Fmt
+import dev.plattnericus.pokyh.core.util.SchoolDates
+import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.core.util.todayLocalDate
 import dev.plattnericus.pokyh.core.util.toYyyyMMdd
 import dev.plattnericus.pokyh.data.model.ApiReminder
@@ -42,7 +44,7 @@ class PokyhNotifications @Inject constructor(
 ) {
     fun ensureChannel() {
         val channel = NotificationChannel(CHANNEL_ID, "POKYH", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            description = "Nachrichten, Noten, Stundenausfälle und Erinnerungen"
+            description = dev.plattnericus.pokyh.core.i18n.I18n.s.system.channelInfo
         }
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
@@ -68,10 +70,11 @@ class PokyhNotifications @Inject constructor(
                 val body = if (m.subject.isEmpty()) m.senderName else "${m.senderName}: ${m.subject}"
                 notify(
                     id = idFor("msg", m.id),
-                    title = "Neue Nachricht",
+                    title = dev.plattnericus.pokyh.core.i18n.I18n.s.system.newMessage,
                     body = body,
                     group = MESSAGE_GROUP,
                     number = unread.size,
+                    route = PokyhDestinations.messageDetail(m.id),
                 )
             }
             // A summary only earns its place once there are several — one message plus a summary
@@ -79,10 +82,11 @@ class PokyhNotifications @Inject constructor(
             if (fresh.size > 1) {
                 notifySummary(
                     id = idFor("msg-summary", 0),
-                    title = "${fresh.size} neue Nachrichten",
+                    title = dev.plattnericus.pokyh.core.i18n.I18n.s.system.newMessages(fresh.size),
                     body = fresh.take(3).joinToString(" · ") { it.senderName },
                     group = MESSAGE_GROUP,
                     number = unread.size,
+                    route = PokyhDestinations.MESSAGES,
                 )
             }
         }
@@ -93,12 +97,17 @@ class PokyhNotifications @Inject constructor(
     // ── Neue Noten erkennen → Hinweis ───────────────────────────────────────
     suspend fun checkNewGrades(subjects: List<SubjectGrades>) {
         dev.plattnericus.pokyh.core.util.GradeEntryOrder.observe(subjects)
-        val pairs = subjects.flatMap { s -> s.grades.filter { it.markDisplayValue > 0 }.map { s.subjectName to it } }
+        val pairs = subjects.flatMap { s -> s.grades.filter { it.markDisplayValue > 0 }.map { s to it } }
         val seen = prefsStore.seenGradeIds.first()
         if (seen.isNotEmpty()) {
             for ((subject, grade) in pairs) {
                 if (grade.id !in seen) {
-                    notify(idFor("grade", grade.id), "Neue Note", "$subject: ${Fmt.num(grade.markDisplayValue)}")
+                    notify(
+                        idFor("grade", grade.id),
+                        dev.plattnericus.pokyh.core.i18n.I18n.s.system.newGrade,
+                        "${subject.subjectName}: ${Fmt.num(grade.markDisplayValue)}",
+                        route = PokyhDestinations.gradeSubject(subject.lessonId, SchoolDates.currentSchoolYear),
+                    )
                 }
             }
         }
@@ -115,8 +124,8 @@ class PokyhNotifications @Inject constructor(
             for (e in cancelled) {
                 val k = key(e)
                 if (k !in seen) {
-                    val body = "${e.subjectName} am ${Fmt.dateShort(e.date)} um ${Fmt.time(e.startTime)} entfällt."
-                    notify(idFor("cancel", k.hashCode()), "Stunde fällt aus", body)
+                    val body = dev.plattnericus.pokyh.core.i18n.I18n.s.system.cancelledBody(e.subjectName, Fmt.dateShort(e.date), Fmt.time(e.startTime))
+                    notify(idFor("cancel", k.hashCode()), dev.plattnericus.pokyh.core.i18n.I18n.s.system.lessonCancelled, body, route = PokyhDestinations.TIMETABLE)
                 }
             }
         }
@@ -158,6 +167,7 @@ class PokyhNotifications @Inject constructor(
             putExtra(ReminderAlarmReceiver.EXTRA_TITLE, title)
             putExtra(ReminderAlarmReceiver.EXTRA_BODY, body.ifEmpty { "Klassen-Erinnerung" })
             putExtra(ReminderAlarmReceiver.EXTRA_NOTIF_ID, idFor("reminder", reminderId.hashCode()))
+            putExtra(NotificationRoute.EXTRA_ROUTE, PokyhDestinations.reminderDetail(reminderId))
         }
         return PendingIntent.getBroadcast(
             context,
@@ -175,6 +185,7 @@ class PokyhNotifications @Inject constructor(
         body: String,
         group: String? = null,
         number: Int = 0,
+        route: String? = null,
     ) {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -185,6 +196,7 @@ class PokyhNotifications @Inject constructor(
             // Long bodies get truncated to one line in the collapsed shade; BigTextStyle lets
             // the whole message show once expanded.
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setContentIntent(NotificationRoute.contentIntent(context, id, route))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .apply {
@@ -199,7 +211,7 @@ class PokyhNotifications @Inject constructor(
     }
 
     /** The stack header for a group — shown instead of N individual rows when the shade collapses. */
-    private fun notifySummary(id: Int, title: String, body: String, group: String, number: Int) {
+    private fun notifySummary(id: Int, title: String, body: String, group: String, number: Int, route: String? = null) {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
@@ -208,6 +220,7 @@ class PokyhNotifications @Inject constructor(
             .setContentText(body)
             .setGroup(group)
             .setGroupSummary(true)
+            .setContentIntent(NotificationRoute.contentIntent(context, id, route))
             .setAutoCancel(true)
             .setNumber(number)
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)

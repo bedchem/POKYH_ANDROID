@@ -45,10 +45,25 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var appState: AppState
     @Inject lateinit var usageReporter: UsageReporter
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // A notification tapped while the app was open: go to its screen.
+        dev.plattnericus.pokyh.core.notifications.NotificationRoute.offer(intent)
+        // The website's sign-in code, read with the phone's own camera.
+        dev.plattnericus.pokyh.ui.settings.WebSignInLink.offer(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // A changed phone language recreates the activity: follow it (unless one was chosen).
         I18n.refresh()
+        // Started by tapping a notification: its screen opens once the app is unlocked.
+        if (savedInstanceState == null) {
+            dev.plattnericus.pokyh.core.notifications.NotificationRoute.offer(intent)
+            // Opened by the website's sign-in code: confirmed once the app is unlocked.
+            dev.plattnericus.pokyh.ui.settings.WebSignInLink.offer(intent)
+        }
 
         // Now actually wired up (AndroidManifest.xml launches into Theme.Pokyh.Splash, which
         // installSplashScreen() below reads): keeps the themed system splash on screen until

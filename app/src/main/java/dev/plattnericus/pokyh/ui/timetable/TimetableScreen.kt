@@ -105,6 +105,12 @@ import dev.plattnericus.pokyh.ui.theme.subjectTone
 import kotlin.math.abs
 import kotlinx.coroutines.flow.drop
 import kotlinx.datetime.LocalDate
+import dev.plattnericus.pokyh.core.i18n.strings
+import dev.plattnericus.pokyh.ui.pixel.holidaySprite
+import dev.plattnericus.pokyh.ui.components.PixelSpriteArt
+import androidx.compose.foundation.layout.BoxWithConstraints
+import dev.plattnericus.pokyh.ui.theme.PokyhType.semibold
+import dev.plattnericus.pokyh.ui.theme.wideContent
 
 /**
  * `TimetableView` (TimetableView.swift), ported. Week/day segmented control, a `HorizontalPager`
@@ -152,62 +158,53 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
         }
     }
 
+    // The web's timetable: on a phone only the app's header, the week switch and the week —
+    // the title, the menus and the export stay on wider screens. One view, the week.
+    val phone = dev.plattnericus.pokyh.ui.theme.widthClass() == dev.plattnericus.pokyh.ui.theme.WidthClass.Compact
+    val source by viewModel.source.collectAsStateWithLifecycle()
+    var pickingSource by remember { mutableStateOf(false) }
+    val shownYear = viewModel.schoolYearOf(ui.weekOffset)
+    LaunchedEffect(ui.mode) { if (ui.mode != TimetableMode.WEEK) viewModel.setMode(TimetableMode.WEEK) }
+
     Scaffold(
-        modifier = Modifier.appBackground(),
+        modifier = Modifier.wideContent(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
-                title = "Stundenplan",
+                title = if (phone) null else strings().nav.timetable,
                 nav = TopBarNav.None,
                 actions = {
-                    val shownYear = viewModel.schoolYearOf(ui.weekOffset)
-                    Box {
-                        PokyhMenuButton(
-                            label = "$shownYear/${(shownYear + 1) % 100}",
-                            expanded = yearMenuExpanded,
-                            onClick = { yearMenuExpanded = true },
+                    if (!phone) {
+                        SourceSwitch(source, onOpen = { pickingSource = true }, onClear = { viewModel.chooseSource(null) })
+                        YearMenu(
+                            shownYear = shownYear,
+                            years = viewModel.availableSchoolYears,
+                            short = false,
+                            onPick = viewModel::selectSchoolYear,
+                            onOther = { pickingSource = true },
                         )
-                        DropdownMenu(expanded = yearMenuExpanded, onDismissRequest = { yearMenuExpanded = false }) {
-                            viewModel.availableSchoolYears.forEach { y ->
+                        Box {
+                            PokyhIconButton(
+                                icon = PokyhIcons.share,
+                                contentDescription = strings().timetable.export,
+                                onClick = { menuExpanded = true },
+                                enabled = !ui.exporting,
+                                tinted = true,
+                            )
+                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                                 DropdownMenuItem(
-                                    text = { Text("$y/${(y + 1) % 100}", style = PokyhType.body) },
-                                    trailingIcon = {
-                                        if (y == shownYear) {
-                                            Icon(
-                                                imageVector = PokyhIcons.check,
-                                                contentDescription = null,
-                                                tint = PokyhTheme.colors.accentText,
-                                                modifier = Modifier.size(16.dp),
-                                            )
-                                        }
-                                    },
-                                    onClick = {
-                                        yearMenuExpanded = false
-                                        viewModel.selectSchoolYear(y)
-                                    },
+                                    text = { Text(strings().timetable.exportWeek, style = PokyhType.body) },
+                                    leadingIcon = { Icon(PokyhIcons.timetable, contentDescription = null) },
+                                    onClick = { menuExpanded = false; viewModel.exportWeek(context) },
                                 )
+                                if (source == null) {
+                                    DropdownMenuItem(
+                                        text = { Text(strings().timetable.exportExams, style = PokyhType.body) },
+                                        leadingIcon = { Icon(PokyhIcons.school, contentDescription = null) },
+                                        onClick = { menuExpanded = false; viewModel.exportExams(context) },
+                                    )
+                                }
                             }
-                        }
-                    }
-                    Box {
-                        PokyhIconButton(
-                            icon = PokyhIcons.share,
-                            contentDescription = "Exportieren",
-                            onClick = { menuExpanded = true },
-                            enabled = !ui.exporting,
-                            tinted = true,
-                        )
-                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Diese Woche exportieren", style = PokyhType.body) },
-                                leadingIcon = { Icon(PokyhIcons.timetable, contentDescription = null) },
-                                onClick = { menuExpanded = false; viewModel.exportWeek(context) },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Prüfungen exportieren", style = PokyhType.body) },
-                                leadingIcon = { Icon(PokyhIcons.school, contentDescription = null) },
-                                onClick = { menuExpanded = false; viewModel.exportExams(context) },
-                            )
                         }
                     }
                     TabRootActions(
@@ -223,6 +220,12 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding)) {
             val shownPage = pages[ui.weekOffset] as? WeekPageState.Data
+            // On a phone, another timetable says so above the week switch.
+            if (phone && source != null) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.screenH).padding(bottom = PokyhSpacing.sm)) {
+                    SourceSwitch(source, onOpen = { pickingSource = true }, onClear = { viewModel.chooseSource(null) })
+                }
+            }
             WeekHeader(
                 offset = ui.weekOffset,
                 rangeText = viewModel.rangeText(ui.weekOffset),
@@ -232,33 +235,48 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
                 onPrev = { viewModel.setWeekOffset((ui.weekOffset - 1).coerceIn(-TIMETABLE_PAGE_SPAN, TIMETABLE_PAGE_SPAN)) },
                 onNext = { viewModel.setWeekOffset((ui.weekOffset + 1).coerceIn(-TIMETABLE_PAGE_SPAN, TIMETABLE_PAGE_SPAN)) },
                 onToday = { viewModel.goToday() },
+                // On a phone this week's place holds the school year (and the other timetables).
+                yearMenu = if (phone) {
+                    {
+                        YearMenu(
+                            shownYear = shownYear,
+                            years = viewModel.availableSchoolYears,
+                            short = true,
+                            onPick = viewModel::selectSchoolYear,
+                            onOther = { pickingSource = true },
+                        )
+                    }
+                } else null,
             )
-            ModeSegmentedControl(mode = ui.mode, onModeChange = viewModel::setMode)
-
-            if (ui.mode == TimetableMode.WEEK) {
-                HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                    val offset = page - TIMETABLE_PAGE_SPAN
-                    WeekPageContent(
-                        state = pages[offset] ?: WeekPageState.Loading,
-                        dayLabels = viewModel.dayLabels,
-                        dates = (0 until 6).map { viewModel.dateOf(offset, it) },
-                        dayNums = (0 until 6).map { viewModel.dateNumOf(offset, it) },
-                        todayNum = viewModel.todayDateNum(),
-                        weekNumber = viewModel.weekNumber(offset),
-                        onTap = viewModel::showDetail,
-                        onRetry = { viewModel.retryWeek(offset) },
-                        absences = absences[viewModel.schoolYearOf(offset)].orEmpty(),
-                    )
-                }
-            } else {
-                DayModeContent(
-                    viewModel = viewModel,
-                    ui = ui,
-                    pages = pages,
-                    absences = absences[viewModel.schoolYearOf(ui.weekOffset)].orEmpty(),
+            if (!phone) {
+                shownPage?.let { WeekFigures(it.entries, viewModel.todayDateNum()) }
+            }
+            // The weeks beside the shown one are laid out ahead, so a swipe lands on a drawn week.
+            HorizontalPager(state = pagerState, beyondViewportPageCount = 1, modifier = Modifier.fillMaxSize()) { page ->
+                val offset = page - TIMETABLE_PAGE_SPAN
+                WeekPageContent(
+                    state = pages[offset] ?: WeekPageState.Loading,
+                    dayLabels = viewModel.dayLabels,
+                    dates = (0 until 6).map { viewModel.dateOf(offset, it) },
+                    dayNums = (0 until 6).map { viewModel.dateNumOf(offset, it) },
+                    todayNum = viewModel.todayDateNum(),
+                    weekNumber = viewModel.weekNumber(offset),
+                    onTap = viewModel::showDetail,
+                    onRetry = { viewModel.retryWeek(offset) },
+                    // Another timetable shows nobody's absences.
+                    absences = if (source != null) emptyList() else absences[viewModel.schoolYearOf(offset)].orEmpty(),
                 )
             }
         }
+    }
+
+    if (pickingSource) {
+        OtherTimetableSheet(
+            source = source,
+            viewModel = viewModel,
+            onPick = { viewModel.chooseSource(it); pickingSource = false },
+            onDismiss = { pickingSource = false },
+        )
     }
 
     detail?.let { slot ->
@@ -276,9 +294,10 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
             imageUrl = imageUrl,
             imageHeader = viewModel.subjectImageHeaders(),
             onDismiss = viewModel::dismissDetail,
-            absences = absences[schoolYear].orEmpty(),
+            absences = if (viewModel.source.value != null) emptyList() else absences[schoolYear].orEmpty(),
             detailLoading = lessonDetail.loading,
             detail = lessonDetail.detail,
+            sentExcuses = viewModel.sentExcuses.collectAsStateWithLifecycle().value,
         )
     }
 }
@@ -291,6 +310,38 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
  * different schedules.
  */
 @Composable
+private fun WeekFigures(entries: List<dev.plattnericus.pokyh.data.model.TimetableEntry>, todayNum: Int) {
+    val t = strings().timetable
+    val dark = PokyhTheme.colors.isDark
+    val todayActive = entries.filter { it.date == todayNum && !it.isCancelled }
+    val todayLessons = dev.plattnericus.pokyh.data.untis.TIMETABLE_PERIODS.count { p ->
+        todayActive.any { Fmt.minutes(it.startTime) <= p.startMinute && Fmt.minutes(it.endTime) >= p.endMinute }
+    }
+    val figures = listOf(
+        Triple(todayLessons, "${t.hoursUnit} · ${strings().mensa.today}", PokyhTheme.colors.textPrimary),
+        Triple(entries.count { it.isCancelled }, t.cancellations, dev.plattnericus.pokyh.ui.theme.PokyhDecorative.blush(dark).ink),
+        Triple(entries.count { it.isExam }, t.examsLabel, dev.plattnericus.pokyh.ui.theme.PokyhDecorative.butter(dark).ink),
+        Triple(entries.count { it.isSubstitution && !it.isCancelled }, t.substitutions, dev.plattnericus.pokyh.ui.theme.PokyhDecorative.periwinkle(dark).ink),
+    )
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.screenH).padding(bottom = PokyhSpacing.md),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+    ) {
+        figures.forEach { (count, label, ink) ->
+            Row(
+                Modifier.background(PokyhTheme.colors.card, PokyhShapes.pill).padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val color = if (count == 0) PokyhTheme.colors.textTertiary else ink
+                Text("$count", style = PokyhType.callout.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold), color = color)
+                Text(label, style = PokyhType.footnote, color = color)
+            }
+        }
+    }
+}
+
+@Composable
 private fun WeekHeader(
     offset: Int,
     rangeText: String,
@@ -300,6 +351,8 @@ private fun WeekHeader(
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onToday: () -> Unit,
+    /** On a phone: the school year beside this week (where "Zu heute" goes for another week). */
+    yearMenu: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -310,7 +363,7 @@ private fun WeekHeader(
     ) {
         PokyhIconButton(
             icon = PokyhIcons.chevronLeft,
-            contentDescription = "Vorherige Woche",
+            contentDescription = strings().timetable.prevWeek,
             onClick = onPrev,
             tinted = true,
             iconSize = 18.dp,
@@ -320,12 +373,12 @@ private fun WeekHeader(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs),
         ) {
-            Text(rangeText, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary)
-            if (offset != 0) {
-                PokyhTextButton(text = "Zu heute", onClick = onToday)
+            Text(rangeText, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary, maxLines = 1)
+            if (offset != 0 && yearMenu == null) {
+                PokyhTextButton(text = strings().timetable.toToday, onClick = onToday)
             } else {
                 Text(
-                    text = "KW $weekNumber · Diese Woche",
+                    text = "${strings().timetable.cw(weekNumber)} · ${if (dev.plattnericus.pokyh.core.util.weekRolledOver()) strings().timetable.nextWeek else strings().timetable.thisWeek}",
                     style = PokyhType.caption,
                     color = PokyhTheme.colors.textSecondary,
                 )
@@ -333,9 +386,12 @@ private fun WeekHeader(
             // Only shows over a week restored from the disk — see [AsOfLabel].
             AsOfLabel(savedAt = savedAt, stale = stale)
         }
+        if (yearMenu != null) {
+            if (offset != 0) PokyhTextButton(text = strings().timetable.toToday, onClick = onToday) else yearMenu()
+        }
         PokyhIconButton(
             icon = PokyhIcons.chevronRight,
-            contentDescription = "Nächste Woche",
+            contentDescription = strings().timetable.nextWeek,
             onClick = onNext,
             tinted = true,
             iconSize = 18.dp,
@@ -345,11 +401,12 @@ private fun WeekHeader(
 
 @Composable
 private fun ModeSegmentedControl(mode: TimetableMode, onModeChange: (TimetableMode) -> Unit) {
+    val t = strings().timetable
     PokyhSegmentedControl(
         options = TimetableMode.entries,
         selected = mode,
         onSelect = onModeChange,
-        label = { it.label },
+        label = { if (it == TimetableMode.WEEK) t.modeWeek else t.modeDay },
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = PokyhSpacing.screenH)
@@ -377,15 +434,10 @@ private fun WeekPageContent(
         is WeekPageState.Data -> {
             if (state.entries.isEmpty() && state.stale) {
                 // An empty week off the disk is not proof of holidays — only a live answer is.
-                OfflineStateView(title = "Stundenplan unbekannt", message = OFFLINE_WEEK_UNKNOWN, onRetry = onRetry)
+                OfflineStateView(title = strings().timetable.unknownTitle, message = strings().timetable.offlineUnknown, onRetry = onRetry)
             } else if (state.entries.isEmpty()) {
-                Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                    // SpecialDayCard(compact = false) sizes itself — see its own file.
-                    SpecialDayCard(
-                        spec = specialDaySpecFor(DayKind.HOLIDAY),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.screenH),
-                    )
-                }
+                // A week without school: the holidays look like the time of year of the week shown.
+                HolidayWeek(month = dates.firstOrNull()?.monthNumber ?: 0, name = dev.plattnericus.pokyh.core.util.holidayNameOn(dayNums.firstOrNull() ?: 0))
             } else {
                 val dayEntries = (0 until 6).map { d -> state.entries.filter { it.date == dayNums[d] } }
                 val anyDayHasEntries = dayEntries.any { it.isNotEmpty() }
@@ -453,7 +505,7 @@ private fun DayModeContent(
                 )
                 is WeekPageState.Error -> ErrorStateView(message = pageState.message, onRetry = { viewModel.retryWeek(ui.weekOffset) })
                 is WeekPageState.Data if pageState.entries.isEmpty() && pageState.stale ->
-                    OfflineStateView(title = "Stundenplan unbekannt", message = OFFLINE_WEEK_UNKNOWN, onRetry = { viewModel.retryWeek(ui.weekOffset) })
+                    OfflineStateView(title = strings().timetable.unknownTitle, message = strings().timetable.offlineUnknown, onRetry = { viewModel.retryWeek(ui.weekOffset) })
                 is WeekPageState.Data -> {
                     val dayNum = viewModel.dateNumOf(ui.weekOffset, ui.selectedDay)
                     val dayEntries = pageState.entries.filter { it.date == dayNum }
@@ -465,7 +517,7 @@ private fun DayModeContent(
                         // made an empty day the loudest thing on the screen.
                         PokyhInlineNotice(
                             icon = PokyhIcons.noExam,
-                            text = "Kein Unterricht",
+                            text = strings().timetable.noLessons,
                             tint = Brand.success,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -473,10 +525,12 @@ private fun DayModeContent(
                         )
                     } else if (kind != DayKind.NORMAL) {
                         Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                            val first = remember(dayEntries) { TimetableSlots.buildSlots(dayEntries).firstOrNull() }
                             SpecialDayCard(
-                                spec = specialDaySpecFor(kind),
+                                spec = specialDaySpecFor(kind, month = dayNum / 100 % 100, holidayName = dev.plattnericus.pokyh.core.util.holidayNameOn(dayNum)),
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = PokyhSpacing.screenH),
                                 plate = true,
+                                onClick = if (kind != DayKind.ALL_CANCELLED && kind != DayKind.HOLIDAY) first?.let { s -> { viewModel.showDetail(s) } } else null,
                             )
                         }
                     } else {
@@ -628,7 +682,7 @@ private fun SlotRow(slot: MergedSlot, onClick: () -> Unit, modifier: Modifier = 
                         modifier = Modifier.size(12.dp),
                     )
                     Text(
-                        text = "statt ${original.subjectName.ifEmpty { original.note ?: "—" }}",
+                        text = strings().timetable.insteadOf(original.subjectName.ifEmpty { original.note ?: "—" }),
                         style = PokyhType.caption,
                         color = colors.textTertiary,
                         textDecoration = TextDecoration.LineThrough,
@@ -668,19 +722,41 @@ private fun MetaField(text: String, changed: Boolean) {
 private fun slotBadge(slot: MergedSlot) {
     val d = slot.display
     when {
-        d.isCancelled -> TagChip("Entfall", Brand.danger)
-        d.isExam -> TagChip("Prüfung", Brand.warning)
-        slot.kind == SlotKind.REPLACEMENT -> TagChip("Vertretung", Brand.orange)
-        slot.kind == SlotKind.EVENT -> TagChip("Veranstaltung", Brand.accent)
+        d.isCancelled -> TagChip(strings().timetable.cancelled, Brand.danger)
+        d.isExam -> TagChip(strings().timetable.exam, Brand.warning)
+        slot.kind == SlotKind.REPLACEMENT -> TagChip(strings().timetable.substitution, Brand.orange)
+        slot.kind == SlotKind.EVENT -> TagChip(strings().timetable.event, Brand.accent)
         else -> {}
     }
 }
 
 /** Shown for a week that is empty on the disk while offline — it could be holidays, or it could
  * be a week that was simply never loaded, and saying "Ferien" would be a guess. */
-private const val OFFLINE_WEEK_UNKNOWN =
-    "Du bist offline und für diese Woche ist kein Stundenplan gespeichert. Ob Unterricht ist, " +
-        "lässt sich erst sagen, wenn du wieder Internet hast."
+/**
+ * A week without school, as on the web: the holiday scene of the time of year (the beach in
+ * summer, snow in winter…), large, with "Ferien" and "Kein Unterricht" under it.
+ */
+@Composable
+private fun HolidayWeek(month: Int, name: String? = null) {
+    val t = strings().timetable
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = PokyhSpacing.lg, vertical = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (month in 1..12) {
+            BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                PixelSpriteArt(holidaySprite(month), width = minOf(280.dp, maxWidth * 0.6f))
+            }
+        }
+        Spacer(Modifier.size(28.dp))
+        Text(name ?: t.holiday, style = PokyhType.largeTitle, color = PokyhTheme.colors.textPrimary, textAlign = TextAlign.Center)
+        Spacer(Modifier.size(4.dp))
+        Text(t.noLessons, style = PokyhType.callout.semibold(), color = PokyhTheme.colors.textSecondary, textAlign = TextAlign.Center)
+    }
+}
 
 /** Minutes since midnight on the school's clock — the same zone the lesson times are in. */
 private fun schoolMinuteNow(): Int =

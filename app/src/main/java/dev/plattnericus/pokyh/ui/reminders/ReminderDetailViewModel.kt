@@ -68,7 +68,7 @@ class ReminderDetailViewModel @Inject constructor(
                     return@collectLatest
                 }
                 if (classId == null) {
-                    _ui.value = UiState(loading = false, error = "Keine Klasse gefunden.")
+                    _ui.value = UiState(loading = false, error = dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.noClassFound)
                     return@collectLatest
                 }
                 _ui.update { it.copy(currentUserId = s.stableUid ?: s.username) }
@@ -101,7 +101,7 @@ class ReminderDetailViewModel @Inject constructor(
             .onSuccess { list ->
                 val r = list.find { it.id == reminderId }
                 _ui.update {
-                    it.copy(loading = false, error = if (r == null) "Erinnerung nicht gefunden." else null, reminder = r ?: it.reminder)
+                    it.copy(loading = false, error = if (r == null) dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.reminderNotFound else null, reminder = r ?: it.reminder)
                 }
             }
             .onFailure { e -> _ui.update { it.copy(loading = false, error = e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError) } }
@@ -123,14 +123,56 @@ class ReminderDetailViewModel @Inject constructor(
         }
     }
 
-    fun addComment(body: String) {
+    fun addComment(body: String, done: (Boolean) -> Unit) {
+        val s = appState.session.value
+        val token = s?.apiToken
+        val classId = s?.classId
+        if (token == null || classId == null || body.isBlank()) return done(false)
+        viewModelScope.launch {
+            val ok = runCatching { backendClient.createReminderComment(classId, reminderId, body, token) }.isSuccess
+            done(ok)
+            if (ok) loadComments(classId, token)
+        }
+    }
+
+    fun editComment(comment: CommentUiItem, body: String, done: (Boolean) -> Unit) {
+        val s = appState.session.value
+        val token = s?.apiToken
+        val classId = s?.classId
+        if (token == null || classId == null) return done(false)
+        viewModelScope.launch {
+            val ok = runCatching { backendClient.updateReminderComment(classId, reminderId, comment.id, body, token) }.isSuccess
+            done(ok)
+            if (ok) loadComments(classId, token)
+        }
+    }
+
+    val saving = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val saveError = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
+    /** Saves a change (its creator, or an admin); the class sees it through the live stream. */
+    fun editReminder(title: String, body: String, remindAt: String, onDone: () -> Unit) {
         val s = appState.session.value ?: return
         val token = s.apiToken ?: return
         val classId = s.classId ?: return
-        if (body.isBlank()) return
+        saving.value = true
+        saveError.value = null
         viewModelScope.launch {
-            runCatching { backendClient.createReminderComment(classId, reminderId, body, token) }
-            loadComments(classId, token)
+            runCatching { backendClient.editReminder(classId, reminderId, title, body, remindAt, token) }
+                .onSuccess { updated -> _ui.update { it.copy(reminder = updated) }; onDone() }
+                .onFailure { saveError.value = it.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.tasks.saveFailed }
+            saving.value = false
+        }
+    }
+
+    /** Deletes the reminder (its creator, or an admin) and leaves the screen. */
+    fun deleteReminder(onDone: () -> Unit) {
+        val s = appState.session.value ?: return
+        val token = s.apiToken ?: return
+        val classId = s.classId ?: return
+        viewModelScope.launch {
+            runCatching { backendClient.deleteReminder(classId, reminderId, token) }
+                .onSuccess { onDone() }
         }
     }
 

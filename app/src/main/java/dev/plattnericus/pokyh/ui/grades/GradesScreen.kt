@@ -199,7 +199,8 @@ private fun GradesContent(
         val ungradedLast = compareBy<Triple<SubjectGrades, Double, Int>> { it.second <= 0 }
         when (sort) {
             GradesViewModel.SortMode.NAME ->
-                withMeta.sortedBy { it.first.subjectName.lowercase() }
+                // By the language's alphabet (Ä with A, accents ignored), as the web's localeCompare.
+                java.text.Collator.getInstance(dev.plattnericus.pokyh.core.i18n.I18n.lang.value.locale).let { c -> withMeta.sortedWith { a, b -> c.compare(a.first.subjectName, b.first.subjectName) } }
             GradesViewModel.SortMode.AVG_DESC ->
                 withMeta.sortedWith(ungradedLast.thenByDescending { it.second })
             GradesViewModel.SortMode.AVG_ASC ->

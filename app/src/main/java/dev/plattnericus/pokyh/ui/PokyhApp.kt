@@ -135,6 +135,10 @@ fun PokyhApp(appState: AppState) {
         // The authenticator app's code (two-factor sign-in), whichever screen asked for it.
         TwoFactorDialog(appState)
 
+        // POKYH crashed last time: offer the report, in every phase — a crash right after
+        // signing in would otherwise keep anyone from ever reaching a place to send it from.
+        CrashReportDialog()
+
         // The privacy notice after a first sign-in, or "aktualisiert" (AppState.checkPrivacyNotice):
         // a banner where the offline notice sits, which never shows at the same time — the
         // check skips an offline session.

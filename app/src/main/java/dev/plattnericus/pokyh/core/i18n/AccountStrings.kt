@@ -60,6 +60,9 @@ class AccountStrings(
     val scanPrompt: String,
     val cameraNeeded: String,
     val openSettings: String,
+    val crashTitle: String,
+    val crashBody: String,
+    val crashShare: String,
 )
 
 val AccountDe = AccountStrings(
@@ -116,6 +119,9 @@ val AccountDe = AccountStrings(
     scanPrompt = "Halte die Kamera auf den QR-Code auf pokyh.com.",
     cameraNeeded = "Zum Scannen braucht POKYH die Kamera. Erlaube sie in den Einstellungen.",
     openSettings = "Einstellungen öffnen",
+    crashTitle = "POKYH ist abgestürzt",
+    crashBody = "Beim letzten Mal ist POKYH unerwartet beendet worden. Schick uns den Bericht, damit wir den Fehler beheben können. Er enthält nur den Fehler, die App-Version und das Handymodell.",
+    crashShare = "Bericht teilen",
 )
 
 val AccountIt = AccountStrings(
@@ -172,6 +178,9 @@ val AccountIt = AccountStrings(
     scanPrompt = "Inquadra il codice QR su pokyh.com.",
     cameraNeeded = "Per scansionare POKYH ha bisogno della fotocamera. Consentila nelle impostazioni.",
     openSettings = "Apri impostazioni",
+    crashTitle = "POKYH si è chiuso",
+    crashBody = "L’ultima volta POKYH si è chiuso inaspettatamente. Inviaci il rapporto, così possiamo correggere l’errore. Contiene solo l’errore, la versione dell’app e il modello del telefono.",
+    crashShare = "Condividi rapporto",
 )
 
 val AccountEn = AccountStrings(
@@ -228,4 +237,7 @@ val AccountEn = AccountStrings(
     scanPrompt = "Point the camera at the QR code on pokyh.com.",
     cameraNeeded = "POKYH needs the camera to scan. Allow it in the settings.",
     openSettings = "Open settings",
+    crashTitle = "POKYH crashed",
+    crashBody = "Last time, POKYH closed unexpectedly. Send us the report so we can fix it. It only contains the error, the app version and the phone model.",
+    crashShare = "Share report",
 )

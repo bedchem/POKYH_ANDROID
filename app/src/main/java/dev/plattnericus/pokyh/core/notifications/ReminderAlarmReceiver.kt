@@ -34,7 +34,8 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
-        NotificationManagerCompat.from(context).notify(notifId, notification)
+        // A refused notification is a missed reminder, not a crash in the background.
+        runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
     }
 
     companion object {

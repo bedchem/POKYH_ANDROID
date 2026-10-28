@@ -138,22 +138,28 @@ class PokyhNotifications @Inject constructor(
         val upcoming = reminders.mapNotNull { r -> parseRemindAt(r.remindAt)?.let { r to it } }
             .filter { (_, at) -> at.isAfter(now) }
 
-        val alarmManager = context.getSystemService(AlarmManager::class.java)
+        val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
         val previouslyScheduled = prefsStore.scheduledReminderIds.first()
         val currentIds = upcoming.map { (r, _) -> r.id }.toSet()
-        for (staleId in previouslyScheduled - currentIds) cancelAlarm(alarmManager, staleId)
+        for (staleId in previouslyScheduled - currentIds) runCatching { cancelAlarm(alarmManager, staleId) }
 
-        val canExact = Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()
+        val canExact = Build.VERSION.SDK_INT < 31 || runCatching { alarmManager.canScheduleExactAlarms() }.getOrDefault(false)
+        val scheduled = HashSet<String>()
         for ((reminder, at) in upcoming) {
             val pending = reminderPendingIntent(reminder.id, reminder.title, reminder.body)
             val triggerAt = at.toEpochMilli()
-            if (canExact) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
-            } else {
+            // One reminder at a time, and an exact alarm the phone refuses (Honor and Huawei cap
+            // and police alarms beyond what Android itself does) falls back to an inexact one —
+            // a reminder a few minutes late, not an app that crashes after signing in.
+            val ok = runCatching {
+                if (canExact) alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
+                else alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
+            }.recoverCatching {
                 alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pending)
-            }
+            }.isSuccess
+            if (ok) scheduled += reminder.id
         }
-        prefsStore.setScheduledReminderIds(currentIds)
+        prefsStore.setScheduledReminderIds(scheduled)
     }
 
     private fun cancelAlarm(alarmManager: AlarmManager, reminderId: String) {
@@ -207,7 +213,13 @@ class PokyhNotifications @Inject constructor(
                 }
             }
             .build()
-        NotificationManagerCompat.from(context).notify(id, notification)
+        post(id, notification)
+    }
+
+    /** Hands a notification to the system; one it refuses (a full shade, a vendor's own rules) is skipped. */
+    private fun post(id: Int, notification: android.app.Notification) {
+        runCatching { NotificationManagerCompat.from(context).notify(id, notification) }
+            .onFailure { android.util.Log.w("POKYH", "Notification $id not posted", it) }
     }
 
     /** The stack header for a group — shown instead of N individual rows when the shade collapses. */
@@ -225,7 +237,7 @@ class PokyhNotifications @Inject constructor(
             .setNumber(number)
             .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .build()
-        NotificationManagerCompat.from(context).notify(id, notification)
+        post(id, notification)
     }
 
     companion object {

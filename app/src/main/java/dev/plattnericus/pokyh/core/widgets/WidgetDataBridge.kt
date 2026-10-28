@@ -48,7 +48,23 @@ class WidgetDataBridge @Inject constructor(
             .sortedBy { it.startEpochMs }
             .take(12)
         diskCache.write(TIMETABLE_KEY, TimetableSnapshot(now, lessons), TimetableSnapshot.serializer())
-        NextLessonWidget().updateAll(context)
+        redraw("next lesson") { NextLessonWidget().updateAll(context) }
+    }
+
+    /**
+     * Asks the launcher to redraw a widget. Never fatal: this runs as the timetable and the grades
+     * load — right after signing in — and some launchers (Honor's, Huawei's) answer the widget
+     * service with errors where others don't. The data is stored either way; the widget picks it
+     * up on its next update.
+     */
+    private suspend fun redraw(which: String, update: suspend () -> Unit) {
+        try {
+            update()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            android.util.Log.w("POKYH", "Widget ($which) could not be redrawn", e)
+        }
     }
 
     /** Called from [dev.plattnericus.pokyh.ui.grades.GradesViewModel] whenever grades reload —
@@ -71,7 +87,7 @@ class WidgetDataBridge @Inject constructor(
             recent = recent,
         )
         diskCache.write(GRADES_KEY, snapshot, GradesSnapshot.serializer())
-        GradesWidget().updateAll(context)
+        redraw("grades") { GradesWidget().updateAll(context) }
     }
 
     suspend fun readTimetable(): TimetableSnapshot = diskCache.read(TIMETABLE_KEY, TimetableSnapshot.serializer()) ?: TimetableSnapshot.EMPTY

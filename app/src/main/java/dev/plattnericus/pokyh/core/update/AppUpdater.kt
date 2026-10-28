@@ -82,7 +82,8 @@ class AppUpdater @Inject constructor(
     private val _manualCheck = MutableStateFlow(ManualCheck.Idle)
     val manualCheck: StateFlow<ManualCheck> = _manualCheck.asStateFlow()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // A failed check or download is logged, never the end of the app (see CrashLog.background).
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + dev.plattnericus.pokyh.core.diagnostics.CrashLog.background)
     private val json = Json { ignoreUnknownKeys = true }
 
     // Downloads are tens of MB on school Wi-Fi: no overall deadline, only a stall timeout.

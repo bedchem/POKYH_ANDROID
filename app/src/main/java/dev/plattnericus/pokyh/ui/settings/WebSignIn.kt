@@ -35,7 +35,8 @@ private val QR_LINK = Regex("^https://([a-z0-9-]+\\.)*pokyh\\.com/l/([A-Za-z0-9_
 internal fun webSignInCodeOf(scanned: String): String? {
     val text = scanned.trim()
     val code = when {
-        text.startsWith(QR_PREFIX) -> text.removePrefix(QR_PREFIX)
+        // As written in the QR code, or lowercased by a camera app that opened it as a link.
+        text.startsWith(QR_PREFIX, ignoreCase = true) -> text.substring(QR_PREFIX.length)
         else -> QR_LINK.matchEntire(text)?.groupValues?.get(2) ?: return null
     }
     return code.takeIf { QR_CODE.matches(it) }

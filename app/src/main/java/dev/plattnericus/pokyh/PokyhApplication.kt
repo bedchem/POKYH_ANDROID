@@ -38,6 +38,8 @@ class PokyhApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // Before anything else can fail: a crash is written down for the next start to offer.
+        dev.plattnericus.pokyh.core.diagnostics.CrashLog.install(this)
         // The language first: notification channels and the first texts already speak it.
         dev.plattnericus.pokyh.core.i18n.I18n.init(this)
         dev.plattnericus.pokyh.core.util.GradeEntryOrder.init(this)

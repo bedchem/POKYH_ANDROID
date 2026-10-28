@@ -74,12 +74,15 @@ class AppState @Inject constructor(
 
     // ── Coroutine scopes ──────────────────────────────────────────────────────
     /** Drives ordinary state-mutating work. Lives as long as the process (this is a singleton). */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // Both with [CrashLog.background]: an error nobody catches in work launched here (the sync
+    // after signing in, alarms, widgets) is logged instead of ending the app. Honor phones crashed
+    // right after signing in, where the emulator never did.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + dev.plattnericus.pokyh.core.diagnostics.CrashLog.background)
 
     /** Hosts logins that must keep running after an offline-timeout race gives up waiting on
      * them — NEVER cancelled by [withTimeoutOrNull] losing the race (Store.swift `race(_:timeout:)`
      * "der Login-Task läuft bei Timeout weiter"). */
-    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + dev.plattnericus.pokyh.core.diagnostics.CrashLog.background)
 
     // ── Published state ──────────────────────────────────────────────────────
 
@@ -574,28 +577,36 @@ class AppState @Inject constructor(
         if (now - lastNotifSync <= NOTIF_SYNC_THROTTLE_MS) return
         lastNotifSync = now
 
+        // Each step on its own: this runs right after signing in, and what it hands to the system
+        // (notifications, alarms, widgets) throws on some phones where it doesn't on others —
+        // a failure there skips that step, never the others, never the app.
         if (s.hasUntis) {
             runCatching { untisClient.messages(s, MessageFolder.Inbox) }.getOrNull()
-                ?.let { _unreadMessages.value = notifications.checkNewMessages(it) }
+                ?.let { list -> runCatching { notifications.checkNewMessages(list) }.onSuccess { _unreadMessages.value = it }.onFailure { syncFailed("messages", it) } }
         }
         val token = s.apiToken
         val classId = s.classId
         if (token != null && classId != null) {
             runCatching { backendClient.reminders(classId, token) }.getOrNull()
-                ?.let { notifications.scheduleReminders(it) }
+                ?.let { runCatching { notifications.scheduleReminders(it) }.onFailure { e -> syncFailed("reminders", e) } }
         }
 
         if (s.hasUntis && now - lastHeavySync > HEAVY_SYNC_INTERVAL_MS) {
             lastHeavySync = now
             if (s.isStudent) {
                 runCatching { untisClient.grades(s, s.studentId, null) }.getOrNull()?.let {
-                    notifications.checkNewGrades(it)
-                    if (isDefaultAccountActive()) widgetDataBridge.publishGrades(it)
+                    runCatching { notifications.checkNewGrades(it) }.onFailure { e -> syncFailed("grades", e) }
+                    if (isDefaultAccountActive()) runCatching { widgetDataBridge.publishGrades(it) }.onFailure { e -> syncFailed("grades widget", e) }
                 }
             }
             runCatching { untisClient.timetable(s, s.studentId, SchoolDates.mondayIso()) }.getOrNull()
-                ?.let { notifications.checkTimetableChanges(it) }
+                ?.let { runCatching { notifications.checkTimetableChanges(it) }.onFailure { e -> syncFailed("timetable", e) } }
         }
+    }
+
+    private fun syncFailed(step: String, error: Throwable) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        android.util.Log.w("POKYH", "Notification sync: $step failed", error)
     }
 
     /** A WebUntis call came back with an expired/invalid session (`AppError.sessionExpired`,

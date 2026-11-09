@@ -222,6 +222,17 @@ fun LoadingStateView(modifier: Modifier = Modifier, label: String? = null) {
     }
 }
 
+/** Why [feature] has no class, by the backend's reason ([BackendStatus.NoClass.note]), as on iOS. */
+fun noClassMessage(feature: String, note: String?): String {
+    val s = dev.plattnericus.pokyh.core.i18n.I18n.s.states
+    return when (note) {
+        "pending" -> s.noClassPending(feature)
+        "no_class_found", "candidate_rejected", "not_student" -> s.noClassInUntis(feature)
+        "shared_person" -> s.noClassShared(feature)
+        else -> s.noClass(feature)
+    }
+}
+
 /**
  * Why a POKYH-backend feature (Todos, Erinnerungen, Klasse) isn't available for the current
  * [status] — specific per status rather than one generic message, because each of these has a
@@ -244,7 +255,7 @@ fun BackendUnavailableView(feature: String, status: BackendStatus, modifier: Mod
     }
     val message = when (status) {
         is BackendStatus.NotStudent -> s.notStudent(feature)
-        is BackendStatus.NoClass -> s.noClass(feature)
+        is BackendStatus.NoClass -> noClassMessage(feature, status.note)
         is BackendStatus.Failed -> s.failed(feature, status.message)
         is BackendStatus.Offline -> s.offline(feature)
         else -> s.needsAccount(feature)

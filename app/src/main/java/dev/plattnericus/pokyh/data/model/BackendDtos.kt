@@ -77,8 +77,12 @@ data class ApiUser(
     val webuntisKlasseName: String? = null,
     val classId: String? = null,
     val isAdmin: Boolean,
-    /** Account role: "student" (default) or "parent". */
+    /** Account role: "student" (default), "parent", or "none" (no class is meant for it). */
     val role: String? = null,
+    /** Why the account has no class (the backend's ClassNote, e.g. "no_class_found", "shared_person"). */
+    val classNote: String? = null,
+    /** The class waits for its check at the next sign-in. */
+    val classCheckPending: Boolean = false,
 )
 
 // ── Auth ─────────────────────────────────────────────────────────────────
@@ -137,6 +141,16 @@ data class MenuResponse(
     /** false: this school has no menu — the app shows no Mensa at all (backend routes/dishes.ts). */
     val available: Boolean = true,
     val menu: MenuBody,
+    /** The breaks the plan waits out (backend utils/mensaSchedule.ts); none from a menu set to manual. */
+    val breaks: List<MenuBreak> = emptyList(),
+)
+
+/** A stretch without a menu: YYYY-MM-DD, both included, and why ("christmas", "school", "holiday", …). */
+@Serializable
+data class MenuBreak(
+    val start: String,
+    val end: String,
+    val reason: String = "",
 )
 
 @Serializable
@@ -177,7 +191,9 @@ fun JsonElement.resolveLocalized(): String {
 }
 
 fun DishDto.toDomain(baseUrl: String): Dish {
-    val resolvedImageUrl = imageUrl?.let { url ->
+    // An uploaded picture comes as a path on the API until the backend knows its public address;
+    // a dish without one has "", not the API's own address.
+    val resolvedImageUrl = imageUrl?.takeIf { it.isNotBlank() }?.let { url ->
         if (url.startsWith("http://") || url.startsWith("https://")) url else baseUrl + url
     }
     return Dish(

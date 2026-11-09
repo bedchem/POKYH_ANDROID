@@ -11,6 +11,7 @@ import dev.plattnericus.pokyh.data.backend.SseClient
 import dev.plattnericus.pokyh.data.model.ApiComment
 import dev.plattnericus.pokyh.data.model.Dish
 import dev.plattnericus.pokyh.data.model.DishRatingsData
+import dev.plattnericus.pokyh.data.model.MenuBreak
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.components.CommentUiItem
 import javax.inject.Inject
@@ -53,6 +54,37 @@ object MensaSchedule {
 
     private fun parseDishDate(raw: String): LocalDate? =
         runCatching { LocalDate.parse(raw.take(10)) }.getOrNull()
+
+    private val namedBreaks = setOf("summer", "allSaints", "christmas", "winter", "easter")
+
+    /**
+     * The breaks worth a word (web lib/mensa.ts `breaksFrom`): the named ones, and days the school
+     * or the canteen is closed when they last at least three days; a single holiday is just a day
+     * without a menu.
+     */
+    fun breaks(raw: List<MenuBreak>): List<MenuBreak> = raw.filter { b ->
+        val start = parseDishDate(b.start) ?: return@filter false
+        val end = parseDishDate(b.end) ?: return@filter false
+        b.reason in namedBreaks || ((b.reason == "school" || b.reason == "closed") && end.toEpochDays() - start.toEpochDays() >= 2)
+    }
+
+    /** The break [today] falls in, if any. */
+    fun breakOn(breaks: List<MenuBreak>, today: LocalDate = todayLocalDate()): MenuBreak? =
+        today.toString().let { key -> breaks.firstOrNull { it.start <= key && key <= it.end } }
+
+    /** The breaks that lie after [after] and end before [before]. */
+    fun breaksBetween(breaks: List<MenuBreak>, after: LocalDate, before: LocalDate): List<MenuBreak> =
+        breaks.filter { it.start > after.toString() && it.end < before.toString() }
+
+    /** A break's name ("Herbstferien"), named by when it is, as the web's `holidayKey`. */
+    fun breakName(b: MenuBreak): String =
+        dev.plattnericus.pokyh.core.util.SchoolHolidays.nameOf(dev.plattnericus.pokyh.core.util.SchoolHoliday(b.start, b.end))
+
+    /** "8. November" in the language in use. */
+    fun breakDate(key: String): String {
+        val d = parseDishDate(key) ?: return key
+        return dev.plattnericus.pokyh.core.i18n.I18n.s.common.dayMonth(d.dayOfMonth, d.monthNumber)
+    }
 
     /** "Heute", "Morgen", or "Donnerstag, 30. Oktober" in the language in use (the web's dayLabel). */
     fun label(date: LocalDate, today: LocalDate = todayLocalDate()): String {
@@ -120,12 +152,18 @@ class MensaViewModel @Inject constructor(
         val ratingsLoading: Boolean = true,
         /** Ratings could not be fetched — a dish without one is unknown, not unrated. */
         val ratingsUnavailable: Boolean = false,
+        /** The breaks the plan waits out that are worth a word ([MensaSchedule.breaks]). */
+        val breaks: List<MenuBreak> = emptyList(),
     )
 
     private val _ui = MutableStateFlow(UiState())
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
     init {
+        // The breaks come with the menu, from the network or from the copy on disk.
+        viewModelScope.launch {
+            backendClient.mensaBreaks.collect { raw -> _ui.update { it.copy(breaks = MensaSchedule.breaks(raw)) } }
+        }
         // Whatever is on disk from last time, on screen before the first request finishes.
         viewModelScope.launch {
             backendClient.cachedDishesOrNull()?.let { cached ->
@@ -364,7 +402,7 @@ class DishDetailViewModel @Inject constructor(
      * numbers; rejected, the vote is taken back.
      */
     fun rate(stars: Int) {
-        val token = appState.session.value?.apiToken ?: return
+        if (appState.session.value?.apiToken == null) return
         val seq = ++voteSeq
         val before = _ui.value.ratings
         pendingVote = stars
@@ -372,10 +410,11 @@ class DishDetailViewModel @Inject constructor(
         _ui.update { it.copy(ratings = optimistic) }
         backendClient.publishRating(dishId, optimistic)
         viewModelScope.launch {
-            val sent = runCatching { backendClient.rateDish(dishId, stars, token) }.isSuccess
+            // The access token lasts an hour: an expired one is renewed once instead of the vote failing.
+            val sent = runCatching { appState.withFreshApiToken { t -> backendClient.rateDish(dishId, stars, t) } }.isSuccess
             if (seq != voteSeq) return@launch // a newer tap owns the screen now
             pendingVote = null
-            val fresh = runCatching { backendClient.dishRatings(dishId, token, force = true) }.getOrNull()
+            val fresh = runCatching { appState.withFreshApiToken { t -> backendClient.dishRatings(dishId, t, force = true) } }.getOrNull()
             when {
                 fresh != null -> applyServerRatings(fresh)
                 // Not counted and no truth to show: back to how it was before the tap.
@@ -428,7 +467,7 @@ class DishDetailViewModel @Inject constructor(
      * doesn't leave a duplicate behind.
      */
     fun addComment(body: String, done: (Boolean) -> Unit) {
-        val token = appState.session.value?.apiToken ?: return done(false)
+        if (appState.session.value?.apiToken == null) return done(false)
         val trimmed = body.trim()
         if (trimmed.isEmpty()) return done(false)
 
@@ -443,13 +482,13 @@ class DishDetailViewModel @Inject constructor(
         _ui.update { it.copy(comments = it.comments + pending) }
 
         viewModelScope.launch {
-            val posted = runCatching { backendClient.createDishComment(dishId, trimmed, token) }
+            val posted = runCatching { appState.withFreshApiToken { t -> backendClient.createDishComment(dishId, trimmed, t) } }
             done(posted.isSuccess)
             if (posted.isFailure) {
                 _ui.update { it.copy(comments = it.comments.filterNot { c -> c.id == pendingId }) }
                 return@launch
             }
-            runCatching { backendClient.dishComments(dishId, token) }
+            runCatching { appState.withFreshApiToken { t -> backendClient.dishComments(dishId, t) } }
                 .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
                 // Refetch failed but the post did not: swap the placeholder for the real
                 // comment rather than dropping a comment that exists.
@@ -463,30 +502,30 @@ class DishDetailViewModel @Inject constructor(
     }
 
     fun editComment(item: CommentUiItem, body: String, done: (Boolean) -> Unit) {
-        val token = appState.session.value?.apiToken ?: return done(false)
+        if (appState.session.value?.apiToken == null) return done(false)
         viewModelScope.launch {
-            val ok = runCatching { backendClient.updateDishComment(dishId, item.id, body, token) }.isSuccess
+            val ok = runCatching { appState.withFreshApiToken { t -> backendClient.updateDishComment(dishId, item.id, body, t) } }.isSuccess
             done(ok)
             if (ok) {
-                runCatching { backendClient.dishComments(dishId, token) }
+                runCatching { appState.withFreshApiToken { t -> backendClient.dishComments(dishId, t) } }
                     .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
             }
         }
     }
 
     fun deleteComment(item: CommentUiItem) {
-        val token = appState.session.value?.apiToken ?: return
+        if (appState.session.value?.apiToken == null) return
         val before = _ui.value.comments
         _ui.update { it.copy(comments = it.comments.filterNot { c -> c.id == item.id }) }
         viewModelScope.launch {
-            val deleted = runCatching { backendClient.deleteDishComment(dishId, item.id, token) }
+            val deleted = runCatching { appState.withFreshApiToken { t -> backendClient.deleteDishComment(dishId, item.id, t) } }
             if (deleted.isFailure) {
                 // Put it back — a comment that silently vanished and then reappeared on the next
                 // visit is worse than one that never left.
                 _ui.update { it.copy(comments = before) }
                 return@launch
             }
-            runCatching { backendClient.dishComments(dishId, token) }
+            runCatching { appState.withFreshApiToken { t -> backendClient.dishComments(dishId, t) } }
                 .onSuccess { list -> _ui.update { it.copy(comments = list.map { c -> c.toUi() }) } }
         }
     }

@@ -454,17 +454,28 @@ class AppState @Inject constructor(
             s = if (s.isStudent || s.isParent) {
                 val role = if (s.isParent) "parent" else "student"
                 val method = if (dev.plattnericus.pokyh.data.untis.AppKey.isKey(password)) "office" else null
-                when (val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role, renewal, s.school, method)) {
+                // The backend asks WebUntis itself, with this very session, whose it is and which
+                // class the account has; the class worked out here does not count.
+                when (val outcome = backendClient.loginWithUntis(s.username, s.sessionId, role, renewal, s.school, method)) {
                     is BackendClient.UntisLoginResult.Ok -> {
                         var upgraded = s.copy(apiToken = outcome.token, apiRefresh = outcome.refresh)
+                        _backendStatus.value = BackendStatus.Ok
                         runCatching { backendClient.me(outcome.token) }.getOrNull()?.let { user ->
                             upgraded = upgraded.copy(stableUid = user.stableUid, classId = user.classId)
+                            // A pupil WebUntis names no class for: signed in all the same, only
+                            // what needs the class says why it is missing.
+                            if (user.classId == null && (user.role ?: "student") == "student" && s.isStudent) {
+                                _backendStatus.value = BackendStatus.NoClass(if (user.classCheckPending) "pending" else user.classNote)
+                            }
                         }
-                        _backendStatus.value = BackendStatus.Ok
                         upgraded
                     }
-                    is BackendClient.UntisLoginResult.NoClass -> {
-                        _backendStatus.value = BackendStatus.NoClass
+                    is BackendClient.UntisLoginResult.UntisSessionExpired -> {
+                        _backendStatus.value = BackendStatus.Failed(I18n.s.common.sessionExpired)
+                        s
+                    }
+                    is BackendClient.UntisLoginResult.UntisUnavailable -> {
+                        _backendStatus.value = BackendStatus.Failed(outcome.message)
                         s
                     }
                     is BackendClient.UntisLoginResult.Failed -> {
@@ -664,18 +675,49 @@ class AppState @Inject constructor(
     }
 
     private suspend fun renewApiToken(s: UserSession): String? {
-        val fresh: Pair<String, String> = if (s.hasUntis) {
-            if (!(s.isStudent || s.isParent)) return null
-            val role = if (s.isParent) "parent" else "student"
-            val outcome = backendClient.loginWithUntis(s.username, s.klasseId, s.klasseName, role, renewal = true, school = s.school)
-            (outcome as? BackendClient.UntisLoginResult.Ok)?.let { it.token to it.refresh } ?: return null
-        } else {
-            val password = credentialStore.getCredentials(s.username)?.second ?: return null
-            runCatching { backendClient.login(s.username, password) }.getOrNull()?.let { it.token to it.refreshToken } ?: return null
-        }
+        val fresh = freshBackendTokens(s) ?: return null
         val current = _session.value
         if (current?.username == s.username) _session.value = current.copy(apiToken = fresh.first, apiRefresh = fresh.second)
         return fresh.first
+    }
+
+    /** New POKYH tokens for [s], as on iOS (`freshBackendTokens`); null when none can be had now. */
+    private suspend fun freshBackendTokens(s: UserSession): Pair<String, String>? {
+        // The session as it is now: its WebUntis session or refresh token may be newer than [s]'s.
+        val now = _session.value?.takeIf { it.username == s.username } ?: s
+        if (now.hasUntis) {
+            if (!(now.isStudent || now.isParent)) return null
+            val role = if (now.isParent) "parent" else "student"
+            var outcome = backendClient.loginWithUntis(now.username, now.sessionId, role, renewal = true, school = now.school)
+            // The WebUntis session has ended: sign in to WebUntis again with the saved password,
+            // then once more at the backend.
+            if (outcome is BackendClient.UntisLoginResult.UntisSessionExpired) {
+                renewedUntisSession(now)?.let { renewed ->
+                    outcome = backendClient.loginWithUntis(now.username, renewed.sessionId, role, renewal = true, school = now.school)
+                }
+            }
+            return when (val o = outcome) {
+                is BackendClient.UntisLoginResult.Ok -> o.token to o.refresh
+                is BackendClient.UntisLoginResult.Revoked -> null
+                // WebUntis away or the session not renewable now: the device's own refresh token
+                // keeps the POKYH session going until the next sign-in checks again.
+                else -> now.apiRefresh?.let { backendClient.refresh(it) }
+            }
+        }
+        // POKYH-only accounts: the refresh token first, then the saved password.
+        now.apiRefresh?.let { backendClient.refresh(it) }?.let { return it }
+        val password = credentialStore.getCredentials(now.username)?.second ?: return null
+        return runCatching { backendClient.login(now.username, password) }.getOrNull()?.let { it.token to it.refreshToken }
+    }
+
+    /** A new WebUntis session for [s], signed in with the saved password; the active session takes it over. */
+    private suspend fun renewedUntisSession(s: UserSession): UserSession? {
+        val password = credentialStore.getCredentials(s.username)?.second ?: return null
+        // A code from the authenticator app can't be asked for here: no renewal then.
+        val renewed = runCatching { untisClient.login(s.username, password, school = s.schoolRef) }.getOrNull() ?: return null
+        val current = _session.value
+        if (current?.username == s.username) _session.value = current.copy(sessionId = renewed.sessionId, bearerToken = renewed.bearerToken)
+        return renewed
     }
 
     /** Switch into offline mode: show the cached (token-less) session. */
@@ -940,6 +982,40 @@ class AppState @Inject constructor(
             _isOffline.value = false
             serviceHealth.reset()
         }
+    }
+
+    /** What came of [deleteAccount]. */
+    sealed interface AccountDeletion {
+        data object Deleted : AccountDeletion
+        /** A backend from before deleting existed (404): the website is the way. */
+        data object NotAvailable : AccountDeletion
+        data class Failed(val message: String) : AccountDeletion
+    }
+
+    /**
+     * Deletes the signed-in POKYH account on the server (iOS `deleteAccount`), then removes it
+     * from this phone. The WebUntis account stays; a later sign-in starts a new, empty one.
+     */
+    suspend fun deleteAccount(): AccountDeletion {
+        val s = _session.value
+        if (s == null || _isOffline.value || s.apiToken == null) return AccountDeletion.Failed(I18n.s.common.noConnection)
+        // A token that ran out is renewed now, not halfway through: once the backend has revoked
+        // it, requests failing at that moment would renew themselves and create the account anew.
+        runCatching { withFreshApiToken { backendClient.me(it) } }
+        val token = _session.value?.takeIf { it.username == s.username }?.apiToken
+            ?: return AccountDeletion.Failed(I18n.s.common.sessionExpired)
+        try {
+            backendClient.deleteAccount(token)
+        } catch (e: AppError) {
+            return when (e.httpCode) {
+                404 -> AccountDeletion.NotAvailable
+                401 -> AccountDeletion.Failed(I18n.s.common.sessionExpired)
+                else -> AccountDeletion.Failed(e.message ?: I18n.s.common.unknownError)
+            }
+        }
+        removeAccount(s.username)
+        _phase.value = if (_accounts.value.none { it.username != s.username }) Phase.Login else Phase.Lock
+        return AccountDeletion.Deleted
     }
 
     /**

@@ -126,11 +126,15 @@ fun MensaScreen(
                 ui.groups.isEmpty() -> EmptyStateView(
                     sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Empty,
                     title = strings().mensa.emptyTitle,
-                    subtitle = strings().mensa.emptySubtitle,
+                    // In a break, which one and until when, as the web says it above the plan.
+                    subtitle = MensaSchedule.breakOn(ui.breaks)
+                        ?.let { strings().mensa.breakNow(MensaSchedule.breakName(it), MensaSchedule.breakDate(it.end)) }
+                        ?: strings().mensa.emptySubtitle,
                 )
 
                 else -> MensaPlan(
                     groups = ui.groups,
+                    breaks = ui.breaks,
                     ratings = ui.ratings,
                     ratingsLoading = ui.ratingsLoading,
                     ratingsUnavailable = ui.ratingsUnavailable,
@@ -158,6 +162,7 @@ private fun weekIndex(d: kotlinx.datetime.LocalDate): Long =
 @Composable
 private fun MensaPlan(
     groups: List<MensaSchedule.DayGroup>,
+    breaks: List<dev.plattnericus.pokyh.data.model.MenuBreak>,
     ratings: Map<String, DishRatingsData>,
     ratingsLoading: Boolean,
     ratingsUnavailable: Boolean,
@@ -167,13 +172,25 @@ private fun MensaPlan(
     val colors = PokyhTheme.colors
     val next = groups.first()
     val served = leadDish(next.dishes) ?: return
-    val thisWeek = weekIndex(todayLocalDate())
+    val today = todayLocalDate()
+    val thisWeek = weekIndex(today)
     val weeks = groups.groupBy { weekIndex(it.date) }.toList()
     val c = strings().common
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = PokyhSpacing.screenH, end = PokyhSpacing.screenH, bottom = PokyhSpacing.xxxl),
     ) {
+        // The break the menu is in, above it all: which one and until when (the web's `breakNow`).
+        MensaSchedule.breakOn(breaks, today)?.let { b ->
+            item(key = "breakNow") {
+                Text(
+                    t.breakNow(MensaSchedule.breakName(b), MensaSchedule.breakDate(b.end)),
+                    style = PokyhType.headline,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = PokyhSpacing.xl).fadeIn(),
+                )
+            }
+        }
         item(key = "served") {
             Column(Modifier.fadeIn(), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
                 Box(
@@ -223,7 +240,19 @@ private fun MensaPlan(
                 modifier = Modifier.padding(top = 56.dp),
             )
         }
-        weeks.forEach { (w, days) ->
+        weeks.forEachIndexed { i, (w, days) ->
+            // The breaks the plan waits out before this week (the web's `breaksBetween`).
+            val after = if (i == 0) today else weeks[i - 1].second.last().date
+            MensaSchedule.breaksBetween(breaks, after, days.first().date).forEach { b ->
+                item(key = "break-${b.start}") {
+                    Text(
+                        t.breakRange(MensaSchedule.breakName(b), MensaSchedule.breakDate(b.start), MensaSchedule.breakDate(b.end)),
+                        style = PokyhType.callout.semibold(),
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(top = 32.dp),
+                    )
+                }
+            }
             item(key = "week-$w") {
                 val first = days.first().date
                 val title = when (w) {

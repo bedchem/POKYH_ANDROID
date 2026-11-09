@@ -123,7 +123,10 @@ fun RemindersScreen(
                 !hasClass && !ui.offline && !ui.offlineCopy -> EmptyStateView(
                     sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Search,
                     title = strings().tasks.noClass,
-                    subtitle = strings().tasks.noClassText,
+                    // The backend's reason where it gave one (waiting for the check, none in WebUntis, …).
+                    subtitle = (backendStatus as? dev.plattnericus.pokyh.data.model.BackendStatus.NoClass)
+                        ?.let { dev.plattnericus.pokyh.ui.components.noClassMessage(strings().tasks.remindersFeature, it.note) }
+                        ?: strings().tasks.noClassText,
                 )
                 visible.isEmpty() && ui.pending.isEmpty() -> EmptyStateView(
                     sprite = dev.plattnericus.pokyh.ui.pixel.PixelSprite.Bell,

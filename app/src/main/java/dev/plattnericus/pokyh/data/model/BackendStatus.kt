@@ -10,8 +10,11 @@ sealed interface BackendStatus {
     data object Ok : BackendStatus
     /** Teacher/admin WebUntis account — the backend deliberately creates no POKYH account. */
     data object NotStudent : BackendStatus
-    /** WebUntis returned no usable klasseId and the timetable-derived fallback found nothing. */
-    data object NoClass : BackendStatus
+    /**
+     * Signed in, but the backend (asking WebUntis itself) found no class for this pupil. [note]:
+     * why, as `/auth/me` says ("pending" while the next sign-in still checks it).
+     */
+    data class NoClass(val note: String? = null) : BackendStatus
     /** Signed in offline from the stored session — nothing is wrong with the account, the
      * POKYH server just cannot be asked right now. Screens show what is stored on the device. */
     data object Offline : BackendStatus

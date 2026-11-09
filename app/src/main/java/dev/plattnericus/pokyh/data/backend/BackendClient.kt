@@ -71,8 +71,10 @@ class BackendClient @Inject constructor(
     /** Ergebnis des Server-zu-Server-Logins (mit Diagnose für die UI). */
     sealed interface UntisLoginResult {
         data class Ok(val token: String, val refresh: String) : UntisLoginResult
-        /** klasseId <= 0 -> Backend verlangt > 0. */
-        data object NoClass : UntisLoginResult
+        /** The WebUntis session handed over has ended: sign in to WebUntis again, then once more here. */
+        data object UntisSessionExpired : UntisLoginResult
+        /** The backend could not reach WebUntis to check the session: the refresh token keeps the POKYH session going for now. */
+        data class UntisUnavailable(val message: String) : UntisLoginResult
         /** HTTP-/Netzwerkfehler (Meldung). */
         data class Failed(val message: String) : UntisLoginResult
         /**
@@ -87,10 +89,11 @@ class BackendClient @Inject constructor(
     private data class UntisLoginResponse(val token: String, val refreshToken: String)
 
     /**
-     * Server-zu-Server-Login nach erfolgreichem WebUntis-Login (kein Passwort nötig).
-     * Das Backend legt bei gültiger klasseId automatisch ein Konto an. Bei `role = "parent"`
-     * wird ein Elternkonto erstellt (eigene Todos, sieht nur den Klassennamen, keine
-     * Erinnerungen, unsichtbares Mitglied). Für Eltern ist die klasseId die des Kindes.
+     * Sign-in at the backend after the WebUntis sign-in, with the app's WebUntis session
+     * ([untisSessionId], its JSESSIONID): the backend asks WebUntis itself whose it is and which
+     * class the account belongs to; nothing the app works out counts (as on iOS). The server key
+     * ships in every app and proves nothing on its own. `role = "parent"` only ever makes a new
+     * account a parent's (own to-dos, the class name only, no reminders, an invisible member).
      *
      * [renewal]: die App meldet sich mit dem gespeicherten Passwort selbst wieder an (Start,
      * Fingerabdruck, Wiederverbinden) — keine Anmeldung durch die Person. Sie zählt nicht im
@@ -99,8 +102,7 @@ class BackendClient @Inject constructor(
      */
     suspend fun loginWithUntis(
         username: String,
-        klasseId: Int,
-        klasseName: String,
+        untisSessionId: String,
         role: String = "student",
         renewal: Boolean = false,
         /** The WebUntis school the account was checked at; the default one is left out (the backend's own). */
@@ -108,11 +110,10 @@ class BackendClient @Inject constructor(
         /** "office": signed in with the app key (Office 365), for the account's sign-ins. */
         method: String? = null,
     ): UntisLoginResult {
-        if (klasseId <= 0) return UntisLoginResult.NoClass
+        if (untisSessionId.isBlank()) return UntisLoginResult.UntisSessionExpired
         val body = buildJsonObject {
             put("username", username)
-            put("klasseId", klasseId)
-            put("klasseName", klasseName)
+            put("untisSessionId", untisSessionId)
             put("role", role)
             put("renewal", renewal)
             if (method != null) put("method", method)
@@ -138,14 +139,25 @@ class BackendClient @Inject constructor(
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
                 val body = runCatching { json.decodeFromString<ApiErrorBody>(text) }.getOrNull()
-                if (body?.code == "session_revoked") return@use UntisLoginResult.Revoked(body.error)
-                return@use UntisLoginResult.Failed(body?.error ?: "HTTP ${resp.code}")
+                val message = body?.error ?: "HTTP ${resp.code}"
+                return@use when (body?.code) {
+                    "session_revoked" -> UntisLoginResult.Revoked(message)
+                    "untis_session_invalid" -> UntisLoginResult.UntisSessionExpired
+                    "webuntis_unavailable" -> UntisLoginResult.UntisUnavailable(message)
+                    else -> UntisLoginResult.Failed(message)
+                }
             }
             val parsed = runCatching { json.decodeFromString<UntisLoginResponse>(text) }.getOrNull()
                 ?: return@use UntisLoginResult.Failed(dev.plattnericus.pokyh.core.i18n.I18n.s.errors.badAnswer)
             UntisLoginResult.Ok(parsed.token, parsed.refreshToken)
         }
     }
+
+    /** New tokens for the device's POKYH session from its refresh token; null when it is no longer valid. */
+    suspend fun refresh(refreshToken: String): Pair<String, String>? = runCatching {
+        val body = buildJsonObject { put("refreshToken", refreshToken) }
+        decode<UntisLoginResponse>(request("/auth/refresh", method = "POST", jsonBody = body.toString()))
+    }.getOrNull()?.let { it.token to it.refreshToken }
 
     /** Direkter App-Login (Nicht-Untis-Konto): Benutzername + Passwort. */
     suspend fun login(username: String, password: String): AuthResponse {
@@ -165,6 +177,15 @@ class BackendClient @Inject constructor(
     }
 
     suspend fun me(token: String): ApiUser = decode(request(Config.Routes.authMe, token = token))
+
+    /**
+     * Deletes the POKYH account and what the backend keeps about it; every device is signed out.
+     * The WebUntis account stays. A 404 means a backend from before this existed: the route
+     * answers 204 even for an account that's already gone.
+     */
+    suspend fun deleteAccount(token: String) {
+        request("/users/me", method = "DELETE", token = token)
+    }
 
     // ── Datenschutz (backend routes/privacy.ts, users/me/export) ──
 
@@ -587,10 +608,18 @@ class BackendClient @Inject constructor(
     private fun parseDishes(rawJson: String): List<Dish>? =
         runCatching { json.decodeFromString<MenuResponse>(rawJson) }
             .getOrNull()
-            ?.also { _mensaAvailable.value = it.available }
+            ?.also {
+                _mensaAvailable.value = it.available
+                _mensaBreaks.value = it.breaks
+            }
             ?.menu
             ?.dishes
             ?.map { it.toDomain(Config.backendURL) }
+
+    private val _mensaBreaks = MutableStateFlow<List<dev.plattnericus.pokyh.data.model.MenuBreak>>(emptyList())
+
+    /** The breaks the menu last read waits out, as the backend sends them (none from an older backend). */
+    val mensaBreaks: StateFlow<List<dev.plattnericus.pokyh.data.model.MenuBreak>> = _mensaBreaks.asStateFlow()
 
     /** Abgelaufener RAM-Stand zuerst, sonst die Platte — beides besser als ein Fehler-Screen. */
     private suspend fun dishesFallback(): List<Dish>? =

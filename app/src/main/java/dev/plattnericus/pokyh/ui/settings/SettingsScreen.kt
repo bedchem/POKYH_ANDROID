@@ -91,6 +91,7 @@ import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.pixel.PixelIconName
 import dev.plattnericus.pokyh.ui.pixel.PixelSprite
 import dev.plattnericus.pokyh.ui.profile.ChangePasswordSheet
+import dev.plattnericus.pokyh.data.model.BackendStatus
 import dev.plattnericus.pokyh.ui.profile.PokyhDialog
 import dev.plattnericus.pokyh.ui.profile.ProfileViewModel
 import dev.plattnericus.pokyh.ui.theme.Brand
@@ -110,6 +111,7 @@ private const val IMPRESSUM_URL = "${LEGAL_BASE_URL}impressum"
 private const val PRIVACY_URL = "${LEGAL_BASE_URL}datenschutz"
 private const val LEARN_PRIVACY_URL = "${LEGAL_BASE_URL}learn"
 private const val FAQ_URL = "https://pokyh.com/faq"
+private const val WEBSITE_URL = "https://pokyh.com"
 private const val SOURCE_URL = "https://github.com/bedchem/POKYH_ANDROID"
 private const val SUPPORT_EMAIL = "contact@pokyh.com"
 
@@ -140,6 +142,7 @@ fun SettingsScreen(
     val ta = strings().account
     val context = LocalContext.current
     val session by viewModel.session.collectAsStateWithLifecycle()
+    val backendStatus by viewModel.backendStatus.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val clearing by viewModel.clearing.collectAsStateWithLifecycle()
     val cacheSize by viewModel.cacheSize.collectAsStateWithLifecycle()
@@ -228,6 +231,10 @@ fun SettingsScreen(
                         UntisAccountItems(account)
                         SettingsLinkItem(title = t.profile, hint = t.profileHint, onClick = { onNavigate(PokyhDestinations.PROFILE) })
                     }
+                    // A teacher has no POKYH account, so there is nothing to delete on the server.
+                    if (session?.apiToken != null && backendStatus !is BackendStatus.NotStudent) {
+                        DeleteAccountItem(viewModel.appState, onDeleted = onNavigateBack, onOpenWebsite = { open(WEBSITE_URL) })
+                    }
                 }
             }
 
@@ -311,6 +318,67 @@ fun SettingsScreen(
     if (resettingPassword) {
         val loginViewModel: LoginViewModel = hiltViewModel()
         PasswordResetSheet(viewModel = loginViewModel, initialUsername = session?.username.orEmpty(), onDismiss = { resettingPassword = false }, school = session?.schoolRef)
+    }
+}
+
+/**
+ * "Konto löschen", as on iOS: one red row; what it deletes and what stays is said in the question
+ * it asks. A backend from before deleting existed sends the person to the website instead.
+ */
+@Composable
+private fun DeleteAccountItem(appState: dev.plattnericus.pokyh.state.AppState, onDeleted: () -> Unit, onOpenWebsite: () -> Unit) {
+    val ta = strings().account
+    val scope = rememberCoroutineScope()
+    var confirming by remember { mutableStateOf(false) }
+    var working by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    var notAvailable by remember { mutableStateOf(false) }
+
+    SettingsItem(title = ta.deleteAccount, hint = ta.deleteAccountHint, danger = true) {
+        WebButton(ta.deleteAccount, onClick = { confirming = true }, variant = WebButtonVariant.Danger, icon = PokyhIcons.delete, loading = working, enabled = !working)
+    }
+
+    if (confirming) {
+        PokyhDialog(
+            title = ta.deleteAccountTitle,
+            body = ta.deleteAccountBody,
+            onDismiss = { confirming = false },
+            confirmLabel = ta.deleteAccountConfirm,
+            confirmColor = Brand.danger,
+            onConfirm = {
+                confirming = false
+                working = true
+                scope.launch {
+                    val outcome = appState.deleteAccount()
+                    working = false
+                    when (outcome) {
+                        is dev.plattnericus.pokyh.state.AppState.AccountDeletion.Deleted -> onDeleted()
+                        is dev.plattnericus.pokyh.state.AppState.AccountDeletion.NotAvailable -> notAvailable = true
+                        is dev.plattnericus.pokyh.state.AppState.AccountDeletion.Failed -> problem = outcome.message
+                    }
+                }
+            },
+        )
+    }
+    problem?.let { message ->
+        PokyhDialog(
+            title = ta.deleteAccount,
+            body = message,
+            onDismiss = { problem = null },
+            confirmLabel = strings().common.ok,
+            onConfirm = { problem = null },
+            dismissLabel = null,
+        )
+    }
+    if (notAvailable) {
+        PokyhDialog(
+            title = ta.deleteAccount,
+            body = ta.deleteAccountNotAvailable,
+            onDismiss = { notAvailable = false },
+            confirmLabel = ta.deleteAccountOpenWebsite,
+            onConfirm = { notAvailable = false; onOpenWebsite() },
+            dismissLabel = strings().common.ok,
+        )
     }
 }
 

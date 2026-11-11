@@ -2034,12 +2034,26 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     )
 
     /**
+     * The class teacher an excuse goes to, among the class teachers the account may write to: never
+     * the deputy, whom WebUntis lists beside them ([ClassTeacher]). Null when it can't be told.
+     */
+    suspend fun mainClassTeacher(session: UserSession, classTeachers: List<MessageRecipient>): MessageRecipient? {
+        val monday = java.time.LocalDate.now().with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val url = "${session.schoolRef.base}/api/rest/view/v1/timetable/filter?resourceType=CLASS&timetableType=STANDARD&start=$monday&end=${monday.plusDays(5)}"
+        val teachers = runCatching {
+            val (body, resp) = get(url, session, timeoutMs = 12_000)
+            if (resp.code == 200) ClassTeacher.read(JsonDyn.parse(body)) else null
+        }.getOrNull()
+        return ClassTeacher.pick(classTeachers, teachers) { it.name }
+    }
+
+    /**
      * "Entschuldigen" for absences that are over, as pokyh-backend's `/absences/excuse` does it for
      * the web: WebUntis refuses the edit that would add a reason to a past absence, so the excuse
-     * goes to the class teachers as a WebUntis message ([ExcuseMessage]) — one each when the
-     * account's recipient option is TEACHER, which takes one recipient per message. Only absences
-     * not yet excused are named. Whether the school then counts them as excused is the class
-     * teachers' call. Throws an [AppError] with the reason in the app's language.
+     * goes to the class teacher as one WebUntis message ([ExcuseMessage]), never to the deputy
+     * ([mainClassTeacher]). Only absences not yet excused are named. Whether the school then counts
+     * them as excused is the class teacher's call. Throws an [AppError] with the reason in the
+     * app's language.
      */
     suspend fun excuseByMessage(
         session: UserSession,
@@ -2076,6 +2090,7 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val teachers = people.distinctBy { it.first }.filter { it.first in classTeacherIds }
             .map { MessageRecipient(id = it.first, type = "CLASS_TEACHERS", name = it.second, isClassTeacher = true) }
         if (teachers.isEmpty()) throw AppError(t.exNoTeacher)
+        val teacher = mainClassTeacher(session, teachers) ?: throw AppError(t.exTeacherUnclear)
 
         val childName = if (session.isParent) {
             runCatching { fetchAppData(session)?.json?.let { j -> j["data"]["user"]["students"].array.firstOrNull()?.get("displayName")?.string } }.getOrNull()
@@ -2091,39 +2106,22 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             signature = if (session.isParent) null else session.personName,
         )
         val html = ExcuseMessage.plainTextToHtml(text)
-        val token = freshMessageToken(session)
-        val schoolYearId = runCatching { rpc("getCurrentSchoolyear", session, "sy")["id"].int }.getOrNull()
-        val option = messagePermissions(session, token, schoolYearId).recipientOption
-        val batches = if (option == "TEACHER") teachers.map { listOf(it) } else listOf(teachers)
-
-        val sentTo = mutableListOf<String>()
-        val failed = mutableListOf<String>()
-        var expired = false
-        for (batch in batches) {
-            val names = batch.map { it.name }
-            if (expired) {
-                failed += names
-                continue
-            }
-            try {
-                sendMessage(session, subject, html, batch)
-                sentTo += names
-            } catch (e: AppError) {
-                failed += names
-                expired = e.isSessionExpired
-            } catch (e: Exception) {
-                failed += names
-            }
-        }
-        if (sentTo.isEmpty()) {
-            if (expired) throw AppError.sessionExpired
+        try {
+            sendMessage(session, subject, html, listOf(teacher))
+        } catch (e: AppError) {
+            if (e.isSessionExpired) throw e
+            throw AppError(t.exSendFailed)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
             throw AppError(t.exSendFailed)
         }
+        val sentTo = listOf(teacher.name)
         val span = ExcuseMessage.spanOf(open)
         return ExcuseResult(
             viaMessage = true,
             sentTo = sentTo,
-            failed = failed,
+            failed = emptyList(),
             excuse = SentExcuse(span.start, span.end, java.time.Instant.now().toString(), sentTo, null),
         )
     }

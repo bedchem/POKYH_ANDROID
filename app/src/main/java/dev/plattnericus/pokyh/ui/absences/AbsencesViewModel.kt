@@ -144,10 +144,12 @@ class AbsencesViewModel @Inject constructor(
         val metaFailed: Boolean = false,
         /** Today's first and last lesson (HHMM), when WebUntis gives no preset range. */
         val todayRange: Pair<Int, Int>? = null,
-        /** The class teachers an excuse goes to; null while loading. */
+        /** The class teacher an excuse goes to (one, never the deputy); null while loading. */
         val teachers: List<String>? = null,
         /** WebUntis wouldn't say who the class teachers are (the excuse may still go through). */
         val teachersFailed: Boolean = false,
+        /** WebUntis names class teachers, but not which of them is the class teacher proper. */
+        val teacherUnclear: Boolean = false,
         val saving: Boolean = false,
         val error: String? = null,
         val done: Boolean = false,
@@ -220,12 +222,14 @@ class AbsencesViewModel @Inject constructor(
         }
         if (forExcuse) {
             viewModelScope.launch {
-                val teachers = runCatching {
-                    untisClient.messageRecipients(session).filter { it.isClassTeacher }.distinctBy { it.id }.map { it.name }
+                val classTeachers = runCatching {
+                    untisClient.messageRecipients(session).filter { it.isClassTeacher }.distinctBy { it.id }
                 }
+                val main = classTeachers.getOrNull()?.let { untisClient.mainClassTeacher(session, it) }
                 _form.value = _form.value.copy(
-                    teachers = teachers.getOrNull() ?: emptyList(),
-                    teachersFailed = teachers.isFailure,
+                    teachers = listOfNotNull(main?.name),
+                    teachersFailed = classTeachers.isFailure,
+                    teacherUnclear = main == null && !classTeachers.getOrNull().isNullOrEmpty(),
                 )
             }
         }

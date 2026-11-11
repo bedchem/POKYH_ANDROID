@@ -333,7 +333,7 @@ fun ExcuseAbsenceSheet(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                if (noTeacher) Text(t.exNoTeacher, style = PokyhType.footnote, color = Brand.danger)
+                if (noTeacher) Text(if (form.teacherUnclear) t.exTeacherUnclear else t.exNoTeacher, style = PokyhType.footnote, color = Brand.danger)
             }
             ReasonField(reason = reason, enabled = !form.saving, onClick = { pickingReason = true })
             PokyhTextField(

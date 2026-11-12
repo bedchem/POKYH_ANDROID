@@ -69,6 +69,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.data.model.ApiPopup
+import dev.plattnericus.pokyh.data.network.BackendUrls
 import dev.plattnericus.pokyh.ui.components.PokyhIconButton
 import dev.plattnericus.pokyh.ui.components.PokyhPrimaryButton
 import dev.plattnericus.pokyh.ui.components.PokyhTextButton
@@ -422,7 +423,8 @@ private fun PopupHtml(html: String, modifier: Modifier = Modifier) {
             if (webView.tag != document) {
                 webView.tag = document
                 contentHeight.intValue = 0
-                webView.loadDataWithBaseURL("https://api.pokyh.com/", document, "text/html", "utf-8", null)
+                // Pictures in the HTML come as paths ("/popup-images/…") on the backend.
+                webView.loadDataWithBaseURL(BackendUrls.htmlBase, document, "text/html", "utf-8", null)
             }
         },
     )

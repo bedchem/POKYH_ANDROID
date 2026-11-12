@@ -1,5 +1,6 @@
 package dev.plattnericus.pokyh.data.model
 
+import dev.plattnericus.pokyh.data.network.BackendUrls
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -191,18 +192,15 @@ fun JsonElement.resolveLocalized(): String {
 }
 
 fun DishDto.toDomain(baseUrl: String): Dish {
-    // An uploaded picture comes as a path on the API until the backend knows its public address;
-    // a dish without one has "", not the API's own address.
-    val resolvedImageUrl = imageUrl?.takeIf { it.isNotBlank() }?.let { url ->
-        if (url.startsWith("http://") || url.startsWith("https://")) url else baseUrl + url
-    }
     return Dish(
         id = id,
         name = name.resolveLocalized(),
         description = description?.resolveLocalized(),
         category = category,
         date = date,
-        imageUrl = resolvedImageUrl,
+        // The backend names its own pictures by path; a dish without one has "". The menu on
+        // disk is mapped here too when read back, so payloads saved before still load.
+        imageUrl = BackendUrls.resolve(imageUrl, baseUrl),
         price = price,
         allergens = allergens,
         tags = tags,

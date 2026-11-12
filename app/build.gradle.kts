@@ -21,18 +21,41 @@ val localProperties = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) FileInputStream(f).use { load(it) }
 }
-fun secret(key: String): String = (localProperties.getProperty(key) ?: System.getenv(key) ?: "").let {
-    "\"" + it.replace("\"", "\\\"") + "\""
-}
-
 fun prop(key: String): String? = localProperties.getProperty(key) ?: System.getenv(key)
 
-// Release version. Bump it for every GitHub release and tag the release "v" + this (v2.0.1) —
-// the in-app updater compares that tag against it. versionCode is derived so it can't be
-// forgotten (2.0.1 -> 20001); it has to stay above the Flutter app's versionCode 1.
-val appVersionName = "2.2.0"
-val appVersionCode = appVersionName.split(".").map { it.toInt() }.let { (major, minor, patch) ->
-    major * 10_000 + minor * 100 + patch
+fun stringField(value: String): String = "\"" + value.replace("\"", "\\\"") + "\""
+
+fun secret(key: String): String = stringField(prop(key) ?: "")
+
+// An empty entry in local.properties counts as unset.
+fun setting(key: String, default: String): String = prop(key)?.trim()?.takeIf { it.isNotEmpty() } ?: default
+
+// Release version. The release workflow sets POKYH_VERSION_NAME from the GitHub release tag
+// (v2.0.1 -> 2.0.1), so the APK always carries the version the in-app updater compares that tag
+// against. The fallback is for local builds; keep it at the latest release. versionCode is
+// derived so it can't be forgotten (2.0.1 -> 20001); it has to stay above the Flutter app's
+// versionCode 1.
+val appVersionName = setting("POKYH_VERSION_NAME", "2.2.0")
+val appVersionCode = Regex("""(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)""").matchEntire(appVersionName)
+    ?.groupValues?.drop(1)?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 3 }
+    ?.let { (major, minor, patch) ->
+        // Above 99 the next minor/major would get the same versionCode (2.1.100 == 2.2.0).
+        if (minor > 99 || patch > 99) {
+            throw GradleException("POKYH_VERSION_NAME \"$appVersionName\": minor and patch must be 0-99.")
+        }
+        major * 10_000 + minor * 100 + patch
+    }
+    ?: throw GradleException("POKYH_VERSION_NAME must look like 2.2.0 (X.Y.Z, no leading v), got \"$appVersionName\".")
+
+// Overridable so a build can point at a staging backend or a fork's releases.
+val backendUrl = setting("POKYH_BACKEND_URL", "https://api.pokyh.com").trimEnd('/')
+if (!backendUrl.startsWith("https://") && !backendUrl.startsWith("http://")) {
+    throw GradleException("POKYH_BACKEND_URL must start with https:// or http://, got \"$backendUrl\".")
+}
+// A typo here doesn't fail anywhere visible: the updater reads GitHub's 404 as "no release".
+val updateRepo = setting("POKYH_UPDATE_REPO", "bedchem/POKYH_ANDROID")
+if (!Regex("""[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+""").matches(updateRepo)) {
+    throw GradleException("POKYH_UPDATE_REPO must be owner/name, got \"$updateRepo\".")
 }
 
 android {
@@ -50,11 +73,11 @@ android {
 
         buildConfigField("String", "BACKEND_API_KEY", secret("POKYH_API_KEY"))
         buildConfigField("String", "BACKEND_SERVER_KEY", secret("POKYH_SERVER_KEY"))
-        buildConfigField("String", "BACKEND_BASE_URL", "\"https://api.pokyh.com\"")
+        buildConfigField("String", "BACKEND_BASE_URL", stringField(backendUrl))
         buildConfigField("String", "UNTIS_BASE_URL", "\"https://lbs-brixen.webuntis.com/WebUntis\"")
         buildConfigField("String", "UNTIS_SCHOOL", "\"lbs-brixen\"")
         // GitHub repo whose latest release the in-app updater checks (core/update/AppUpdater).
-        buildConfigField("String", "UPDATE_REPO", "\"bedchem/POKYH_ANDROID\"")
+        buildConfigField("String", "UPDATE_REPO", stringField(updateRepo))
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -152,4 +175,6 @@ dependencies {
 
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
+
+    testImplementation(libs.junit)
 }

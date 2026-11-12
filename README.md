@@ -40,6 +40,57 @@ POKYH needs Android 8.0 or newer. Once installed, the app finds new versions on 
 1. Copy `local.properties.example` to `local.properties` and fill in the POKYH API keys.
 2. Run `./gradlew installDebug`, or open the project in Android Studio.
 
+## CI and releases
+
+Everything runs in `.github/workflows/android.yml`.
+
+**CI.** Every push to `main` and every pull request runs the unit tests and builds a debug APK.
+It needs no secrets. The debug APK is kept as a workflow artifact for 7 days.
+
+**Release.** Publish a GitHub release with a tag `vX.Y.Z` (minor and patch 0-99):
+
+```sh
+gh release create v2.3.0 -R bedchem/POKYH_ANDROID --title v2.3.0 --notes "..."
+```
+
+The workflow takes the version from the tag, runs the unit tests, builds and signs the APK,
+checks package, version and signature, and attaches `POKYH-X.Y.Z.apk` plus a `.sha256` file to
+the release. Installed apps pick it up from there. The release must not have any other `.apk`
+attached; the workflow refuses to add a second one.
+
+A manual run (Actions > Android > Run workflow, or
+`gh workflow run android.yml -R bedchem/POKYH_ANDROID -f version=2.3.0`) builds the same signed
+APK but only keeps it as a workflow artifact for 30 days.
+
+### Secrets and variables
+
+Only the release build uses them. The APK has to be signed with the key every earlier release
+was signed with (the maintainer's `~/.android/debug.keystore`), otherwise Android refuses the
+update. A release fails if any secret is missing; a manual run only warns about the two API keys.
+
+| Name | Kind | What goes in |
+| --- | --- | --- |
+| `POKYH_KEYSTORE_BASE64` | secret | The release keystore file, base64-encoded |
+| `POKYH_KEYSTORE_PASSWORD` | secret | Its store password |
+| `POKYH_KEY_ALIAS` | secret | Alias of the signing key in it |
+| `POKYH_KEY_PASSWORD` | secret | Password of that key |
+| `POKYH_API_KEY` | secret | The backend's `API_KEY` |
+| `POKYH_SERVER_KEY` | secret | The backend's `SERVER_KEY` |
+| `POKYH_SIGNING_CERT_SHA256` | variable, optional | SHA-256 of the signing certificate; when set, a release signed with any other certificate fails |
+
+```sh
+base64 -i <path/to/keystore> | gh secret set POKYH_KEYSTORE_BASE64 -R bedchem/POKYH_ANDROID
+gh secret set POKYH_KEY_ALIAS -R bedchem/POKYH_ANDROID --body '<key alias>'
+# These prompt for the value, so it stays out of the shell history:
+gh secret set POKYH_KEYSTORE_PASSWORD -R bedchem/POKYH_ANDROID
+gh secret set POKYH_KEY_PASSWORD -R bedchem/POKYH_ANDROID
+gh secret set POKYH_API_KEY -R bedchem/POKYH_ANDROID
+gh secret set POKYH_SERVER_KEY -R bedchem/POKYH_ANDROID
+gh variable set POKYH_SIGNING_CERT_SHA256 -R bedchem/POKYH_ANDROID --body '<sha256>'
+```
+The certificate SHA-256 of a published APK is printed by
+`apksigner verify --print-certs POKYH-X.Y.Z.apk` (and by every release run).
+
 ## Related
 
 - Website: [pokyh.com](https://pokyh.com)

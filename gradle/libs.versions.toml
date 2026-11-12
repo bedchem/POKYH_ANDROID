@@ -20,6 +20,7 @@ kotlinxSerialization = "1.11.0"
 kotlinxDatetime = "0.8.0"
 coil = "3.6.2"
 zxingEmbedded = "4.3.0"
+junit = "4.13.2"
 
 [libraries]
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -71,6 +72,8 @@ zxing-android-embedded = { group = "com.journeyapps", name = "zxing-android-embe
 
 glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glanceAppwidget" }
 glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glanceAppwidget" }
+
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

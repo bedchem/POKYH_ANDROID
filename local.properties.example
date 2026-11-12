@@ -12,3 +12,12 @@ POKYH_SERVER_KEY=
 # POKYH_KEYSTORE_PASSWORD=
 # POKYH_KEY_ALIAS=
 # POKYH_KEY_PASSWORD=
+
+## Release version (optional). The release workflow sets it from the release tag (v2.2.0 -> 2.2.0);
+## without it the version in app/build.gradle.kts is used. Format X.Y.Z, minor and patch 0-99.
+# POKYH_VERSION_NAME=
+
+## Backend and update source (optional). Defaults: https://api.pokyh.com and bedchem/POKYH_ANDROID.
+## POKYH_UPDATE_REPO is the GitHub repo (owner/name) whose latest release the in-app updater installs.
+# POKYH_BACKEND_URL=
+# POKYH_UPDATE_REPO=

@@ -1,0 +1,335 @@
+# CI: every push to main and every pull request runs the unit tests and builds a debug APK,
+# without any secrets.
+# Release: a published GitHub release gets the signed APK attached (the in-app updater installs
+# it from there); a manual run builds the same APK but only keeps it as a workflow artifact.
+name: Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build (X.Y.Z). The APK is kept as a workflow artifact, no release is touched.
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer push to a pull request replaces its running check; releases always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # compileSdk in app/build.gradle.kts. API 37 is published under this name in the SDK repository.
+  ANDROID_PLATFORM: platforms;android-37.0
+  # The build doesn't set buildToolsVersion, so AGP 9.1 uses its default, 36.0.0.
+  # apksigner and aapt2 for the checks below come from the same package.
+  ANDROID_BUILD_TOOLS: "36.0.0"
+  # The JDK gradle.properties points at locally. AGP 9.1 needs at least 17.
+  JAVA_VERSION: "21"
+  # applicationId in app/build.gradle.kts, the Flutter app's ID that every installed copy has.
+  # Android and the updater refuse an update with any other package, so a change has to stop here.
+  APPLICATION_ID: dev.plattnericus.project
+
+jobs:
+  ci:
+    name: Test and debug build
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      # A fresh SDK with exactly these packages, independent of what the runner image ships.
+      # AGP needs platform-tools as well; without it the build reports "Failed to find target
+      # with hash string 'android-37'" even though the platform is installed.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        env:
+          ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+        with:
+          packages: platform-tools ${{ env.ANDROID_PLATFORM }} build-tools;${{ env.ANDROID_BUILD_TOOLS }}
+          log-accepted-android-sdk-licenses: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-provider: basic # see the release job
+
+      # gradle.properties sets org.gradle.java.home to a local Windows path; -D on the command line
+      # takes precedence and points it at the JDK installed above. gradlew is checked in without
+      # its executable bit, hence bash. AGP 9 only creates unit tests for the debug build type.
+      # No secrets on purpose: this has to pass on forks and before any secret is set.
+      - name: Unit tests and debug APK
+        run: bash ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" :app:testDebugUnitTest :app:assembleDebug
+
+      - name: Keep debug APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: POKYH-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Release APK
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      apk: ${{ steps.version.outputs.apk }}
+    steps:
+      - name: Resolve version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT_NAME" = release ]; then raw=$RELEASE_TAG; else raw=$INPUT_VERSION; fi
+          version=${raw#v}
+          # Same rule as app/build.gradle.kts, checked here so a bad tag fails before a long build.
+          if [[ ! $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$ ]]; then
+            printf '::error::Version must be X.Y.Z with minor and patch 0-99, optionally with a leading v (v2.2.0). Got: %q\n' "$raw"
+            exit 1
+          fi
+          major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+          {
+            echo "version=$version"
+            echo "version_code=$((major * 10000 + minor * 100 + patch))"
+            echo "apk=POKYH-$version.apk"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $version (versionCode $((major * 10000 + minor * 100 + patch)))"
+
+      - name: Check secrets
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          POKYH_KEYSTORE_BASE64: ${{ secrets.POKYH_KEYSTORE_BASE64 }}
+          POKYH_KEYSTORE_PASSWORD: ${{ secrets.POKYH_KEYSTORE_PASSWORD }}
+          POKYH_KEY_ALIAS: ${{ secrets.POKYH_KEY_ALIAS }}
+          POKYH_KEY_PASSWORD: ${{ secrets.POKYH_KEY_PASSWORD }}
+          POKYH_API_KEY: ${{ secrets.POKYH_API_KEY }}
+          POKYH_SERVER_KEY: ${{ secrets.POKYH_SERVER_KEY }}
+        run: |
+          # Without the signing secrets Gradle falls back to ~/.android/debug.keystore. A runner
+          # has none, and an APK signed with any other key can't update an installed app.
+          failed=0
+          for name in POKYH_KEYSTORE_BASE64 POKYH_KEYSTORE_PASSWORD POKYH_KEY_ALIAS POKYH_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set. See 'Secrets and variables' in README.md."
+              failed=1
+            fi
+          done
+          for name in POKYH_API_KEY POKYH_SERVER_KEY; do
+            if [ -z "${!name}" ]; then
+              if [ "$EVENT_NAME" = release ]; then
+                echo "::error::Secret $name is not set. The app can't reach the backend without it."
+                failed=1
+              else
+                echo "::warning::Secret $name is not set. This test build can't reach the backend."
+              fi
+            fi
+          done
+          exit "$failed"
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK # same as in the ci job
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        env:
+          ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+        with:
+          packages: platform-tools ${{ env.ANDROID_PLATFORM }} build-tools;${{ env.ANDROID_BUILD_TOOLS }}
+          log-accepted-android-sdk-licenses: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          # The MIT-licensed provider. The default one is proprietary, and its code would run
+          # inside the Gradle build that sees the signing secrets.
+          cache-provider: basic
+
+      - name: Decode keystore
+        env:
+          POKYH_KEYSTORE_BASE64: ${{ secrets.POKYH_KEYSTORE_BASE64 }}
+          POKYH_KEYSTORE_PASSWORD: ${{ secrets.POKYH_KEYSTORE_PASSWORD }}
+          POKYH_KEY_ALIAS: ${{ secrets.POKYH_KEY_ALIAS }}
+        run: |
+          umask 077
+          keystore="$RUNNER_TEMP/pokyh-release.keystore"
+          if ! printf '%s' "$POKYH_KEYSTORE_BASE64" | base64 --decode > "$keystore"; then
+            echo "::error::POKYH_KEYSTORE_BASE64 is not valid base64."
+            exit 1
+          fi
+          # Fails early and readably on a wrong store password or alias.
+          if ! keytool -list -keystore "$keystore" -storepass:env POKYH_KEYSTORE_PASSWORD -alias "$POKYH_KEY_ALIAS" > /dev/null; then
+            echo "::error::The keystore can't be opened with POKYH_KEYSTORE_PASSWORD or has no key POKYH_KEY_ALIAS."
+            exit 1
+          fi
+          echo "POKYH_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+
+      # -D and bash as in the ci job. The unit tests need no secrets.
+      - name: Unit tests
+        env:
+          POKYH_VERSION_NAME: ${{ steps.version.outputs.version }}
+        run: bash ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" :app:testDebugUnitTest
+
+      - name: Build release APK
+        env:
+          POKYH_VERSION_NAME: ${{ steps.version.outputs.version }}
+          POKYH_KEYSTORE_PASSWORD: ${{ secrets.POKYH_KEYSTORE_PASSWORD }}
+          POKYH_KEY_ALIAS: ${{ secrets.POKYH_KEY_ALIAS }}
+          POKYH_KEY_PASSWORD: ${{ secrets.POKYH_KEY_PASSWORD }}
+          POKYH_API_KEY: ${{ secrets.POKYH_API_KEY }}
+          POKYH_SERVER_KEY: ${{ secrets.POKYH_SERVER_KEY }}
+        run: bash ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" :app:assembleRelease
+
+      - name: Verify APK
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          APK_NAME: ${{ steps.version.outputs.apk }}
+          # Optional repository variable: the SHA-256 of the certificate every published APK is
+          # signed with. When set, an APK signed with anything else fails here.
+          EXPECTED_CERT_SHA256: ${{ vars.POKYH_SIGNING_CERT_SHA256 }}
+        run: |
+          shopt -s nullglob
+          built=(app/build/outputs/apk/release/*.apk)
+          if [ "${#built[@]}" -ne 1 ]; then
+            echo "::error::Expected one APK in app/build/outputs/apk/release, found ${#built[@]}."
+            exit 1
+          fi
+          mkdir -p dist
+          apk="dist/$APK_NAME"
+          cp "${built[0]}" "$apk"
+          tools="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS"
+
+          "$tools/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/apksigner.txt"
+          mapfile -t certs < <(sed -n 's/^Signer #[0-9]* certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apksigner.txt")
+          if [ "${#certs[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one signer, found ${#certs[@]}."
+            exit 1
+          fi
+          cert=${certs[0]}
+
+          badging=$("$tools/aapt2" dump badging "$apk")
+          re="^package: name='([^']*)' versionCode='([^']*)' versionName='([^']*)'"
+          if [[ ! $(head -n 1 <<< "$badging") =~ $re ]]; then
+            echo "::error::aapt2 printed no package line."
+            exit 1
+          fi
+          package=${BASH_REMATCH[1]} code=${BASH_REMATCH[2]} name=${BASH_REMATCH[3]}
+          failed=0
+          [ "$package" = "$APPLICATION_ID" ] || { echo "::error::Package is $package, expected $APPLICATION_ID."; failed=1; }
+          [ "$name" = "$VERSION" ] || { echo "::error::versionName is $name, expected $VERSION."; failed=1; }
+          [ "$code" = "$VERSION_CODE" ] || { echo "::error::versionCode is $code, expected $VERSION_CODE."; failed=1; }
+
+          expected=$(tr -d ' :' <<< "$EXPECTED_CERT_SHA256" | tr 'A-F' 'a-f')
+          if [ -n "$expected" ]; then
+            [ "$cert" = "$expected" ] || { echo "::error::Signed with certificate $cert, expected $expected (POKYH_SIGNING_CERT_SHA256)."; failed=1; }
+          elif [ "$EVENT_NAME" = release ]; then
+            echo "::warning::Repository variable POKYH_SIGNING_CERT_SHA256 is not set, so the signing certificate was not compared."
+          fi
+          [ "$failed" -eq 0 ] || exit 1
+
+          (cd dist && sha256sum "$APK_NAME" > "$APK_NAME.sha256")
+          size=$(stat -c %s "$apk")
+          echo "Signing certificate SHA-256: $cert"
+          {
+            echo "### $APK_NAME"
+            echo
+            echo "| | Value |"
+            echo "| --- | --- |"
+            echo "| Package | \`$package\` |"
+            echo "| versionName / versionCode | $name / $code |"
+            echo "| Size | $size bytes |"
+            echo "| APK SHA-256 | \`$(cut -d ' ' -f 1 "dist/$APK_NAME.sha256")\` |"
+            echo "| Signing certificate SHA-256 | \`$cert\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep APK as artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: POKYH-${{ steps.version.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/pokyh-release.keystore"
+
+  publish:
+    name: Attach APK to release
+    needs: release
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch APK
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: POKYH-${{ needs.release.outputs.version }}
+          path: dist
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+          APK_NAME: ${{ needs.release.outputs.apk }}
+        run: |
+          # The updater installs whichever .apk on the release changed last, so a second one
+          # would compete with this one. Re-runs replace the same name (--clobber).
+          apks() {
+            gh release view "$TAG" --json assets \
+              --jq '.assets[].name | select(ascii_downcase | endswith(".apk"))'
+          }
+          names=$(apks)
+          others=$(grep -vxF "$APK_NAME" <<< "$names" || true)
+          if [ -n "$others" ]; then
+            echo "::error::The release already has other APKs. Delete them (gh release delete-asset) and re-run this job:"
+            while IFS= read -r name; do echo "  - $name"; done <<< "$others"
+            exit 1
+          fi
+          gh release upload "$TAG" "dist/$APK_NAME" "dist/$APK_NAME.sha256" --clobber
+          if [ "$(apks)" != "$APK_NAME" ]; then
+            echo "::error::After the upload the release should have exactly one APK, $APK_NAME."
+            exit 1
+          fi
+          echo "Attached $APK_NAME and $APK_NAME.sha256 to $TAG."

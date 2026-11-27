@@ -35,7 +35,7 @@ fun setting(key: String, default: String): String = prop(key)?.trim()?.takeIf { 
 // against. The fallback is for local builds; keep it at the latest release. versionCode is
 // derived so it can't be forgotten (2.0.1 -> 20001); it has to stay above the Flutter app's
 // versionCode 1.
-val appVersionName = setting("POKYH_VERSION_NAME", "2.2.0")
+val appVersionName = setting("POKYH_VERSION_NAME", "2.2.2")
 val appVersionCode = Regex("""(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)""").matchEntire(appVersionName)
     ?.groupValues?.drop(1)?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 3 }
     ?.let { (major, minor, patch) ->

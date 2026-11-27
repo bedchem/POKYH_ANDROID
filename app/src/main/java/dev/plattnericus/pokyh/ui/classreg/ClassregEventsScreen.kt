@@ -53,6 +53,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.components.WebPickMenu
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
 
 /** Klassenbuch — entries for the selected school year, newest `createDate` first, as one
  * grouped list. */
@@ -67,35 +70,29 @@ fun ClassregEventsScreen(onNavigateBack: () -> Unit = {}, viewModel: ClassregVie
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
-        topBar = {
-            PokyhTopBar(
+        topBar = { PokyhTopBar(title = null, nav = TopBarNav.Back(onNavigateBack)) },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = PokyhSpacing.screenH)
+                .padding(bottom = 80.dp),
+        ) {
+            // The web's page header: "Klassenbuch", the year's summary, the year picker.
+            WebPageHeader(
                 title = strings().tasks.classreg,
-                eyebrow = strings().common.schoolYear(year),
-                nav = TopBarNav.Back(onNavigateBack),
+                subtitle = if (!loading && error == null) classregSummary(events) else strings().common.schoolYear(year),
+                modifier = Modifier.fadeIn(),
                 actions = {
-                    Box(modifier = Modifier.slideInTrailing()) {
-                        PokyhMenuButton(
-                            label = "$year/${(year + 1) % 100}",
-                            expanded = yearMenuExpanded,
-                            onClick = { yearMenuExpanded = true },
-                        )
-                        DropdownMenu(expanded = yearMenuExpanded, onDismissRequest = { yearMenuExpanded = false }) {
-                            viewModel.availableYears.forEach { y ->
-                                DropdownMenuItem(
-                                    text = { Text("$y/${(y + 1) % 100}", style = PokyhType.body) },
-                                    onClick = {
-                                        yearMenuExpanded = false
-                                        viewModel.selectYear(y)
-                                    },
-                                )
-                            }
-                        }
-                    }
+                    WebPickMenu(
+                        value = year,
+                        options = viewModel.availableYears.map { y -> y to "$y/${(y + 1) % 100}" },
+                        onChange = viewModel::selectYear,
+                    )
                 },
             )
-        },
-    ) { innerPadding ->
-        Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
                 loading -> ListSkeleton()
                 error != null -> ErrorStateView(message = error!!, onRetry = viewModel::retry)
@@ -104,14 +101,7 @@ fun ClassregEventsScreen(onNavigateBack: () -> Unit = {}, viewModel: ClassregVie
                     title = strings().tasks.classregEmpty,
                     subtitle = strings().tasks.classregEmptyText,
                 )
-                else -> Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = PokyhSpacing.screenH)
-                        .padding(bottom = PokyhSpacing.xxxl),
-                    verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
-                ) {
+                else -> Column(verticalArrangement = Arrangement.spacedBy(36.dp)) {
                     ClassregStats(events, Modifier.fadeIn())
                     ClassregList(events)
                 }
@@ -120,20 +110,38 @@ fun ClassregEventsScreen(onNavigateBack: () -> Unit = {}, viewModel: ClassregVie
     }
 }
 
+/** "12 Einträge · 5 Fächer · Stand 3. November", as the web's subtitle. */
+private fun classregSummary(events: List<ClassregEvent>): String {
+    val lang = dev.plattnericus.pokyh.core.i18n.I18n.lang.value
+    val n = events.size
+    val subjects = events.map { it.subjectName }.filter { it.isNotBlank() }.toSet().size
+    val latest = events.maxOfOrNull { it.createDate } ?: 0
+    val entries = when (lang) {
+        dev.plattnericus.pokyh.core.i18n.Lang.De -> if (n == 1) "1 Eintrag" else "$n Einträge"
+        dev.plattnericus.pokyh.core.i18n.Lang.It -> if (n == 1) "1 annotazione" else "$n annotazioni"
+        dev.plattnericus.pokyh.core.i18n.Lang.En -> if (n == 1) "1 entry" else "$n entries"
+    }
+    val subj = when (lang) {
+        dev.plattnericus.pokyh.core.i18n.Lang.De -> if (subjects == 1) "1 Fach" else "$subjects Fächer"
+        dev.plattnericus.pokyh.core.i18n.Lang.It -> if (subjects == 1) "1 materia" else "$subjects materie"
+        dev.plattnericus.pokyh.core.i18n.Lang.En -> if (subjects == 1) "1 subject" else "$subjects subjects"
+    }
+    val asOf = if (latest > 0) {
+        val d = classregDate(latest, if (lang == dev.plattnericus.pokyh.core.i18n.Lang.De) "d. MMMM" else "d MMMM")
+        when (lang) {
+            dev.plattnericus.pokyh.core.i18n.Lang.De -> " · Stand $d"
+            dev.plattnericus.pokyh.core.i18n.Lang.It -> " · Aggiornato al $d"
+            dev.plattnericus.pokyh.core.i18n.Lang.En -> " · As of $d"
+        }
+    } else ""
+    return "$entries · $subj$asOf"
+}
+
 private enum class ClassregRange { All, Month, Months3 }
 private enum class ClassregSort { DateDesc, DateAsc, Subject, Category }
 
-/** The category's tone, as on the web (components/class/ClassregEntry `categoryTone`). */
 @Composable
-private fun categoryTone(category: String, reason: String = ""): dev.plattnericus.pokyh.ui.theme.DecorativeTone {
-    val l = "$category $reason".lowercase()
-    val dark = PokyhTheme.colors.isDark
-    return when {
-        Regex("täuschung|betrug|disziplin|discipl|verweis|richiamo|cheat").containsMatchIn(l) -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.blush(dark)
-        "vermerk" in l || "nota" in l || "note" in l -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.butter(dark)
-        else -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.periwinkle(dark)
-    }
-}
+private fun categoryTone(category: String, reason: String = "") = classregTone(category, reason)
 
 private fun classregDate(n: Int, pattern: String): String = runCatching {
     val l = dev.plattnericus.pokyh.core.i18n.I18n.lang.value
@@ -158,18 +166,18 @@ private fun ClassregStats(events: List<ClassregEvent>, modifier: Modifier = Modi
         if (top.isNotEmpty()) add(t.topCategory to top)
     }
     Column(
-        modifier.fillMaxWidth().background(colors.card, PokyhShapes.xl).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier.fillMaxWidth().background(colors.card, dev.plattnericus.pokyh.ui.theme.SmoothCornerShape(24.dp)).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         figures.chunked(2).forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 row.forEachIndexed { i, (label, value) ->
                     Column(Modifier.weight(1f)) {
-                        Text(label, style = PokyhType.footnote.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = colors.textSecondary)
+                        Text(label, style = PokyhType.footnote.copy(fontSize = 13.5.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = colors.textSecondary)
                         val small = figures.indexOf(label to value) == 3
                         Text(
                             value,
-                            style = if (small) PokyhType.title2.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold) else PokyhType.largeTitle.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold),
+                            style = if (small) PokyhType.title2.copy(fontSize = 22.sp, lineHeight = 30.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold, letterSpacing = (-0.04).em) else PokyhType.largeTitle.copy(fontSize = 34.sp, lineHeight = 34.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold, letterSpacing = (-0.04).em),
                             color = colors.textPrimary,
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -190,8 +198,8 @@ private fun ClassregStats(events: List<ClassregEvent>, modifier: Modifier = Modi
                 categories.forEach { (name, n, e) ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Box(Modifier.size(8.dp).background(categoryTone(if (name == noCategory) "" else name, e.eventReasonName).ink, PokyhShapes.pill))
-                        Text(name, style = PokyhType.footnote, color = colors.textSecondary)
-                        Text("$n", style = PokyhType.footnote.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = colors.textPrimary)
+                        Text(name, style = PokyhType.footnote.copy(fontSize = 13.sp), color = colors.textSecondary)
+                        Text("$n", style = PokyhType.footnote.copy(fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = colors.textPrimary)
                     }
                 }
             }
@@ -213,7 +221,7 @@ private fun ClassregList(events: List<ClassregEvent>) {
             ClassregRange.Month -> java.time.LocalDate.now().minusMonths(1).let { it.year * 10000 + it.monthValue * 100 + it.dayOfMonth }
             ClassregRange.Months3 -> java.time.LocalDate.now().minusMonths(3).let { it.year * 10000 + it.monthValue * 100 + it.dayOfMonth }
         }
-        val list = events.filter { it.createDate >= cutoff }.let { l -> if (sort == ClassregSort.DateAsc) l.sortedBy { it.createDate } else l.sortedByDescending { it.createDate } }
+        val list = events.filter { it.createDate >= cutoff }.let { l -> if (sort == ClassregSort.DateAsc) l.sortedWith(compareBy<ClassregEvent>({ it.createDate }, { it.createTime })) else l.sortedWith(compareByDescending<ClassregEvent> { it.createDate }.thenByDescending { it.createTime }) }
         val grouped = list.groupBy {
             when (sort) {
                 ClassregSort.Subject -> it.subjectName.ifBlank { "-" }
@@ -228,97 +236,38 @@ private fun ClassregList(events: List<ClassregEvent>) {
             Triple(key, title, items)
         }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
-            dev.plattnericus.pokyh.ui.components.PokyhSegmentedControl(
-                options = ClassregRange.entries,
-                selected = range,
-                onSelect = { range = it },
-                label = { when (it) { ClassregRange.All -> t.filterAll; ClassregRange.Month -> t.filter1m; ClassregRange.Months3 -> t.filter3m } },
-                modifier = Modifier.weight(1f),
+    Column(verticalArrangement = Arrangement.spacedBy(36.dp)) {
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            dev.plattnericus.pokyh.ui.components.WebSegmented(
+                value = range,
+                options = listOf(ClassregRange.All to t.filterAll, ClassregRange.Month to t.filter1m, ClassregRange.Months3 to t.filter3m),
+                onChange = { range = it },
             )
-            Box {
-                PokyhMenuButton(label = when (sort) { ClassregSort.DateDesc -> t.sortDateDesc; ClassregSort.DateAsc -> t.sortDateAsc; ClassregSort.Subject -> t.sortSubject; ClassregSort.Category -> t.sortCategory }, expanded = sortOpen, onClick = { sortOpen = true })
-                DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {
-                    ClassregSort.entries.forEach { s ->
-                        DropdownMenuItem(
-                            text = { Text(when (s) { ClassregSort.DateDesc -> t.sortDateDesc; ClassregSort.DateAsc -> t.sortDateAsc; ClassregSort.Subject -> t.sortSubject; ClassregSort.Category -> t.sortCategory }, style = PokyhType.body) },
-                            onClick = { sortOpen = false; sort = s },
-                        )
-                    }
-                }
-            }
+            WebPickMenu(
+                value = sort,
+                options = listOf(ClassregSort.DateDesc to t.sortDateDesc, ClassregSort.DateAsc to t.sortDateAsc, ClassregSort.Subject to t.sortSubject, ClassregSort.Category to t.sortCategory),
+                onChange = { sort = it },
+                icon = PokyhIcons.sort,
+            )
         }
         if (groups.isEmpty()) {
             Text(t.noEntriesRange, style = PokyhType.callout, color = PokyhTheme.colors.textTertiary, modifier = Modifier.padding(vertical = PokyhSpacing.lg))
         }
         groups.forEach { (key, title, items) ->
             androidx.compose.runtime.key(sort, key) {
-                dev.plattnericus.pokyh.ui.components.PokyhSection(
+                WebSection(
                     title = title,
-                    trailing = { dev.plattnericus.pokyh.ui.components.PokyhLabel("${items.size}") },
+                    modifier = Modifier.fadeIn(),
+                    action = { Text("${items.size}", style = PokyhType.callout.copy(fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = PokyhTheme.colors.textSecondary) },
                 ) {
-                    PokyhListCard(items = items, modifier = Modifier.fadeIn()) { event -> ClassregRow(event) }
+                    ClassregEntryList(items)
                 }
             }
         }
     }
 }
 
-/** Category tint: only the two categories that actually mean "problem" get a status color; the
- * rest stay neutral, so a page of ordinary entries isn't a page of red and orange. */
-private fun accentFor(event: ClassregEvent): Color {
-    val l = event.categoryName.lowercase()
-    return when {
-        l.contains("täuschung") || l.contains("betrug") -> Brand.danger
-        l.contains("vermerk") -> Brand.warning
-        else -> Brand.accent
-    }
-}
-
-@Composable
-private fun ClassregRow(event: ClassregEvent) {
-    val colors = PokyhTheme.colors
-    val accent = accentFor(event)
-
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(PokyhSpacing.card),
-        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.iconText),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Text(
-            text = Fmt.dateShort(event.createDate),
-            style = PokyhType.caption,
-            color = colors.textTertiary,
-            modifier = Modifier.width(52.dp),
-        )
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xs)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-            ) {
-                if (event.subjectName.isNotEmpty()) {
-                    Text(
-                        text = event.subjectName,
-                        style = PokyhType.headline,
-                        color = colors.textPrimary,
-                        modifier = Modifier.weight(1f),
-                    )
-                } else {
-                    Box(modifier = Modifier.weight(1f))
-                }
-                if (event.categoryName.isNotEmpty()) {
-                    TagChip(text = event.categoryName, color = accent)
-                }
-            }
-            val bodyText = event.text.ifEmpty { event.eventReasonName }
-            if (bodyText.isNotEmpty()) {
-                Text(bodyText, style = PokyhType.callout, color = colors.textSecondary)
-            }
-            if (event.creatorName.isNotEmpty()) {
-                Text(event.creatorName, style = PokyhType.caption2, color = colors.textTertiary)
-            }
-        }
-    }
-}

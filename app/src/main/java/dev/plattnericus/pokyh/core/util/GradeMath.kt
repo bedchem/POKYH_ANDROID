@@ -11,6 +11,11 @@ import kotlin.math.round
  */
 object GradeMath {
 
+    /** The school's marks (core/util/GradeScale.kt): 1 to 10 in Italy, where 4 is the lowest mark given in practice. */
+    private val scale get() = GradeScales.current
+    private val highest get() = scale.max
+    private val lowest get() = if (scale.kind == GradeScale.Kind.It10) 4.0 else scale.min
+
     fun round2(v: Double): Double = round(v * 100) / 100
 
     fun averageOf(values: List<Double>): Double =
@@ -21,7 +26,7 @@ object GradeMath {
         val normalized = raw.replace(',', '.').trim()
         if (normalized.isEmpty()) return null
         val parsed = normalized.toDoubleOrNull() ?: return null
-        if (parsed < 1 || parsed > 10) return null
+        if (parsed < scale.min || parsed > scale.max) return null
         return round2(parsed)
     }
 
@@ -31,7 +36,7 @@ object GradeMath {
         val factor = 1 / gradeStep
         val scaled = value * factor
         val rounded = if (up) ceil(scaled - 1e-9) else floor(scaled + 1e-9)
-        return round2(minOf(10.0, maxOf(4.0, rounded / factor)))
+        return round2(minOf(highest, maxOf(lowest, rounded / factor)))
     }
 
     enum class TargetStatus { REACHED, REACHABLE, IMPOSSIBLE }
@@ -58,19 +63,19 @@ object GradeMath {
             for (k in 1..50) {
                 val kk = k.toDouble()
                 val perGrade = (target * (n + kk) - sum) / kk
-                if (perGrade <= 10) {
+                if (perGrade <= highest) {
                     return TargetResult(
                         target = target,
                         status = TargetStatus.REACHABLE,
                         count = k,
-                        needed = roundToGradeStep(maxOf(4.0, perGrade), up = true),
+                        needed = roundToGradeStep(maxOf(lowest, perGrade), up = true),
                     )
                 }
             }
             return TargetResult(target, TargetStatus.IMPOSSIBLE, 0, 0.0)
         } else {
-            if (target <= 4 + 1e-6) return TargetResult(target, TargetStatus.IMPOSSIBLE, 0, 0.0)
-            val kMin = ceil((sum - target * n) / (target - 4) - 1e-9).toInt()
+            if (target <= lowest + 1e-6) return TargetResult(target, TargetStatus.IMPOSSIBLE, 0, 0.0)
+            val kMin = ceil((sum - target * n) / (target - lowest) - 1e-9).toInt()
             if (kMin <= 0 || kMin > 50) return TargetResult(target, TargetStatus.IMPOSSIBLE, 0, 0.0)
             val kMinD = kMin.toDouble()
             val perGrade = (target * (n + kMinD) - sum) / kMinD
@@ -78,7 +83,7 @@ object GradeMath {
                 target = target,
                 status = TargetStatus.REACHABLE,
                 count = kMin,
-                needed = roundToGradeStep(maxOf(4.0, perGrade), up = false),
+                needed = roundToGradeStep(maxOf(lowest, perGrade), up = false),
             )
         }
     }

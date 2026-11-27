@@ -891,19 +891,22 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                     .filter { it["current"]["status"].string?.let { s -> s != "REGULAR" } == true }
                     .mapNotNull { it["current"]["displayName"].string }
                     .filter { it.isNotEmpty() }
+                    .distinct()
+                // Each name once: a teacher who is in the lesson anyway and also stands in for the
+                // absent one comes twice in WebUntis' list ("Kasseroler Katrin, Kasseroler Katrin").
                 val addedTeachers = added(pos1)
                 val addedSubjects = added(pos2)
                 val addedRooms = added(pos3)
-                val activeTeachers = pos1.mapNotNull { it["current"]["displayName"].string }.filter { it.isNotEmpty() }
+                val activeTeachers = pos1.mapNotNull { it["current"]["displayName"].string }.filter { it.isNotEmpty() }.distinct()
                 val activeTeachersLong = pos1.mapNotNull { it["current"]["longName"].string ?: it["current"]["displayName"].string }
-                    .filter { it.isNotEmpty() }
-                val removedTeachers = pos1.mapNotNull { it["removed"]["displayName"].string }.filter { it.isNotEmpty() }
+                    .filter { it.isNotEmpty() }.distinct()
+                val removedTeachers = pos1.mapNotNull { it["removed"]["displayName"].string }.filter { it.isNotEmpty() }.distinct()
                 val removedTeachersLong = pos1.mapNotNull { it["removed"]["longName"].string ?: it["removed"]["displayName"].string }
-                    .filter { it.isNotEmpty() }
+                    .filter { it.isNotEmpty() }.distinct()
                 val activeSub = pos2.firstOrNull { it["current"].exists }?.get("current")
                 val removedSub = pos2.firstOrNull { it["removed"].exists }?.get("removed")
-                val activeRooms = pos3.mapNotNull { it["current"]["displayName"].string }.filter { it.isNotEmpty() }
-                val removedRooms = pos3.mapNotNull { it["removed"]["displayName"].string }.filter { it.isNotEmpty() }
+                val activeRooms = pos3.mapNotNull { it["current"]["displayName"].string }.filter { it.isNotEmpty() }.distinct()
+                val removedRooms = pos3.mapNotNull { it["removed"]["displayName"].string }.filter { it.isNotEmpty() }.distinct()
 
                 val type = ge["type"].string ?: ""
                 val status = ge["status"].string ?: ""
@@ -960,6 +963,21 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     }
 
     // ── Noten / Grades ────────────────────────────────────────────────────────
+
+    /**
+     * The last day (YYYYMMDD) of the school year starting in [schoolYear] (null: the current one),
+     * as WebUntis dates it; null when it can't be read. The grade scale reads the country from it
+     * (an Italian school year ends by 20 June, core/util/GradeScale.kt).
+     */
+    suspend fun schoolYearEnd(session: UserSession, schoolYear: Int?): Int? = runCatching {
+        if (schoolYear == null) {
+            rpcFull("getCurrentSchoolyear", session, "sy")["result"]["endDate"].int?.let { return@runCatching it }
+        }
+        val year = schoolYear ?: dev.plattnericus.pokyh.core.util.SchoolDates.currentSchoolYear
+        rpcFull("getSchoolyears", session, "sy2")["result"].array
+            .firstOrNull { (it["startDate"].int ?: 0) / 10000 == year }
+            ?.get("endDate")?.int
+    }.getOrNull()
 
     /** `schoolYear` null = the current school year (resolved via getCurrentSchoolyear). */
     suspend fun grades(session: UserSession, studentId: Int, schoolYear: Int? = null): List<SubjectGrades> {
@@ -1739,6 +1757,8 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
                 eventReasonName = r["eventReasonName"].string ?: "",
                 categoryName = r["categoryName"].string ?: "",
                 text = r["text"].string ?: "",
+                createTime = r["createTime"].int ?: 0,
+                elementName = r["elementName"].string ?: "",
             )
         }
     }
@@ -1909,9 +1929,10 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
     }
 
     /**
-     * Whether WebUntis lets this account report (and so excuse) absences itself: its own
-     * age-aware flag `showCreateAbsence` on the absence list, and without it a write right on
-     * absences in the app data. The web frontend's `canReportAbsence`.
+     * Whether WebUntis lets this account report (and so excuse) absences itself: only its own
+     * age-aware flag `showCreateAbsence` on the absence list (true for guardians and students
+     * of age), closed when it can't be read — as the backend's /permissions decides it for the
+     * web. The write rights in the app data are no stand-in: minors hold them too.
      */
     suspend fun canReportAbsence(session: UserSession): Boolean {
         if (session.bearerToken.isEmpty()) return false
@@ -1919,14 +1940,11 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
         val day = today.year * 10000 + today.monthNumber * 100 + today.dayOfMonth
         val url = "${session.schoolRef.base}${Config.Routes.absences}?studentId=${session.studentId}" +
             "&startDate=$day&endDate=$day&excuseStatusId=-1"
-        val flag = runCatching {
+        return runCatching {
             val (body, resp) = get(url, session, timeoutMs = 12_000)
             if (resp.code != 200 || body.firstOrNull() == '<') null
             else JsonDyn.parse(body)["data"]["showCreateAbsence"].bool
-        }.getOrNull()
-        if (flag != null) return flag
-        val raw = runCatching { fetchAppData(session)?.raw?.toString() }.getOrNull() ?: return false
-        return AbsenceWriteRight.containsMatchIn(raw.uppercase())
+        }.getOrNull() == true
     }
 
     /**
@@ -2006,6 +2024,24 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             }
         }
         failure?.let { throw AppError(it) }
+    }
+
+    /**
+     * "Löschen" for absences the account reported by mistake, as the official absence list does it
+     * (deleteStudentAbsence): DELETE /api/classreg/absences/students with their ids. The screen
+     * offers it only for upcoming absences that are not excused; WebUntis decides as well.
+     */
+    suspend fun deleteAbsences(session: UserSession, absenceIds: List<Int>) {
+        val reply = classicWrite(
+            session,
+            Config.Routes.absences,
+            "DELETE",
+            JSONObject().put("absenceIds", JSONArray(absenceIds.take(50))),
+        )
+        if (reply.expired) throw AppError.sessionExpired
+        if (!reply.ok || reply.json["errors"].array.isNotEmpty()) {
+            throw AppError(untisError(reply.json) ?: dev.plattnericus.pokyh.core.i18n.I18n.s.absences.delFailed)
+        }
     }
 
     // ── Entschuldigen per Nachricht an die Klassenlehrer ─────────────────────
@@ -2537,12 +2573,6 @@ class UntisClient @Inject constructor(private val okHttpClient: OkHttpClient) {
             "Notiz der Lehrkraft" to "notesAll",
             "Notiz" to "lessonInfo",
             "Vertretungstext" to "substText",
-        )
-
-        /** A write right on absences in the app data ("STUDABS_REPORT:RW"); no rights part means all. */
-        val AbsenceWriteRight = Regex(
-            "\"(?:STUDABS_REPORT|SELF_ABSENCEREASON|WRITE_OWN_ABSENCE|WRITE_STUD_ABSENCE|STUDENT_ABSENCE|SELF_ABSENCE)" +
-                "(?::[A-Z]*[WC][A-Z]*)?\"",
         )
 
         val EmailPattern = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")

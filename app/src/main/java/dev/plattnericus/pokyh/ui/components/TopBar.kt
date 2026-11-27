@@ -14,6 +14,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import dev.plattnericus.pokyh.ui.theme.SmoothCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -64,6 +69,8 @@ fun PokyhTopBar(
     modifier: Modifier = Modifier,
     eyebrow: String? = null,
     nav: TopBarNav = TopBarNav.None,
+    /** The actions fill the row themselves (a tab root's search field): no spacer before them. */
+    fillActions: Boolean = false,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = PokyhTheme.colors
@@ -73,14 +80,15 @@ fun PokyhTopBar(
             .padding(
                 start = PokyhSpacing.screenH,
                 end = PokyhSpacing.screenH,
-                top = PokyhSpacing.sm,
-                bottom = PokyhSpacing.md,
+                top = if (fillActions) 0.dp else PokyhSpacing.sm,
+                bottom = if (title != null) 28.dp else PokyhSpacing.md,
             ),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            // A tab root's row is the web's top bar: 64dp, its controls 10dp apart.
+            modifier = if (fillActions) Modifier.fillMaxWidth().height(64.dp) else Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(if (fillActions) 10.dp else PokyhSpacing.sm),
         ) {
             when (nav) {
                 is TopBarNav.None -> Unit
@@ -98,24 +106,61 @@ fun PokyhTopBar(
                     modifier = Modifier.offset(x = -PokyhSpacing.md),
                 )
             }
-            Spacer(Modifier.weight(1f))
+            if (!fillActions) Spacer(Modifier.weight(1f))
             actions()
         }
 
         if (title != null) {
-            Spacer(Modifier.size(PokyhSpacing.md))
-            if (eyebrow != null) {
-                PokyhLabel(eyebrow)
-                Spacer(Modifier.size(PokyhSpacing.xs))
-            }
+            // The web's page header (components/app/Page.tsx, PageHeader): the title at 34px,
+            // extra bold and tight, the subtitle under it in the second ink.
+            Spacer(Modifier.size(16.dp))
             Text(
                 text = title,
-                style = PokyhType.largeTitle,
+                style = PokyhType.largeTitle.copy(fontSize = 34.sp, lineHeight = 36.sp, letterSpacing = (-0.05).em),
                 color = colors.textPrimary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (eyebrow != null) {
+                Spacer(Modifier.size(8.dp))
+                Text(eyebrow, style = PokyhType.body.copy(fontSize = 15.sp, lineHeight = 22.sp), color = colors.textSecondary)
+            }
         }
+    }
+}
+
+/** The web's top-bar controls (shell.module.css, `.iconBtn`): 46dp circles in the surface tone. */
+val TopBarControlSize = 46.dp
+
+/**
+ * The web's search field in the top bar (`.search`): as wide as the row allows up to 560dp, 46dp
+ * tall, the surface tone, the magnifier and "Suchen" in the quiet ink. Opens the search.
+ */
+@Composable
+fun RowScope.TopBarSearchField(onClick: () -> Unit) {
+    val colors = PokyhTheme.colors
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .weight(1f)
+            .widthIn(max = 560.dp)
+            .height(TopBarControlSize)
+            .clip(SmoothCornerShape(22.dp))
+            .background(colors.card)
+            .pressHighlight(interaction, SmoothCornerShape(22.dp))
+            .clickable(interactionSource = interaction, indication = null, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            .padding(start = 16.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        androidx.compose.material3.Icon(PokyhIcons.search, contentDescription = null, tint = colors.textTertiary, modifier = Modifier.size(19.dp))
+        Text(
+            dev.plattnericus.pokyh.core.i18n.strings().search.title,
+            style = PokyhType.body.copy(fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight(550)),
+            color = colors.textTertiary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -134,21 +179,18 @@ fun RowScope.TabRootActions(
     onMessages: () -> Unit,
     onProfile: () -> Unit,
     unreadMessages: Int = 0,
-    /** Where the bell's items and the account menu lead; with it, the bell sits beside the
-     * messages and the picture opens the account menu (as on the web). */
+    /** Where the bell's items and the account menu lead; with it, the row is the web's top bar:
+     * the search field, the recap, the messages, the bell and the picture with the account menu.
+     * Its [PokyhTopBar] then needs `fillActions = true`. */
     onNavigate: ((String) -> Unit)? = null,
+    /** A screen's own control (a menu), right after the search field. */
+    extra: @Composable RowScope.() -> Unit = {},
 ) {
     if (onNavigate != null) {
-        PokyhIconButton(
-            icon = PokyhIcons.search,
-            contentDescription = dev.plattnericus.pokyh.core.i18n.strings().search.title,
-            onClick = { onNavigate(dev.plattnericus.pokyh.ui.navigation.PokyhDestinations.SEARCH) },
-            tinted = true,
-            iconSize = 19.dp,
-        )
-        // The recap beside the bell, while there is one (on phones the web shows only its circle).
+        TopBarSearchField(onClick = { onNavigate(dev.plattnericus.pokyh.ui.navigation.PokyhDestinations.SEARCH) })
+        extra()
+        // The recap beside the messages, while there is one (on phones the web shows only its circle).
         dev.plattnericus.pokyh.ui.recap.RecapHeaderButton()
-        dev.plattnericus.pokyh.ui.bell.NotificationBell(onNavigate = onNavigate)
     }
     // WebUntis keeps the messages: an account without it has no envelope, as on the web.
     val hasUntis = if (onNavigate != null) {
@@ -166,18 +208,21 @@ fun RowScope.TabRootActions(
                 dev.plattnericus.pokyh.core.i18n.strings().nav.messages
             },
             onClick = onMessages,
-            tinted = true,
-            iconSize = 19.dp,
+            containerColor = if (onNavigate != null) PokyhTheme.colors.card else null,
+            tinted = onNavigate == null,
+            size = if (onNavigate != null) TopBarControlSize else 40.dp,
+            iconSize = 20.dp,
         )
         if (unreadMessages > 0) {
             UnreadBadge(
                 count = unreadMessages,
-                modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp),
+                modifier = Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp),
             )
         }
     }
     // The picture opens the account menu, dropping down from it as on the web.
     if (onNavigate != null) {
+        dev.plattnericus.pokyh.ui.bell.NotificationBell(onNavigate = onNavigate)
         dev.plattnericus.pokyh.ui.profile.AccountMenuButton(onNavigate = onNavigate)
         return
     }
@@ -196,7 +241,7 @@ fun RowScope.TabRootActions(
 
 /** The tap target the profile avatar fills in a tab-root header — matches
  * [PokyhIconButton]'s default so the two actions sit on the same baseline. */
-val TabRootAvatarSize = 40.dp
+val TabRootAvatarSize = 46.dp
 
 /**
  * The unread count on the Messages action: an accent pill with a ring of the page background,
@@ -206,12 +251,11 @@ val TabRootAvatarSize = 40.dp
  * three-digit badge would be wider than the button it sits on.
  */
 @Composable
-fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
+fun UnreadBadge(count: Int, modifier: Modifier = Modifier, ring: androidx.compose.ui.graphics.Color = PokyhTheme.colors.bg) {
     if (count <= 0) return
-    val colors = PokyhTheme.colors
     Box(
         modifier = modifier
-            .background(colors.bg, PokyhShapes.pill)
+            .background(ring, PokyhShapes.pill)
             .padding(2.dp)
             .background(Brand.accent, PokyhShapes.pill)
             .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)

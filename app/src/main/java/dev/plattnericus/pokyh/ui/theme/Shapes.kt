@@ -123,3 +123,24 @@ object PokyhShapes {
     /** Top-rounded only, for surfaces anchored to the bottom edge (nav bar, sheets). */
     val topXxl: Shape = RoundedCornerShape(topStart = PokyhRadius.xxl, topEnd = PokyhRadius.xxl)
 }
+
+/**
+ * [SmoothCornerShape] with only the top corners rounded: the outline of a box [radius] taller,
+ * cut at the bottom edge. For surfaces anchored to the bottom (the web's `.bar`, a squircle
+ * rounded 40px at the top).
+ */
+class TopSmoothCornerShape(private val radius: Dp) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val extra = with(density) { radius.toPx() } * 2
+        val full = SmoothCornerShape(radius).createOutline(Size(size.width, size.height + extra), layoutDirection, density)
+        val path = Path().apply {
+            when (full) {
+                is Outline.Generic -> addPath(full.path)
+                is Outline.Rounded -> addRoundRect(full.roundRect)
+                is Outline.Rectangle -> addRect(full.rect)
+            }
+        }
+        val clip = Path().apply { addRect(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height)) }
+        return Outline.Generic(Path().apply { op(path, clip, androidx.compose.ui.graphics.PathOperation.Intersect) })
+    }
+}

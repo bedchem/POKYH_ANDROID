@@ -525,7 +525,7 @@ private fun AddAccountRow(onClick: () -> Unit, modifier: Modifier = Modifier) {
 
 /** The profile picture at full size on a dimmed backdrop; anywhere outside the portrait dismisses it. */
 @Composable
-private fun AvatarViewerDialog(session: UserSession, onDismiss: () -> Unit) {
+internal fun AvatarViewerDialog(session: UserSession, onDismiss: () -> Unit) {
     val dismissSource = remember { MutableInteractionSource() }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(

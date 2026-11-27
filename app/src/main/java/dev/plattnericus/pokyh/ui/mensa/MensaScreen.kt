@@ -2,6 +2,13 @@
 
 package dev.plattnericus.pokyh.ui.mensa
 
+import dev.plattnericus.pokyh.ui.theme.pressHighlight
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +32,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -95,8 +106,10 @@ fun MensaScreen(
         modifier = Modifier.wideContent(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
+            // Only the web's top bar stays; "Mensa" and its lead scroll with the plan (MensaIntro).
             PokyhTopBar(
-                title = strings().nav.mensa,
+                fillActions = true,
+                title = null,
                 nav = TopBarNav.None,
                 actions = {
                     TabRootActions(
@@ -178,21 +191,23 @@ private fun MensaPlan(
     val c = strings().common
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = PokyhSpacing.screenH, end = PokyhSpacing.screenH, bottom = PokyhSpacing.xxxl),
+        contentPadding = PaddingValues(start = PokyhSpacing.screenH, end = PokyhSpacing.screenH, bottom = 96.dp),
     ) {
+        item(key = "intro") { MensaIntro(Modifier.fadeIn()) }
         // The break the menu is in, above it all: which one and until when (the web's `breakNow`).
         MensaSchedule.breakOn(breaks, today)?.let { b ->
             item(key = "breakNow") {
                 Text(
                     t.breakNow(MensaSchedule.breakName(b), MensaSchedule.breakDate(b.end)),
-                    style = PokyhType.headline,
+                    style = PokyhType.headline.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
                     color = colors.textSecondary,
-                    modifier = Modifier.padding(bottom = PokyhSpacing.xl).fadeIn(),
+                    modifier = Modifier.padding(bottom = 32.dp).fadeIn(),
                 )
             }
         }
         item(key = "served") {
-            Column(Modifier.fadeIn(), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
+            // The next dish, served (MensaClient.tsx): the plate, then 32dp to the text column.
+            Column(Modifier.fadeIn()) {
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -201,31 +216,40 @@ private fun MensaPlan(
                 ) {
                     PixelPlate(style = foodStyleOf(served), seed = served.id, photo = served.imageUrl, modifier = Modifier.fillMaxWidth())
                 }
-                Text(MensaSchedule.label(next.date), style = PokyhType.callout.semibold(), color = colors.textTertiary)
-                Text(served.name, style = PokyhType.title1, color = colors.textPrimary)
-                served.description?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, style = PokyhType.body, color = colors.textSecondary)
-                }
-                RatingLine(ratings[served.id], loading = ratingsLoading, unknown = ratingsUnavailable)
-                PokyhPrimaryButton(text = t.rateAndComment, onClick = { onDishClick(served.id) }, icon = PokyhIcons.forward)
-                val others = next.dishes.filter { it != served }
-                if (others.isNotEmpty()) {
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-                    ) {
-                        others.forEach { d ->
-                            Row(
-                                modifier = Modifier
-                                    .clip(PokyhShapes.pill)
-                                    .background(colors.card)
-                                    .clickable { onDishClick(d.id) }
-                                    .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-                            ) {
-                                PixelPlate(style = foodStyleOf(d), seed = d.id, photo = d.imageUrl, size = PlateSize.Plate, modifier = Modifier.width(36.dp))
-                                Text(d.name, style = PokyhType.subheadline.semibold(), color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(32.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(MensaSchedule.label(next.date), style = PokyhType.callout.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold), color = colors.textTertiary)
+                    Text(
+                        served.name,
+                        style = PokyhType.display.copy(fontSize = 32.sp, lineHeight = 33.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.045).em),
+                        color = colors.textPrimary,
+                    )
+                    served.description?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = PokyhType.body.copy(fontSize = 17.sp, lineHeight = 28.sp), color = colors.textSecondary)
+                    }
+                    RatingLine(ratings[served.id], loading = ratingsLoading, unknown = ratingsUnavailable)
+                    if (served.tags.isNotEmpty()) DietTags(served.tags, limit = 4)
+                    KeyButton(text = t.rateAndComment, onClick = { onDishClick(served.id) }, modifier = Modifier.padding(top = 8.dp))
+                    val others = next.dishes.filter { it != served }
+                    if (others.isNotEmpty()) {
+                        androidx.compose.foundation.layout.FlowRow(
+                            modifier = Modifier.padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            others.forEach { d ->
+                                Row(
+                                    modifier = Modifier
+                                        .clip(PokyhShapes.pill)
+                                        .background(colors.card)
+                                        .clickable { onDishClick(d.id) }
+                                        .padding(start = 4.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    PixelPlate(style = foodStyleOf(d), seed = d.id, photo = d.imageUrl, size = PlateSize.Plate, modifier = Modifier.width(36.dp))
+                                    Text(d.name, style = PokyhType.subheadline.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
                             }
                         }
                     }
@@ -235,9 +259,9 @@ private fun MensaPlan(
         item(key = "allDays") {
             Text(
                 t.allDays,
-                style = PokyhType.largeTitle,
+                style = PokyhType.largeTitle.copy(fontSize = 30.sp, lineHeight = 31.sp, letterSpacing = (-0.045).em),
                 color = colors.textPrimary,
-                modifier = Modifier.padding(top = 56.dp),
+                modifier = Modifier.padding(top = 96.dp),
             )
         }
         weeks.forEachIndexed { i, (w, days) ->
@@ -247,9 +271,9 @@ private fun MensaPlan(
                 item(key = "break-${b.start}") {
                     Text(
                         t.breakRange(MensaSchedule.breakName(b), MensaSchedule.breakDate(b.start), MensaSchedule.breakDate(b.end)),
-                        style = PokyhType.callout.semibold(),
+                        style = PokyhType.callout.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
                         color = colors.textSecondary,
-                        modifier = Modifier.padding(top = 32.dp),
+                        modifier = Modifier.padding(top = 40.dp),
                     )
                 }
             }
@@ -260,7 +284,7 @@ private fun MensaPlan(
                     thisWeek + 1 -> t.nextWeek
                     else -> t.fromDate(c.dayMonth(first.dayOfMonth, first.monthNumber))
                 }
-                Text(title, style = PokyhType.callout.semibold(), color = colors.textTertiary, modifier = Modifier.padding(top = 32.dp, bottom = PokyhSpacing.md))
+                Text(title, style = PokyhType.callout.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold), color = colors.textTertiary, modifier = Modifier.padding(top = 40.dp, bottom = 16.dp))
             }
             days.forEach { day ->
                 day.dishes.forEach { dish ->
@@ -272,7 +296,7 @@ private fun MensaPlan(
                             ratingsLoading = ratingsLoading,
                             ratingsUnavailable = ratingsUnavailable,
                             onClick = { onDishClick(dish.id) },
-                            modifier = Modifier.padding(bottom = PokyhSpacing.md).fadeIn(),
+                            modifier = Modifier.padding(bottom = 12.dp).fadeIn(),
                         )
                     }
                 }
@@ -293,15 +317,77 @@ private fun PlanRow(
     modifier: Modifier = Modifier,
 ) {
     val colors = PokyhTheme.colors
-    PokyhCard(modifier = modifier.fillMaxWidth(), padding = PokyhSpacing.md, onClick = onClick) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.lg)) {
-            PixelPlate(style = foodStyleOf(dish), seed = dish.id, photo = dish.imageUrl, size = PlateSize.Plate, modifier = Modifier.width(72.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(dayLabel, style = PokyhType.footnote.semibold(), color = colors.textTertiary, maxLines = 1)
-                Text(dish.name, style = PokyhType.headline, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                RatingLine(rating, loading = ratingsLoading, unknown = ratingsUnavailable)
-            }
+    val shape = dev.plattnericus.pokyh.ui.theme.SmoothCornerShape(40.dp)
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    // The web's plan row: a `.card` (surface, 24dp corners), 12dp in and 20dp on the right, the
+    // plate 72dp, 16dp to the day, the name at 17 bold and the rating.
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(colors.card)
+            .pressHighlight(interaction, shape)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        PixelPlate(style = foodStyleOf(dish), seed = dish.id, photo = dish.imageUrl, size = PlateSize.Plate, modifier = Modifier.width(72.dp))
+        Column(Modifier.weight(1f)) {
+            Text(dayLabel.replaceFirstChar { it.uppercase() }, style = PokyhType.footnote.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold), color = colors.textTertiary, maxLines = 1)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                dish.name,
+                style = PokyhType.headline.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.015).em),
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(4.dp))
+            RatingLine(rating, loading = ratingsLoading, unknown = ratingsUnavailable)
         }
+    }
+}
+
+/** The web's page intro (components/site/PageIntro.tsx, in the app frame): "Mensa" at 42 and the lead. */
+@Composable
+private fun MensaIntro(modifier: Modifier = Modifier) {
+    val colors = PokyhTheme.colors
+    Column(modifier.padding(top = 16.dp, bottom = 56.dp)) {
+        Text(
+            strings().nav.mensa,
+            style = PokyhType.display.copy(fontSize = 42.sp, lineHeight = 44.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.05).em),
+            color = colors.textPrimary,
+        )
+        Spacer(Modifier.height(28.dp))
+        Text(strings().mensa.pageLead, style = PokyhType.body.copy(fontSize = 18.sp, lineHeight = 29.sp), color = colors.textSecondary)
+    }
+}
+
+/**
+ * The web's plain "key" button, large (globals.css `.key.key-lg` on the site): ink on paper in the
+ * light theme, indigo in the dark one; 17sp at 650, an arrow after the text.
+ */
+@Composable
+private fun KeyButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val dark = PokyhTheme.colors.isDark
+    val bg = if (dark) Color(0xFF4D45AD) else Color(0xFF1C1A17)
+    val fg = if (dark) Color.White else Color(0xFFF5F2ED)
+    val shape = dev.plattnericus.pokyh.ui.theme.SmoothCornerShape(28.dp)
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 56.dp)
+            .clip(shape)
+            .background(bg)
+            .pressHighlight(interaction, shape)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 30.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(text, style = PokyhType.headline.copy(fontSize = 17.sp, fontWeight = FontWeight(650), letterSpacing = (-0.01).em), color = fg)
+        Text("→", style = PokyhType.headline.copy(fontSize = 17.sp, fontWeight = FontWeight(650)), color = fg)
     }
 }
 
@@ -311,13 +397,14 @@ private fun RatingLine(rating: DishRatingsData?, loading: Boolean, unknown: Bool
     val t = strings().mensa
     val colors = PokyhTheme.colors
     val count = rating?.count ?: 0
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+    // The web's `RatingLine`: 15dp stars, then 14sp in the second ink, 8dp apart.
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         MiniStarsSlot(loading = loading && rating == null, average = rating?.average ?: 0.0, count = count, unknown = unknown && rating == null)
         if (count > 0) {
             val avg = Fmt.fixed(rating!!.average, 1)
-            Text("$avg · ${if (count == 1) t.ratingOne else t.ratingMany(count)}", style = PokyhType.footnote.monospacedDigits(), color = colors.textSecondary)
+            Text("$avg · ${if (count == 1) t.ratingOne else t.ratingMany(count)}", style = PokyhType.footnote.copy(fontSize = 14.sp).monospacedDigits(), color = colors.textSecondary)
         } else if (!loading && !unknown) {
-            Text(t.noRatingYet, style = PokyhType.footnote, color = colors.textSecondary)
+            Text(t.noRatingYet, style = PokyhType.footnote.copy(fontSize = 14.sp), color = colors.textSecondary)
         }
     }
 }
@@ -329,6 +416,7 @@ private fun MensaLoading() {
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = PokyhSpacing.screenH),
         verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
     ) {
+        MensaIntro(Modifier.padding(bottom = 0.dp))
         PixelPlate(style = FoodStyle.Pasta, seed = "loading", empty = true, modifier = Modifier.fillMaxWidth())
         SkeletonBlock(height = 16.dp, width = 96.dp)
         SkeletonBlock(height = 34.dp, width = 280.dp)
@@ -405,6 +493,28 @@ private fun DishCard(
 }
 
 // ── Bild (geteilt mit DishDetailScreen) ─────────────────────────────────────
+
+/**
+ * The dish photo as it is (the web's `Food`): POKYH's own photos are a plate from above on a
+ * transparent ground, so it stands bare, whole and square, never cropped or framed. Without a
+ * photo, or when it can't be loaded, the pixel plate serves the dish.
+ */
+@Composable
+fun DishPhoto(dish: Dish, modifier: Modifier = Modifier) {
+    val url = dish.imageUrl
+    var failed by remember(url) { mutableStateOf(false) }
+    if (url.isNullOrBlank() || failed) {
+        PixelPlate(style = foodStyleOf(dish), seed = dish.id, modifier = modifier.fillMaxWidth())
+        return
+    }
+    coil3.compose.AsyncImage(
+        model = dev.plattnericus.pokyh.core.images.DishImages.url(url, dev.plattnericus.pokyh.core.images.DishImages.TABLE),
+        contentDescription = dish.name,
+        contentScale = ContentScale.Fit,
+        onError = { failed = true },
+        modifier = modifier.fillMaxWidth().aspectRatio(1f),
+    )
+}
 
 /**
  * A fixed-size band the image fills regardless of its native aspect ratio (crop + clip), with a

@@ -1,7 +1,14 @@
 package dev.plattnericus.pokyh.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -38,15 +45,19 @@ import dev.plattnericus.pokyh.ui.theme.PokyhTheme
 import dev.plattnericus.pokyh.ui.theme.PokyhType
 import dev.plattnericus.pokyh.ui.theme.insetSurface
 
+/** The web's field corners (components/ui/Field.tsx: `rounded-[14px]`). */
+private val FieldShape = RoundedCornerShape(14.dp)
+private val LargeFieldShape = RoundedCornerShape(16.dp)
+
 /**
- * The app's one text-input style: a recessed [insetSurface] field with no visible outline at
- * rest and a 1.5dp [Brand.accent] ring on focus.
+ * The app's one text-input style, as the web's `TextField` (components/ui/Field.tsx): the label
+ * above in 14sp semibold ink, a 48dp field in the inset tone with 14dp corners and 16sp text.
+ * Focused, it turns to the surface tone with a 2dp accent ring around it (outside, as the web's
+ * box-shadow); with an [error] the ring is red and the message under it.
  *
  * Built on [BasicTextField] rather than Material's `OutlinedTextField`, because every screen
  * that used the stock field ended up overriding its border colors to transparent and then
- * drawing its own background anyway — four screens, four slightly different results. A
- * recessed-on-card field is also the only treatment that reads correctly at both layers, which
- * an outlined field does not: an outline inside a card adds a third edge next to the card's own.
+ * drawing its own background anyway — four screens, four slightly different results.
  */
 @Composable
 fun PokyhTextField(
@@ -68,6 +79,11 @@ fun PokyhTextField(
     passwordVisible: Boolean = false,
     /** Told when the field gains or loses the focus. */
     onFocusChange: ((Boolean) -> Unit)? = null,
+    /** Shown under the field in the danger ink, the ring red (the web's `error`). */
+    error: String? = null,
+    /** The web's sign-in field (login/LoginForm.tsx, `.login-field`): 54dp, 16dp corners, the
+     * surface tone throughout, 16sp medium, the ring in the accent ink. */
+    large: Boolean = false,
 ) {
     val colors = PokyhTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
@@ -76,22 +92,42 @@ fun PokyhTextField(
         androidx.compose.runtime.LaunchedEffect(focused) { onFocusChange(focused) }
     }
     val ringColor by animateColorAsState(
-        targetValue = if (focused) Brand.accent else Color.Transparent,
+        targetValue = when {
+            error != null -> Brand.danger
+            focused -> if (large) colors.accentText else Brand.accent
+            else -> Color.Transparent
+        },
         animationSpec = androidx.compose.animation.core.tween(PokyhMotion.durationFast),
         label = "fieldFocusRing",
     )
+    val fill by animateColorAsState(
+        targetValue = if (focused || large) colors.card else colors.cardAlt,
+        animationSpec = androidx.compose.animation.core.tween(PokyhMotion.durationFast),
+        label = "fieldFill",
+    )
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(PokyhSpacing.sm)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (label != null) {
-            PokyhLabel(label, color = colors.textSecondary)
+            Text(label, style = PokyhType.callout.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), color = colors.textPrimary)
         }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .insetSurface(PokyhShapes.md)
-                .border(1.5.dp, ringColor, PokyhShapes.md)
-                .defaultMinSize(minHeight = 52.dp)
-                .padding(horizontal = PokyhSpacing.lg, vertical = PokyhSpacing.md),
+                .drawBehind {
+                    // The ring outside the field, as the web's `box-shadow: 0 0 0 2px`.
+                    if (ringColor.alpha > 0f) {
+                        val r = 2.dp.toPx()
+                        drawRoundRect(
+                            color = ringColor,
+                            topLeft = Offset(-r, -r),
+                            size = Size(size.width + 2 * r, size.height + 2 * r),
+                            cornerRadius = CornerRadius((if (large) 16.dp else 14.dp).toPx() + r),
+                        )
+                    }
+                }
+                .background(fill, if (large) LargeFieldShape else FieldShape)
+                .defaultMinSize(minHeight = if (large) 54.dp else 48.dp)
+                .padding(horizontal = 16.dp, vertical = if (singleLine) 10.dp else 12.dp),
             verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
         ) {
@@ -105,7 +141,7 @@ fun PokyhTextField(
             }
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                 if (value.isEmpty() && placeholder != null) {
-                    Text(placeholder, style = PokyhType.body, color = colors.textTertiary)
+                    Text(placeholder, style = PokyhType.body.copy(fontSize = 16.sp, fontWeight = if (large) FontWeight.Medium else FontWeight.Normal), color = colors.textTertiary, maxLines = if (singleLine) 1 else Int.MAX_VALUE, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 }
                 BasicTextField(
                     value = value,
@@ -113,7 +149,7 @@ fun PokyhTextField(
                     enabled = enabled,
                     singleLine = singleLine,
                     minLines = minLines,
-                    textStyle = PokyhType.body.copy(color = colors.textPrimary),
+                    textStyle = PokyhType.body.copy(color = colors.textPrimary, fontWeight = if (large) FontWeight.Medium else FontWeight.Normal),
                     cursorBrush = SolidColor(Brand.accent),
                     visualTransformation = if (isPassword && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
                     keyboardOptions = keyboardOptions,
@@ -125,6 +161,9 @@ fun PokyhTextField(
                 )
             }
             if (trailing != null) trailing()
+        }
+        if (error != null) {
+            Text(error, style = PokyhType.footnote.copy(fontSize = 13.sp, fontWeight = FontWeight.Medium), color = colors.dangerText)
         }
     }
 }

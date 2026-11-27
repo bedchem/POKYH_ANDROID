@@ -363,6 +363,10 @@ data class ClassregEvent(
     var eventReasonName: String,
     var categoryName: String,
     var text: String,
+    /** When it was noted: HHMM (sometimes minutes since midnight, see the web's entryTime). */
+    var createTime: Int = 0,
+    /** What it is about when there is no subject (a class, a person). */
+    var elementName: String = "",
 )
 
 // ── Abwesenheit melden / entschuldigen ───────────────────────────────────

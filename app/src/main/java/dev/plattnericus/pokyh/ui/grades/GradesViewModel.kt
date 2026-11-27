@@ -10,6 +10,7 @@ import dev.plattnericus.pokyh.data.model.SubjectGrades
 import dev.plattnericus.pokyh.data.storage.OfflineStore
 import dev.plattnericus.pokyh.data.storage.PreferencesStore
 import dev.plattnericus.pokyh.data.untis.UntisClient
+import dev.plattnericus.pokyh.data.untis.updateGradeScale
 import dev.plattnericus.pokyh.state.AppState
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,7 @@ class GradesViewModel @Inject constructor(
     private val widgetDataBridge: WidgetDataBridge,
     private val offlineStore: OfflineStore,
     private val preferencesStore: PreferencesStore,
+    private val notifications: dev.plattnericus.pokyh.core.notifications.PokyhNotifications,
 ) : ViewModel() {
 
     /** Labelled in the language in use by the screen (`sortLabel`). */
@@ -55,6 +57,9 @@ class GradesViewModel @Inject constructor(
     val freshness: StateFlow<Freshness> = _freshness.asStateFlow()
 
     data class Freshness(val savedAt: Long = 0L, val stale: Boolean = false)
+
+    /** The tab is on screen: the new-grade notifications in the shade go. */
+    fun onShown() = notifications.dismissGrades()
 
     init {
         // The order picked last time stays picked.
@@ -101,6 +106,8 @@ class GradesViewModel @Inject constructor(
                     serializer = ListSerializer(SubjectGrades.serializer()),
                 ) { untisClient.grades(session, session.studentId, requestedYear) }
                 dev.plattnericus.pokyh.core.util.GradeEntryOrder.observe(result.value)
+                // The school's grading scale, from these marks (core/util/GradeScale.kt).
+                untisClient.updateGradeScale(session, result.value, _year.value, requestedYear == null, offlineStore)
                 _subjects.value = result.value
                 _freshness.value = Freshness(result.savedAt, result.stale)
                 // A restored copy must not overwrite the widget: its snapshot may well be newer

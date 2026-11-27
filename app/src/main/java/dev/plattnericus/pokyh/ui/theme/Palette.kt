@@ -28,7 +28,7 @@ import kotlin.math.abs
  */
 object Brand {
     /** The accent. Fills (buttons, selected states, active indicators) and large glyphs. */
-    val accent = Color(0xFF6366F1)
+    val accent = Color(0xFF6264ED)
 
     /**
      * Darker step of [accent] for accent-colored *text* and small glyphs on a light surface.
@@ -121,19 +121,20 @@ data class PokyhColors(
 )
 
 val LightPokyhColors = PokyhColors(
-    bg = Color(0xFFF5F2ED),
-    surface = Color(0xFFFFFFFF),
-    card = Color(0xFFFFFFFF),
-    cardAlt = Color(0xFFEEEAE3),
-    nested = Color(0xFFECECEB),
-    nav = Color(0xFFEBE7E0),
-    border = Color(0xFFE7E2D9),
-    separator = Color(0xFFF0ECE5),
+    // The web's :root (pokyh-frontend app/globals.css), value for value.
+    bg = Color(0xFFF2EEE7),
+    surface = Color(0xFFFBF9F5),
+    card = Color(0xFFFBF9F5),
+    cardAlt = Color(0xFFECE7DF),
+    nested = Color(0xFFE9E6E0),
+    nav = Color(0xFFE9E4DB),
+    border = Color(0xFFE0D9CE),
+    separator = Color(0xFFE9E3D9),
     line = Color(0xFFE0D9CE),
     dangerText = Color(0xFFB91C1C),
     textPrimary = Color(0xFF1C1A17),
-    textSecondary = Color(0xFF6C655C),
-    textTertiary = Color(0xFFA39B90),
+    textSecondary = Color(0xFF625B52),
+    textTertiary = Color(0xFF6B655B),
     accentTint = Color(0xFFEDECFD),
     accentText = Brand.accentInk,
     isDark = false,
@@ -168,18 +169,19 @@ val DarkPokyhColors = PokyhColors(
     nested = Color(0xFF232323),
     // A small step above the card. 0xFF25252A glowed against the dark page, and 0xFF151518
     // (below the card) sank into the background.
-    nav = Color(0xFF212126),
-    border = Color(0xFF303036),
+    nav = Color(0xFF1E1E23),
+    border = Color(0xFF2E2E34),
     separator = Color(0xFF232327),
     line = Color(0xFF2E2E34),
     dangerText = Color(0xFFF87171),
     textPrimary = Color(0xFFF2F2F4),
-    textSecondary = Color(0xFF9C9CA2),
-    textTertiary = Color(0xFF67676E),
+    textSecondary = Color(0xFFA2A2A8),
+    textTertiary = Color(0xFF8D8D93),
     // The one intentionally colored token in the dark ramp — it's the accent's quiet form (the
     // selected nav pill, a tinted badge), so it stays indigo rather than following the neutrals.
-    accentTint = Color(0xFF20203A),
-    accentText = Brand.accent,
+    accentTint = Color(0xFF22223E),
+    // The web's dark --accent-ink: a lighter indigo for text and glyphs on the dark page.
+    accentText = Color(0xFF8B8DF9),
     isDark = true,
 )
 
@@ -209,19 +211,19 @@ object PokyhDecorative {
     fun butter(isDark: Boolean) = if (isDark) {
         DecorativeTone(Color(0xFF473B16), Color(0xFFEBD79A))
     } else {
-        DecorativeTone(Color(0xFFF7E7AC), Color(0xFF85641A))
+        DecorativeTone(Color(0xFFF7E7AC), Color(0xFF7A5B14))
     }
 
     fun sage(isDark: Boolean) = if (isDark) {
         DecorativeTone(Color(0xFF23351E), Color(0xFFB4D0AD))
     } else {
-        DecorativeTone(Color(0xFFD5E4D0), Color(0xFF4B6E45))
+        DecorativeTone(Color(0xFFD5E4D0), Color(0xFF44653F))
     }
 
     fun blush(isDark: Boolean) = if (isDark) {
         DecorativeTone(Color(0xFF46241F), Color(0xFFEFC1B8))
     } else {
-        DecorativeTone(Color(0xFFF7D9D3), Color(0xFF9F5347))
+        DecorativeTone(Color(0xFFF7D9D3), Color(0xFF94493E))
     }
 
     /** The tones in canonical order. Grids cycle this by index, so a given tile keeps its color
@@ -309,7 +311,11 @@ fun avatarColorFromHue(hue01: Double): Color = hsv((hue01 * 360.0).toFloat(), 0.
  *   6.0 ..< 6.4  : orange #F97316 (only just passing)
  *   value <  6   : lerp #FCA5A5 -> #991B1B over t = (6-v)/5
  */
-fun gradeColor(value: Double): Color {
+fun gradeColor(raw: Double): Color {
+    // On the school's scale (core/util/GradeScale.kt): its mark as an Italian one; grey when not known for sure.
+    val s = dev.plattnericus.pokyh.core.util.GradeScales.current
+    if (!s.certain) return Color(0xFF8D8D93)
+    val value = s.italianEquivalent(raw)
     fun lerp(a: Double, b: Double, t: Double): Double = a + (b - a) * t.coerceIn(0.0, 1.0)
     fun mix(c1: Triple<Double, Double, Double>, c2: Triple<Double, Double, Double>, t: Double): Color =
         Color(
@@ -329,7 +335,7 @@ fun gradeColor(value: Double): Color {
 }
 
 /** Simplified binary grade color used by widgets (Phase 3) — `Brand.grade` on iOS. */
-fun gradeColorSimple(value: Double): Color = if (value >= 6.0) Brand.success else Brand.danger
+fun gradeColorSimple(value: Double): Color = if (dev.plattnericus.pokyh.core.util.GradeScales.current.passes(value)) Brand.success else Brand.danger
 
 /**
  * The Noten dashboard's four-tier band color (see `gradeBand`), matching the web frontend's
@@ -345,6 +351,7 @@ fun bandColor(band: dev.plattnericus.pokyh.ui.grades.GradeBand): Color = when (b
     dev.plattnericus.pokyh.ui.grades.GradeBand.Positive -> Brand.success
     dev.plattnericus.pokyh.ui.grades.GradeBand.Negative -> Brand.orange
     dev.plattnericus.pokyh.ui.grades.GradeBand.Critical -> Brand.danger
+    dev.plattnericus.pokyh.ui.grades.GradeBand.Neutral -> Color(0xFF8D8D93)
 }
 
 /**
@@ -361,7 +368,7 @@ fun bandColor(band: dev.plattnericus.pokyh.ui.grades.GradeBand): Color = when (b
  * Grade 7 is deliberately [Brand.accent]: it's the most common mark, so the ring's biggest arc
  * is the brand color.
  */
-fun distributionColor(grade: Int): Color = when (grade) {
+fun distributionColor(mark: Int): Color = when (dev.plattnericus.pokyh.core.util.GradeScales.current.let { if (!it.certain) 0 else kotlin.math.round(it.italianEquivalent(mark.toDouble())).toInt() }) {
     10 -> Color(0xFF34C759)
     9 -> Color(0xFF30C0A8)
     8 -> Color(0xFF4B9BF5)
@@ -433,10 +440,32 @@ object SubjectHues {
         return hues.minByOrNull { distance(it, own) } ?: hues.first()
     }
 
-    /** Hand out the colours for one week's subjects. */
+    /**
+     * The student's subjects of the school year (WebUntis' list of graded lessons): from now on
+     * every subject is coloured from this one list, so it keeps its colour all year instead of
+     * changing with the subjects of the week shown (the web's setYearSubjects).
+     */
+    @Volatile
+    private var year: Map<String, Float>? = null
+
+    @Synchronized
+    fun setYear(names: Iterable<String>) {
+        val list = names.filter { it.isNotEmpty() }.distinct().sorted()
+        if (list.isEmpty()) return
+        val map = assign(list)
+        year = map
+        assigned = map
+    }
+
+    /** Hand out the colours for one week's subjects: the year's, once known. */
     @Synchronized
     fun register(names: Iterable<String>) {
-        val subjects = names.filter { it.isNotEmpty() }.distinct().sorted()
+        year?.let { assigned = it; return }
+        assigned = assign(names.filter { it.isNotEmpty() }.distinct().sorted())
+    }
+
+    /** Sorted by name, each takes its preferred hue if free, else the free hue farthest from the taken ones. */
+    private fun assign(subjects: List<String>): Map<String, Float> {
         val next = LinkedHashMap<String, Float>()
         val used = mutableListOf<Float>()
         for (name in subjects) {
@@ -449,11 +478,11 @@ object SubjectHues {
             next[name] = hue
             used += hue
         }
-        assigned = next
+        return next
     }
 
-    /** A subject's hue: the one this week gave it, else the one its name asks for. */
-    fun hueFor(name: String): Float = assigned[name] ?: preferredHue(name)
+    /** A subject's hue: the year's (or this week's), else the one its name asks for. */
+    fun hueFor(name: String): Float = assigned[name] ?: year?.get(name) ?: preferredHue(name)
 }
 
 /** HSL → RGB. The pastel ramp is built in HSL, not HSV — see [subjectTone]. */

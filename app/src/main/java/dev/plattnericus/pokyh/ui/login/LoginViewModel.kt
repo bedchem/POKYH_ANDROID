@@ -97,6 +97,22 @@ class LoginViewModel @Inject constructor(
         viewModelScope.launch { _loginOptions.value = backendClient.loginOptions(school) }
     }
 
+    /** No account on this device yet: the first run, which gets the intro (IntroFlow.kt). */
+    val firstRun: Boolean get() = appState.accounts.value.isEmpty()
+
+    /**
+     * The intro's school check: how [school] signs in, at most ~5s (no answer is the password
+     * form, as everywhere). Also sets [loginOptions], so the form and the Office sheet agree.
+     */
+    fun checkSchool(school: School, onDone: (dev.plattnericus.pokyh.data.backend.BackendClient.LoginOptions?) -> Unit) {
+        _loginOptions.value = null
+        viewModelScope.launch {
+            val options = kotlinx.coroutines.withTimeoutOrNull(5_000) { backendClient.loginOptions(school) }
+            _loginOptions.value = options
+            onDone(options)
+        }
+    }
+
     // ── Passwort vergessen ──────────────────────────────────────────────────
 
     data class ResetState(val sending: Boolean = false, val error: String? = null, val sent: Boolean = false)

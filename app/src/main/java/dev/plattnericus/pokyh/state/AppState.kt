@@ -674,6 +674,24 @@ class AppState @Inject constructor(
         }
     }
 
+    /**
+     * Through pokyh-backend when it can do it for the app ([backend], with a fresh POKYH token),
+     * else on the device ([device]): without a POKYH token, with a backend that has no app
+     * sessions yet ([dev.plattnericus.pokyh.data.backend.UntisViaBackend.Unsupported]), or a
+     * token that can't be renewed. In each of those the backend did nothing, so a write is not
+     * made twice.
+     */
+    suspend fun <T> backendOrDevice(backend: suspend (String) -> T, device: suspend () -> T): T {
+        if (_session.value?.apiToken == null) return device()
+        return try {
+            withFreshApiToken(backend)
+        } catch (e: dev.plattnericus.pokyh.data.backend.UntisViaBackend.Unsupported) {
+            device()
+        } catch (e: AppError) {
+            if (e.httpCode == 401) device() else throw e
+        }
+    }
+
     private suspend fun renewApiToken(s: UserSession): String? {
         val fresh = freshBackendTokens(s) ?: return null
         val current = _session.value

@@ -1,9 +1,15 @@
 package dev.plattnericus.pokyh.ui.login
 
+import dev.plattnericus.pokyh.ui.theme.PokyhShapes
+import dev.plattnericus.pokyh.ui.theme.pressHighlight
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.em
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn as animateFadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -90,6 +96,32 @@ fun LoginScreen(
     isAdditional: Boolean = false,
     onCancel: () -> Unit = {},
     viewModel: LoginViewModel = hiltViewModel(),
+) {
+    val prefill by viewModel.prefillUsername.collectAsStateWithLifecycle()
+    // The first run gets the step-by-step intro; adding an account, re-entering a password, or
+    // "Direkt zur Anmeldung" get the whole form at once, as before.
+    var classic by rememberSaveable { mutableStateOf(isAdditional || prefill != null || !viewModel.firstRun) }
+    LaunchedEffect(prefill) { if (prefill != null) classic = true }
+    androidx.compose.animation.AnimatedContent(
+        targetState = classic,
+        transitionSpec = {
+            androidx.compose.animation.fadeIn(tween(420, delayMillis = 120)) togetherWith fadeOut(tween(220))
+        },
+        label = "loginMode",
+    ) { showForm ->
+        if (showForm) {
+            LoginForm(isAdditional = isAdditional, onCancel = onCancel, viewModel = viewModel)
+        } else {
+            IntroFlow(viewModel = viewModel, onClassic = { classic = true })
+        }
+    }
+}
+
+@Composable
+private fun LoginForm(
+    isAdditional: Boolean,
+    onCancel: () -> Unit,
+    viewModel: LoginViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val prefillUsername by viewModel.prefillUsername.collectAsStateWithLifecycle()
@@ -257,7 +289,7 @@ fun LoginScreen(
                         value = username,
                         onValueChange = { typed(username, it); username = it },
                         placeholder = t.username,
-                        leadingIcon = PokyhIcons.person,
+                        large = true,
                         modifier = Modifier.fillMaxWidth(),
                         onFocusChange = { has ->
                             if (has) focus = MascotFocus.User else if (focus == MascotFocus.User) focus = null
@@ -274,7 +306,7 @@ fun LoginScreen(
                         value = password,
                         onValueChange = { typed(password, it); password = it },
                         placeholder = t.password,
-                        leadingIcon = PokyhIcons.password,
+                        large = true,
                         isPassword = true,
                         passwordVisible = showPassword,
                         modifier = Modifier.fillMaxWidth(),
@@ -288,8 +320,8 @@ fun LoginScreen(
                                 contentDescription = if (showPassword) t.hidePassword else t.showPassword,
                                 onClick = { showPassword = !showPassword },
                                 tint = PokyhTheme.colors.textTertiary,
-                                size = 32.dp,
-                                iconSize = 20.dp,
+                                size = 36.dp,
+                                iconSize = 17.dp,
                             )
                         },
                         keyboardOptions = KeyboardOptions(
@@ -350,18 +382,23 @@ fun LoginScreen(
 
                     if (loginOptions?.password != false) {
                     Spacer(Modifier.height(PokyhSpacing.xs))
-                    PokyhPrimaryButton(
+                    LoginKey(
                         text = if (uiState.busy) uiState.statusText.ifEmpty { t.signingIn } else t.signIn,
                         onClick = { submit() },
-                        enabled = username.isNotBlank() && password.isNotBlank(),
-                        loading = uiState.busy,
+                        busy = uiState.busy,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     }
-                    PokyhTextButton(
-                        text = t.forgotPassword,
-                        onClick = { resettingPassword = true },
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    // The web's quiet link under the button: 13sp semibold in ink-3.
+                    Text(
+                        t.forgotPassword,
+                        style = PokyhType.footnote.copy(fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                        color = PokyhTheme.colors.textTertiary,
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .clip(PokyhShapes.pill)
+                            .clickable { resettingPassword = true }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                 }
 
@@ -409,9 +446,38 @@ fun LoginScreen(
     }
 }
 
+/**
+ * The web's sign-in button (`key key-lg key-indigo`): the site's indigo with white text, 17sp at
+ * 650, an arrow after it, 28dp squircle corners. Never greyed out for empty fields (the web
+ * isn't); only while signing in it dims and shows the progress.
+ */
+@Composable
+internal fun LoginKey(text: String, onClick: () -> Unit, busy: Boolean, modifier: Modifier = Modifier) {
+    val indigo = if (PokyhTheme.colors.isDark) Color(0xFF4D45AD) else Color(0xFF534AB7)
+    val shape = dev.plattnericus.pokyh.ui.theme.SmoothCornerShape(28.dp)
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 60.dp)
+            .alpha(if (busy) 0.6f else 1f)
+            .clip(shape)
+            .background(indigo)
+            .pressHighlight(interaction, shape)
+            .clickable(interactionSource = interaction, indication = null, enabled = !busy, onClick = onClick)
+            .padding(horizontal = 30.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+    ) {
+        if (busy) androidx.compose.material3.CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+        val style = PokyhType.headline.copy(fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight(650), letterSpacing = (-0.01).em)
+        Text(text, style = style, color = Color.White, maxLines = 1)
+        if (!busy) Text("→", style = style, color = Color.White)
+    }
+}
+
 /** Initials and a tone per school, so results are told apart at a glance (the web's SchoolBadge). */
 @Composable
-private fun SchoolBadge(school: dev.plattnericus.pokyh.data.model.School) {
+internal fun SchoolBadge(school: dev.plattnericus.pokyh.data.model.School) {
     val words = school.name.split(Regex("[\\s\\-–]+")).filter { w -> w.firstOrNull()?.isLetterOrDigit() == true }
     val initials = (words.take(2).joinToString("") { it.take(1) }.ifEmpty { school.loginName.take(2) }).uppercase()
     val tones = dev.plattnericus.pokyh.ui.theme.PokyhDecorative.all(PokyhTheme.colors.isDark)
@@ -447,7 +513,7 @@ private fun SchoolRow(school: dev.plattnericus.pokyh.data.model.School, caption:
 
 /** Step one: the school, found through WebUntis' public school search. */
 @Composable
-private fun SchoolStep(
+internal fun SchoolStep(
     query: String,
     onQuery: (String) -> Unit,
     search: LoginViewModel.Search,
@@ -461,6 +527,7 @@ private fun SchoolStep(
             onValueChange = onQuery,
             placeholder = t.schoolPlaceholder,
             leadingIcon = PokyhIcons.search,
+            large = true,
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Search),
             trailing = if (query.isNotEmpty()) {
@@ -503,17 +570,18 @@ private fun SchoolChip(school: dev.plattnericus.pokyh.data.model.School, onChang
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(PokyhTheme.colors.cardAlt, androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
-            .padding(start = PokyhSpacing.sm, end = PokyhSpacing.xs, top = PokyhSpacing.sm, bottom = PokyhSpacing.sm),
+            // The web's chosen-school card: the inset tone, 16dp corners, 10/8 in.
+            .background(PokyhTheme.colors.cardAlt, androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         SchoolBadge(school)
         Column(Modifier.weight(1f)) {
-            Text(school.name.ifEmpty { school.loginName }, style = PokyhType.callout.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = PokyhTheme.colors.textPrimary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Text(school.name.ifEmpty { school.loginName }, style = PokyhType.callout.copy(fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = PokyhTheme.colors.textPrimary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Icon(PokyhIcons.locked, contentDescription = null, tint = PokyhTheme.colors.textTertiary, modifier = Modifier.size(11.dp))
-                Text(t.serverShort(school.server), style = PokyhType.caption, color = PokyhTheme.colors.textTertiary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Text(t.serverShort(school.server), style = PokyhType.caption.copy(fontSize = 12.sp), color = PokyhTheme.colors.textTertiary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
         }
         PokyhIconButton(icon = PokyhIcons.close, contentDescription = t.schoolChange, onClick = onChange, tint = PokyhTheme.colors.textTertiary, size = 36.dp, iconSize = 15.dp)

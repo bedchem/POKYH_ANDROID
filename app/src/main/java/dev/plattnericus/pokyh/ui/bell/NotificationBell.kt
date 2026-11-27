@@ -118,12 +118,15 @@ fun NotificationBell(onNavigate: (String) -> Unit, viewModel: BellViewModel = hi
                 open = true
                 store.refresh()
             },
-            tinted = true,
-            iconSize = 19.dp,
+            // The web's `.iconBtn`, and `.iconBtnOn` while its panel is open.
+            containerColor = if (open) PokyhTheme.colors.accentTint else PokyhTheme.colors.card,
+            tint = if (open) PokyhTheme.colors.accentText else PokyhTheme.colors.textPrimary,
+            size = dev.plattnericus.pokyh.ui.components.TopBarControlSize,
+            iconSize = 20.dp,
             modifier = Modifier.rotate(ring.value),
         )
         if (state.newCount > 0) {
-            UnreadBadge(count = state.newCount, modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp))
+            UnreadBadge(count = state.newCount, modifier = Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp))
         }
 
         // Drops down from the bell as on the web: as wide as a phone allows.
@@ -299,9 +302,11 @@ private fun BellRow(item: BellFeed.Item, now: Long, fresh: Boolean, leaving: Boo
     val (tile, title, subParts) = when (item.kind) {
         BellFeed.Kind.Grade -> {
             val v = item.value ?: 0.0
+            val s = dev.plattnericus.pokyh.core.util.GradeScales.current
             val tone = when {
-                v >= 6.4 -> PokyhDecorative.sage(dark)
-                v >= 6 -> PokyhDecorative.butter(dark)
+                !s.certain -> dev.plattnericus.pokyh.ui.theme.DecorativeTone(colors.cardAlt, colors.textPrimary)
+                s.passesWell(v) -> PokyhDecorative.sage(dark)
+                s.passes(v) -> PokyhDecorative.butter(dark)
                 else -> PokyhDecorative.blush(dark)
             }
             Triple(TileSpec(text = Fmt.num(v), fill = tone.fill, ink = tone.ink), t.gradeNew(item.title), listOf(item.sub, at))

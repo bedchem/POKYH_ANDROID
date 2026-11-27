@@ -225,7 +225,7 @@ private fun HomeContent(
         contentPadding = PaddingValues(
             start = if (wide) 32.dp else PokyhSpacing.screenH,
             end = if (wide) 32.dp else PokyhSpacing.screenH,
-            top = PokyhSpacing.lg,
+            top = 0.dp,
             bottom = PokyhSpacing.xxxl,
         ),
         verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
@@ -597,17 +597,16 @@ private fun GreetingHeader(
     val firstName = remember(session) { firstNameOf(session) }
 
     Column(modifier = modifier.fillMaxWidth()) {
+        // The web's top bar: 64dp, the search field filling it, the controls 10dp apart.
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(64.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (arranging) {
                 // The one line of instruction the mode needs. Without it the pencil arms
                 // something invisible.
                 PokyhLabel(t.arrangeHint, modifier = Modifier.weight(1f))
-            } else {
-                Spacer(Modifier.weight(1f))
             }
             if (arranging) {
                 PokyhTextButton(text = strings().common.done, onClick = onToggleArrange)
@@ -1058,20 +1057,21 @@ private fun MensaDayDish(dish: Dish, rating: DishRatingsData?, ratingsPending: B
         horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .clip(PokyhShapes.sm)
-                .insetSurface(PokyhShapes.sm),
-        ) {
-            if (!dish.imageUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = dish.imageUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
+        // The photo is a plate on a transparent ground: shown whole, no tile behind it.
+        if (!dish.imageUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = dev.plattnericus.pokyh.core.images.DishImages.url(dish.imageUrl, dev.plattnericus.pokyh.core.images.DishImages.PLATE),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(46.dp),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(PokyhShapes.sm)
+                    .insetSurface(PokyhShapes.sm),
+            ) {
                 Icon(
                     PokyhIcons.dish,
                     contentDescription = null,
@@ -1177,9 +1177,11 @@ private fun GradeRow(grade: HomeViewModel.RecentGrade, onClick: () -> Unit) {
 @Composable
 internal fun markTone(v: Double): dev.plattnericus.pokyh.ui.theme.DecorativeTone {
     val dark = PokyhTheme.colors.isDark
+    val s = dev.plattnericus.pokyh.core.util.GradeScales.current
     return when {
-        v >= 6 -> PokyhDecorative.sage(dark)
-        v > 4 -> PokyhDecorative.butter(dark)
+        !s.certain -> dev.plattnericus.pokyh.ui.theme.DecorativeTone(PokyhTheme.colors.cardAlt, PokyhTheme.colors.textPrimary)
+        s.passes(v) -> PokyhDecorative.sage(dark)
+        !s.isCritical(v) -> PokyhDecorative.butter(dark)
         else -> PokyhDecorative.blush(dark)
     }
 }

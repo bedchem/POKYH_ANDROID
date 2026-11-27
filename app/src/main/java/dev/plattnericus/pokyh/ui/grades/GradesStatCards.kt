@@ -1,5 +1,11 @@
 package dev.plattnericus.pokyh.ui.grades
 
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +38,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
@@ -78,220 +85,214 @@ import androidx.compose.foundation.layout.width
  * by an empty state: the screen should look like itself from the first launch of a school year.
  */
 
-/**
- * How a stat card is pitched.
- *
- * [Full] is the one-per-row card. [Compact] is the same card at half the width, for the 2x2
- * grid at the top of the screen, and it is a *re-pitch, not a subset*: every card keeps its
- * headline number, its diagram and both its footer facts. What changes is the type step, the
- * diagram's size and the footer's direction — two label/value pairs that sit side by side at
- * full width stack at half width, because at ~150dp they would each have about forty points to
- * live in.
- *
- * Keeping the content identical is the point. A compact card that quietly dropped the median or
- * the sparkline would make the 2x2 grid a worse view of the same data rather than a denser one,
- * and the reader would have no way to know something was missing.
- */
-private enum class StatSize {
-    Full,
-    Compact,
-    ;
-
-    val compact: Boolean get() = this == Compact
-
-    /** Padding inside the card. A square tile is about 150dp across on a phone, so 20dp of
-     * padding on each side would be a quarter of it; 12dp leaves the content somewhere to go. */
-    val padding: Dp get() = if (compact) PokyhSpacing.md else PokyhSpacing.card
-
-    /** The card's headline number. */
-    val valueStyle: TextStyle
-        get() = if (compact) PokyhType.statMedium else PokyhType.statLarge
-
-    /** The gap between a card's blocks. */
-    val blockGap: Dp get() = if (compact) PokyhSpacing.md else PokyhSpacing.lg
-}
-
 /** How many recent entries the card shows — the same three at either size. */
 private const val RecentCount = 3
 
-/** The small rounded pill in a card's top-right corner. */
+// ── The web's card pieces (grades/page.tsx, inline styles) ──────────────────
+
+/**
+ * The cards as square tiles, two to a row (GradesScreen's grid) — the pushed 2.1 sizes: 12dp in,
+ * a one-line title with the pill beside it, a 28sp number, the diagram taking the middle and the
+ * two foot facts stacked at the bottom, so everything fits the square at about 160dp.
+ */
+internal val LocalStatCompact = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/** `.card`: the surface, 22dp in (12 as a tile), 26dp corners as a squircle. */
 @Composable
-private fun StatPill(
-    text: String,
-    modifier: Modifier = Modifier,
-    color: Color = PokyhTheme.colors.textSecondary,
-    fill: Color = PokyhTheme.colors.cardAlt,
-) {
-    Text(
-        text = text,
-        style = PokyhType.caption2,
-        color = color,
-        maxLines = 1,
+private fun GradeCard(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val shape = dev.plattnericus.pokyh.ui.theme.SmoothCornerShape(if (LocalStatCompact.current) 22.dp else 26.dp)
+    Column(
         modifier = modifier
-            .background(fill, PokyhShapes.pill)
-            .padding(horizontal = PokyhSpacing.sm, vertical = 3.dp),
+            .clip(shape)
+            .background(PokyhTheme.colors.card)
+            .padding(if (LocalStatCompact.current) PokyhSpacing.md else 22.dp),
+        content = content,
     )
 }
 
-/**
- * Title + subtitle on the left, pill on the right — the header every card shares.
- *
- * Compact drops the *subtitle* only, and only because it is the one line that restates what the
- * title already says ("Durchschnittsnote" / "Alle Fächer · gewichtet"). The pill stays: it
- * carries a number nothing else on the card does.
- */
+/** A tile's middle: whatever the card is about, centred between header and foot (the pushed `CardBody`). */
 @Composable
-private fun CardHeader(
-    title: String,
-    subtitle: String,
-    size: StatSize,
-    pill: (@Composable () -> Unit)? = null,
+private fun ColumnScope.TileBody(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().weight(1f),
+        verticalArrangement = Arrangement.Center,
+        content = content,
+    )
+}
+
+/** The web's `--g-good` (`--success-ink`): green text that reads on the page in both themes. */
+@Composable
+private fun goodInk(): Color = if (PokyhTheme.colors.isDark) Color(0xFF34D399) else Color(0xFF047857)
+
+/** `.pill`: 12.5sp at 700, 4/10 in; the inset tone, or sage / blush for a trend. */
+@Composable
+private fun StatPill(
+    text: String,
+    color: Color = PokyhTheme.colors.textSecondary,
+    fill: Color = PokyhTheme.colors.cardAlt,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = if (size.compact) Alignment.CenterVertically else Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-    ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            // **One line when compact**, and that is what makes the auto-sizing work.
-            // [PokyhFittedText] shrinks until the text fits the lines it is allowed; at two
-            // lines "Durchschnittsnote" already "fits" — split across them, mid-word — so it
-            // never shrank. Given a single line it has to, and it does.
+    val tile = LocalStatCompact.current
+    Text(
+        text = text,
+        style = PokyhType.caption.copy(fontSize = if (tile) 11.sp else 12.5.sp, lineHeight = if (tile) 14.sp else 16.sp, fontWeight = FontWeight.Bold),
+        color = color,
+        maxLines = 1,
+        modifier = Modifier
+            .background(fill, PokyhShapes.pill)
+            .padding(horizontal = if (tile) 8.dp else 10.dp, vertical = if (tile) 3.dp else 4.dp),
+    )
+}
+
+/** `.card-hd`: the title (15 / 700) and the sub (13, ink-2) on the left, the pill on the right; 16dp under it. */
+@Composable
+private fun CardHeader(title: String, subtitle: String, pill: (@Composable () -> Unit)? = null) {
+    if (LocalStatCompact.current) {
+        // A tile (the pushed sizes): the title on one line, shrinking to fit, the pill beside it.
+        // The sub only restates the title, so the square leaves it out.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+        ) {
             PokyhFittedText(
                 text = title,
-                style = if (size.compact) PokyhType.footnote.semibold() else PokyhType.headline,
+                style = PokyhType.footnote.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.015).em),
                 color = PokyhTheme.colors.textPrimary,
-                maxLines = if (size.compact) 1 else 2,
-                minScale = if (size.compact) 0.68f else 0.78f,
+                maxLines = 1,
+                minScale = 0.68f,
+                modifier = Modifier.weight(1f),
             )
-            if (!size.compact) {
-                Text(subtitle, style = PokyhType.caption, color = PokyhTheme.colors.textTertiary)
-            }
+            if (pill != null) pill()
+        }
+        return
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = PokyhType.headline.copy(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.015).em),
+                color = PokyhTheme.colors.textPrimary,
+            )
+            Spacer(Modifier.size(2.dp))
+            Text(subtitle, style = PokyhType.caption.copy(fontSize = 13.sp, lineHeight = 18.sp), color = PokyhTheme.colors.textSecondary)
         }
         if (pill != null) pill()
     }
 }
 
-/** Two facts, side by side at full width and stacked when compact — see [StatSize]. */
+/** `.kpi-value`: 46sp at 800, tight (34 when compact). */
+private val KpiValueFull = PokyhType.statLarge.copy(fontSize = 46.sp, lineHeight = 46.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.05).em)
+private val KpiValue: androidx.compose.ui.text.TextStyle
+    @Composable get() = if (LocalStatCompact.current) KpiValueFull.copy(fontSize = 28.sp, lineHeight = 30.sp) else KpiValueFull
+
+/** A size of the ratio's numbers, scaled down with the card. */
 @Composable
-private fun CardFooter(
-    leftLabel: String,
-    leftValue: String,
-    rightLabel: String,
-    rightValue: String,
-    size: StatSize,
-    leftValueColor: Color = PokyhTheme.colors.textPrimary,
-    rightValueColor: Color = PokyhTheme.colors.textPrimary,
-) {
-    if (size.compact) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs),
-        ) {
-            FooterFact(leftLabel, leftValue, leftValueColor, fill = true)
-            FooterFact(rightLabel, rightValue, rightValueColor, fill = true)
+private fun kpiSize(full: Int) = if (LocalStatCompact.current) (full * 0.61f).sp else full.sp
+
+/** `.kpi-foot`: two facts at either end, 13sp in ink-2, 16dp above. */
+@Composable
+private fun KpiFoot(left: @Composable () -> Unit, right: @Composable () -> Unit) {
+    if (LocalStatCompact.current) {
+        // A tile: the two facts stacked at the bottom, label left and value right.
+        Column(Modifier.fillMaxWidth().padding(top = PokyhSpacing.sm), verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
+            left()
+            right()
         }
-    } else {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            FooterFact(leftLabel, leftValue, leftValueColor)
-            Spacer(Modifier.weight(1f))
-            FooterFact(rightLabel, rightValue, rightValueColor)
+        return
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        left()
+        right()
+    }
+}
+
+/** A fact of the foot: label then value (`Vormonat 6,98`), or value then label when [valueFirst]. */
+@Composable
+private fun FootFact(label: String, value: String, valueColor: Color = PokyhTheme.colors.textSecondary, valueBold: Boolean = false, valueFirst: Boolean = false) {
+    if (LocalStatCompact.current) {
+        val small = PokyhType.caption.copy(fontSize = 12.sp, lineHeight = 16.sp)
+        // The label takes all the room the value leaves (no cut "Last mon…"), and every value
+        // ends at the card's right edge in tabular digits, so the two stack in a clean column.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = small, color = PokyhTheme.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(
+                value,
+                style = small.copy(fontWeight = if (valueBold) FontWeight.Bold else FontWeight.SemiBold, textAlign = TextAlign.End).monospacedDigits(),
+                color = valueColor,
+                maxLines = 1,
+            )
         }
+        return
+    }
+    val base = PokyhType.caption.copy(fontSize = 13.sp, lineHeight = 18.sp)
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (valueFirst) FootValue(value, base, valueColor, valueBold)
+        Text(label, style = base, color = PokyhTheme.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (!valueFirst) FootValue(value, base, valueColor, valueBold)
     }
 }
 
 @Composable
-private fun FooterFact(label: String, value: String, valueColor: Color, fill: Boolean = false) {
-    Row(
-        modifier = if (fill) Modifier.fillMaxWidth() else Modifier,
-        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = PokyhType.caption,
-            color = PokyhTheme.colors.textTertiary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        // Stacked (compact) facts push their value to the right edge so the two lines form a
-        // column of values; side-by-side facts stay tight to their label.
-        if (fill) Spacer(Modifier.weight(1f))
-        Text(value, style = PokyhType.caption.monospacedDigits(), color = valueColor, maxLines = 1)
-    }
+private fun FootValue(value: String, base: TextStyle, color: Color, bold: Boolean) {
+    Text(value, style = base.copy(fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal).monospacedDigits(), color = color, maxLines = 1)
 }
 
 // ── 1. Durchschnittsnote ────────────────────────────────────────────────────
 
-/**
- * The hero: the overall average, a trend pill vs. the previous month, the Vormonat/Beste Note
- * footer, and the cumulative-average sparkline.
- */
+/** The average in ink, the trend pill, Vormonat / Beste Note, then the sparkline in the accent. */
 @Composable
-internal fun AverageStatCard(
-    dashboard: GradesDashboard,
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-) {
-    val size = if (compact) StatSize.Compact else StatSize.Full
+internal fun AverageStatCard(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
     val g = strings().grades
     val colors = PokyhTheme.colors
-    val improving = dashboard.delta >= 0
-    val trendColor = if (improving) Brand.success else Brand.danger
-
-    PokyhCard(modifier = modifier, padding = size.padding) {
+    val improving = if (dev.plattnericus.pokyh.core.util.GradeScales.current.higherIsBetter) dashboard.delta >= 0 else dashboard.delta <= 0
+    val dark = colors.isDark
+    GradeCard(modifier) {
         CardHeader(
             title = g.avgTitle,
             subtitle = g.avgSub,
-            size = size,
             pill = {
                 StatPill(
                     text = "${if (improving) "↗" else "↘"} ${Fmt.num(absDelta(dashboard.delta))}",
-                    color = trendColor,
-                    fill = trendColor.copy(alpha = 0.14f),
+                    color = if (improving) goodInk() else colors.dangerText,
+                    fill = if (improving) dev.plattnericus.pokyh.ui.theme.PokyhDecorative.sage(dark).fill else dev.plattnericus.pokyh.ui.theme.PokyhDecorative.blush(dark).fill,
                 )
             },
         )
-        CardBody(size) {
+        val value: @Composable () -> Unit = {
             Text(
-                text = if (dashboard.hasGrades) Fmt.num(dashboard.overallAvg) else "–",
-                style = size.valueStyle,
-                color = if (dashboard.hasGrades) bandColor(gradeBand(dashboard.overallAvg)) else colors.textTertiary,
-            )
-            Spacer(Modifier.size(PokyhSpacing.sm))
-            Sparkline(
-                dashboard = dashboard,
-                lineColor = if (dashboard.hasGrades) bandColor(gradeBand(dashboard.overallAvg)) else colors.textTertiary,
-                modifier = Modifier.fillMaxWidth().height(if (compact) 34.dp else 64.dp),
+                text = if (dashboard.hasGrades) Fmt.num(dashboard.overallAvg) else "-",
+                style = KpiValue.monospacedDigits(),
+                color = colors.textPrimary,
             )
         }
-        CardFooter(
-            leftLabel = g.prevMonth,
-            leftValue = if (dashboard.hasGrades) Fmt.num(dashboard.previousMonthAvg) else "–",
-            rightLabel = g.bestGrade,
-            rightValue = if (dashboard.bestGrade > 0) Fmt.num(dashboard.bestGrade) else "—",
-            size = size,
-        )
+        val foot: @Composable () -> Unit = {
+            KpiFoot(
+                left = { FootFact(g.prevMonth, if (dashboard.hasGrades) Fmt.num(dashboard.previousMonthAvg) else "-") },
+                right = { FootFact(g.bestGrade, if (dashboard.bestGrade > 0) Fmt.num(dashboard.bestGrade) else "-") },
+            )
+        }
+        if (LocalStatCompact.current) {
+            // A tile: number and line in the middle, the facts at the bottom (pushed layout).
+            TileBody {
+                value()
+                Spacer(Modifier.size(PokyhSpacing.sm))
+                Sparkline(dashboard = dashboard, lineColor = Brand.accent, modifier = Modifier.fillMaxWidth().height(34.dp))
+            }
+            foot()
+        } else {
+            value()
+            foot()
+            Sparkline(dashboard = dashboard, lineColor = Brand.accent, modifier = Modifier.padding(top = 10.dp).fillMaxWidth().height(64.dp))
+        }
     }
-}
-
-/**
- * The middle of a card: whatever the card is actually about, centred in the space left between
- * its header and its footer.
- *
- * Compact cards are square (see `StatCardGrid`), and a square is more room than a headline
- * number needs. Letting the middle take the slack — rather than stacking everything under the
- * header and leaving the bottom half blank — is what stops a card with no data yet from looking
- * like it failed to load. At full width the card is sized by its content, so the weight is a
- * no-op there and the layout is unchanged.
- */
-@Composable
-private fun ColumnScope.CardBody(size: StatSize, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        modifier = if (size.compact) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.Center,
-        content = content,
-    )
 }
 
 /**
@@ -310,8 +311,9 @@ private fun Sparkline(
     val points = dashboard.spark.points
     // A tap on the line shows that month and the average so far (web tooltip).
     var picked by androidx.compose.runtime.remember(dashboard) { androidx.compose.runtime.mutableStateOf<SparkPoint?>(null) }
-    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
-    val boxW = maxWidth
+    var boxPx by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val boxW = with(androidx.compose.ui.platform.LocalDensity.current) { boxPx.toDp() }
+    Box(modifier.onSizeChanged { boxPx = it.width }) {
     Canvas(
         modifier = Modifier.matchParentSize().pointerInput(dashboard) {
             detectTapGestures { tap ->
@@ -386,135 +388,80 @@ private fun Sparkline(
 
 // ── 2. Notenverhältnis ──────────────────────────────────────────────────────
 
-/** Positive over negative, with the pass-rate bar and the "über/unter 6.0" footer. */
+/** Passed over failed (`.ratio`), the bar (`.ratio-bar`) and how many either side of 6. */
 @Composable
-internal fun RatioStatCard(
-    dashboard: GradesDashboard,
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-) {
-    val size = if (compact) StatSize.Compact else StatSize.Full
+internal fun RatioStatCard(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
     val g = strings().grades
     val colors = PokyhTheme.colors
-    PokyhCard(modifier = modifier, padding = size.padding) {
-        CardHeader(
-            title = g.ratioTitle,
-            subtitle = g.ratioSub,
-            size = size,
-            pill = { StatPill("${dashboard.passRate.roundToInt()} %") },
-        )
-        CardBody(size) {
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(if (compact) PokyhSpacing.sm else PokyhSpacing.md),
-            ) {
-                Text("${dashboard.pos}", style = size.valueStyle, color = Brand.success)
-                Text(
-                    text = "/",
-                    style = (if (compact) PokyhType.title3 else PokyhType.title1).copy(fontWeight = FontWeight.Light),
-                    color = colors.textTertiary,
-                    modifier = Modifier.padding(bottom = if (compact) 3.dp else 6.dp),
-                )
-                Text(
-                    text = "${dashboard.neg}",
-                    style = if (compact) PokyhType.statSmall else PokyhType.statMedium,
-                    color = Brand.danger,
-                    modifier = Modifier.padding(bottom = 2.dp),
-                )
+    GradeCard(modifier) {
+        CardHeader(title = g.ratioTitle, subtitle = g.ratioSub, pill = { StatPill("${dashboard.passRate.roundToInt()} %") })
+        val tile = LocalStatCompact.current
+        val numbers: @Composable () -> Unit = {
+            Row(horizontalArrangement = Arrangement.spacedBy(if (tile) 6.dp else 10.dp)) {
+                Text("${dashboard.pos}", style = KpiValue.monospacedDigits(), color = goodInk(), modifier = Modifier.alignByBaseline())
+                Text("/", style = KpiValue.copy(fontSize = kpiSize(26), lineHeight = kpiSize(26), fontWeight = FontWeight.Normal, letterSpacing = 0.sp), color = colors.textTertiary, modifier = Modifier.alignByBaseline())
+                Text("${dashboard.neg}", style = KpiValue.copy(fontSize = kpiSize(34), lineHeight = kpiSize(34)).monospacedDigits(), color = colors.dangerText, modifier = Modifier.alignByBaseline())
             }
-            Spacer(Modifier.size(size.blockGap))
-            RatioBar(passRate = dashboard.passRate, hasGrades = dashboard.hasGrades)
         }
-        Spacer(Modifier.size(PokyhSpacing.md))
-        CardFooter(
-            leftLabel = g.above6,
-            leftValue = "${dashboard.pos}",
-            leftValueColor = Brand.success,
-            rightLabel = g.below6,
-            rightValue = "${dashboard.neg}",
-            rightValueColor = Brand.danger,
-            size = size,
+        if (tile) {
+            // A tile: numbers and bar in the middle, the facts at the bottom (pushed layout).
+            TileBody {
+                numbers()
+                RatioBar(passRate = dashboard.passRate, hasGrades = dashboard.hasGrades, modifier = Modifier.padding(top = PokyhSpacing.md))
+            }
+        } else {
+            numbers()
+            RatioBar(passRate = dashboard.passRate, hasGrades = dashboard.hasGrades, modifier = Modifier.padding(top = 18.dp))
+        }
+        KpiFoot(
+            left = { FootFact(g.above6, "${dashboard.pos}", valueColor = goodInk(), valueBold = true, valueFirst = true) },
+            right = { FootFact(g.below6, "${dashboard.neg}", valueColor = colors.dangerText, valueBold = true, valueFirst = true) },
         )
     }
 }
 
-/** A two-segment track: success for the pass share, danger for the rest. */
+/** `.ratio-bar`: 8dp, two rounded segments 3dp apart, success and danger. */
 @Composable
 private fun RatioBar(passRate: Double, hasGrades: Boolean, modifier: Modifier = Modifier) {
     val colors = PokyhTheme.colors
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(6.dp)
-            .background(colors.cardAlt, PokyhShapes.pill),
+        modifier = modifier.fillMaxWidth().height(8.dp).clip(PokyhShapes.pill),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        if (!hasGrades) return@Row
+        if (!hasGrades) {
+            Box(Modifier.fillMaxSize().background(colors.cardAlt, PokyhShapes.pill))
+            return@Row
+        }
         val positive = (passRate / 100.0).toFloat().coerceIn(0f, 1f)
-        if (positive > 0f) {
-            Box(
-                Modifier
-                    .weight(positive)
-                    .fillMaxSize()
-                    .background(Brand.success, PokyhShapes.pill),
-            )
-        }
-        if (positive < 1f) {
-            Box(
-                Modifier
-                    .weight(1f - positive)
-                    .fillMaxSize()
-                    .background(Brand.danger, PokyhShapes.pill),
-            )
-        }
+        if (positive > 0f) Box(Modifier.weight(positive).fillMaxSize().background(Brand.success, PokyhShapes.pill))
+        if (positive < 1f) Box(Modifier.weight(1f - positive).fillMaxSize().background(Brand.danger, PokyhShapes.pill))
     }
 }
 
 // ── 3. Notenverteilung ──────────────────────────────────────────────────────
 
-/** The donut: one arc per grade that occurs, with leader lines and labels, plus Modus/Median. */
+/** The donut (`.donut-wrap`, 110 × 110 on the web), Modus and Median under it. */
 @Composable
-internal fun DistributionStatCard(
-    dashboard: GradesDashboard,
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-) {
-    val size = if (compact) StatSize.Compact else StatSize.Full
+internal fun DistributionStatCard(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
     val g = strings().grades
-    PokyhCard(modifier = modifier, padding = size.padding) {
-        CardHeader(
-            title = g.distTitle,
-            subtitle = g.distSub,
-            size = size,
-            pill = { StatPill("σ ${Fmt.num(dashboard.sigma)}") },
-        )
-        CardBody(size) {
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                DistributionDonut(
-                    dashboard = dashboard,
-                    // In the square tile the ring gets whatever is left between header and
-                    // footer — around 60dp — and its leader-line labels are dropped there. They
-                    // are drawn in the ring's own viewBox units, so at that size they would be
-                    // about 3sp: a ring of smudges.
-                    showLabels = !compact,
-                    modifier = if (compact) {
-                        Modifier.fillMaxHeight().aspectRatio(1f)
-                    } else {
-                        Modifier.size(168.dp)
-                    },
-                )
-                // Nothing in the hole of the ring. A grade total used to sit there, on the
-                // argument that every other card leads with a number — but it is the one figure
-                // on the card that the arcs are not about, it took the centre of the eye from
-                // the shape that is, and the screen's own eyebrow already counts the grades.
-            }
+    GradeCard(modifier) {
+        CardHeader(title = g.distTitle, subtitle = g.distSub, pill = { StatPill("σ ${Fmt.num(dashboard.sigma)}") })
+        // In a tile the ring takes the room between header and foot, without its leader labels
+        // (at that size they would be about 3sp) — the pushed tile. Tapping an arc still shows its count.
+        val tile = LocalStatCompact.current
+        Box(
+            modifier = if (tile) Modifier.fillMaxWidth().weight(1f).padding(top = PokyhSpacing.sm) else Modifier.fillMaxWidth().padding(top = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            DistributionDonut(
+                dashboard = dashboard,
+                showLabels = !tile,
+                modifier = if (tile) Modifier.fillMaxHeight().aspectRatio(1f) else Modifier.size(132.dp),
+            )
         }
-        Spacer(Modifier.size(PokyhSpacing.md))
-        CardFooter(
-            leftLabel = g.mode,
-            leftValue = if (dashboard.hasGrades) "${dashboard.mode}" else "—",
-            rightLabel = g.median,
-            rightValue = if (dashboard.hasGrades) Fmt.num(dashboard.median) else "—",
-            size = size,
+        KpiFoot(
+            left = { FootFact(g.mode, if (dashboard.hasGrades) "${dashboard.mode}" else "-") },
+            right = { FootFact(g.median, if (dashboard.hasGrades) Fmt.num(dashboard.median) else "-") },
         )
     }
 }
@@ -643,130 +590,136 @@ private fun recentTone(band: GradeBand): dev.plattnericus.pokyh.ui.theme.Decorat
         GradeBand.Excellent, GradeBand.Positive -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.sage(dark)
         GradeBand.Negative -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.butter(dark)
         GradeBand.Critical -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.blush(dark)
+        GradeBand.Neutral -> dev.plattnericus.pokyh.ui.theme.DecorativeTone(PokyhTheme.colors.cardAlt, PokyhTheme.colors.textPrimary)
     }
 }
 
-/** The three newest entries, by grade id (entry order) rather than by date — same as the web. */
+/** The newest entries (`.recent`): subject and date, the mark in its tone. */
 @Composable
-internal fun RecentStatCard(
-    dashboard: GradesDashboard,
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-) {
-    val size = if (compact) StatSize.Compact else StatSize.Full
+internal fun RecentStatCard(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
     val g = strings().grades
     val colors = PokyhTheme.colors
-    PokyhCard(modifier = modifier, padding = size.padding) {
-        CardHeader(
-            title = g.recentTitle,
-            subtitle = g.recentSub(dashboard.recent.size),
-            size = size,
-        )
-        if (dashboard.recent.isEmpty()) {
-            CardBody(size) {
-                Text(
-                    text = g.recentEmpty,
-                    style = PokyhType.footnote,
-                    color = colors.textTertiary,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = if (compact) TextAlign.Center else TextAlign.Start,
-                )
+    GradeCard(modifier) {
+        CardHeader(title = g.recentTitle, subtitle = g.recentSub(dashboard.recent.size))
+        if (LocalStatCompact.current) {
+            // A tile (pushed layout): three one-line rows sharing the height in equal bands, so
+            // they reach the bottom edge and can never run past it.
+            if (dashboard.recent.isEmpty()) {
+                TileBody {
+                    Text(g.recentEmpty, style = PokyhType.footnote, color = colors.textTertiary, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                }
+                return@GradeCard
             }
-            return@PokyhCard
+            val shown = dashboard.recent.take(RecentCount)
+            Column(Modifier.fillMaxWidth().weight(1f).padding(top = PokyhSpacing.sm)) {
+                // Keyed by the grade: a mark that just came in slides in on its own, the
+                // others keep their state.
+                shown.forEachIndexed { i, item ->
+                    androidx.compose.runtime.key(item.id) { RecentTileRow(item, i, Modifier.weight(1f)) }
+                }
+                if (shown.size < RecentCount) Spacer(Modifier.weight((RecentCount - shown.size).toFloat()))
+            }
+            return@GradeCard
         }
-        Spacer(Modifier.size(size.blockGap))
-        // **All three, in the square tile too, sharing its height in equal bands.** Two used to
-        // be the compact limit because the third row ran past the bottom edge and was clipped
-        // mid-line — each entry stacked its date under its subject between two 12dp gaps and a
-        // rule, about 48dp of tile per grade. A compact entry is now one line, and the three of
-        // them are laid out by `weight` rather than stacked at the top: the list takes whatever
-        // the header leaves and divides it, so the rows reach the bottom edge instead of
-        // crowding into the upper half, and they cannot overrun it however tall the tile is or
-        // how large the system font is set.
-        //
-        // The weights are compact-only, and have to be. The full-width card has no fixed height
-        // — it wraps its content — so there is no leftover space for a weight to divide, and
-        // asking for one would collapse every row to nothing.
-        val shown = dashboard.recent.take(RecentCount)
-        Column(modifier = if (compact) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth()) {
-            shown.forEachIndexed { index, item ->
-                // The web's rows stand apart by space alone.
-                if (index > 0) {
-                    if (compact) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.separator))
-                    else Spacer(Modifier.size(PokyhSpacing.xs))
-                }
-                Row(
-                    modifier = if (compact) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
-                ) {
-                    if (compact) {
-                        Text(
-                            text = item.subject,
-                            style = PokyhType.footnote.semibold(),
-                            color = colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        Text(
-                            text = Fmt.dateShort(item.date),
-                            style = PokyhType.caption2.monospacedDigits(),
-                            color = colors.textTertiary,
-                            maxLines = 1,
-                        )
-                        Spacer(Modifier.weight(1f))
-                    } else {
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = item.subject,
-                                style = PokyhType.headline,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = Fmt.dateShort(item.date),
-                                style = PokyhType.caption2.monospacedDigits(),
-                                color = colors.textTertiary,
-                            )
-                        }
-                    }
-                    if (compact) {
-                        Text(
-                            text = Fmt.num(item.numeric),
-                            style = PokyhType.footnote.semibold().monospacedDigits(),
-                            color = bandColor(gradeBand(item.numeric)),
-                            maxLines = 1,
-                        )
-                    } else {
-                        // The mark in its tone, as the web's .recent-row .grade.
-                        val tone = recentTone(gradeBand(item.numeric))
-                        Box(
-                            modifier = Modifier
-                                .defaultMinSize(minWidth = 44.dp)
-                                .height(34.dp)
-                                .clip(RoundedCornerShape(11.dp))
-                                .background(tone.fill)
-                                .padding(horizontal = 8.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = Fmt.num(item.numeric),
-                                style = PokyhType.subheadline.bold().monospacedDigits(),
-                                color = tone.ink,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                }
+        if (dashboard.recent.isEmpty()) {
+            Text(g.recentEmpty, style = PokyhType.footnote.copy(fontSize = 14.sp), color = colors.textTertiary)
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                dashboard.recent.take(RecentCount).forEach { item -> RecentRow(item) }
             }
-            // Fewer than three entries still take one band each from the top: the empty bands
-            // stay reserved, so a single grade sits in the first row instead of being stretched
-            // across the whole tile and landing vertically centered.
-            if (compact && shown.size < RecentCount) {
-                Spacer(Modifier.weight((RecentCount - shown.size).toFloat()))
-            }
+        }
+    }
+}
+
+/**
+ * A tile's recent entry: the subject over its date ("18.11.26"), the mark in its tone on the
+ * right. It eases in (fade and a short slide, one row after the other on the first show) and a
+ * new mark arriving later does the same on its own.
+ */
+@Composable
+private fun RecentTileRow(item: RecentGradeItem, index: Int, modifier: Modifier) {
+    val colors = PokyhTheme.colors
+    val reduced = dev.plattnericus.pokyh.ui.pixel.rememberReducedMotion()
+    val appear = remember { androidx.compose.animation.core.Animatable(if (reduced) 1f else 0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (reduced) return@LaunchedEffect
+        kotlinx.coroutines.delay(90L * index)
+        appear.animateTo(1f, androidx.compose.animation.core.tween(560, easing = androidx.compose.animation.core.CubicBezierEasing(0.16f, 1f, 0.3f, 1f)))
+    }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                alpha = appear.value
+                translationX = (1f - appear.value) * 14.dp.toPx()
+            },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(
+                item.subject,
+                style = PokyhType.footnote.copy(fontWeight = FontWeight(650), lineHeight = 17.sp),
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(Fmt.dateShort(item.date), style = PokyhType.caption2.copy(lineHeight = 13.sp).monospacedDigits(), color = colors.textTertiary, maxLines = 1)
+        }
+        val tone = recentTone(gradeBand(item.numeric))
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minWidth = 38.dp)
+                .height(28.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(tone.fill)
+                .padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                Fmt.num(item.numeric),
+                style = PokyhType.footnote.copy(fontSize = 14.sp, fontWeight = FontWeight.ExtraBold).monospacedDigits(),
+                color = tone.ink,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecentRow(item: RecentGradeItem) {
+    val colors = PokyhTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(
+                item.subject,
+                style = PokyhType.headline.copy(fontSize = 14.5.sp, lineHeight = 19.sp, fontWeight = FontWeight(650)),
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(Fmt.dateShort(item.date), style = PokyhType.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp).monospacedDigits(), color = colors.textTertiary)
+        }
+        val tone = recentTone(gradeBand(item.numeric))
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minWidth = 44.dp)
+                .height(34.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(tone.fill)
+                .padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                Fmt.num(item.numeric),
+                style = PokyhType.subheadline.copy(fontSize = 14.5.sp, fontWeight = FontWeight.ExtraBold).monospacedDigits(),
+                color = tone.ink,
+                maxLines = 1,
+            )
         }
     }
 }

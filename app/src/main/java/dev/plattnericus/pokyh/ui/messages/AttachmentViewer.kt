@@ -9,6 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -60,7 +63,8 @@ internal fun canViewInApp(file: UntisClient.DownloadedAttachment): Boolean =
 
 /**
  * An attachment shown in the app, as the web does for PDFs and pictures: pages one under the
- * other (pinch to zoom), with "open in another app" for saving or printing.
+ * other (pinch to zoom). Beside "download", a ⋮ menu: open it in another app, share it, print it
+ * (PDFs).
  */
 @Composable
 internal fun AttachmentViewer(file: UntisClient.DownloadedAttachment, onOpenExternally: () -> Unit, onDismiss: () -> Unit) {
@@ -90,6 +94,7 @@ internal fun AttachmentViewer(file: UntisClient.DownloadedAttachment, onOpenExte
             }.getOrDefault(emptyList())
         }
     }
+    val msgStrings = strings().messages
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -101,7 +106,29 @@ internal fun AttachmentViewer(file: UntisClient.DownloadedAttachment, onOpenExte
             ) {
                 PokyhIconButton(icon = PokyhIcons.close, contentDescription = strings().common.close, onClick = onDismiss)
                 Text(file.name, style = PokyhType.headline, color = PokyhTheme.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                PokyhTextButton(text = strings().messages.openExternally, onClick = onOpenExternally)
+                // Into the phone's Downloads, without asking where (dev.plattnericus.pokyh.ui.components.saveToDownloads).
+                PokyhIconButton(
+                    icon = PokyhIcons.download,
+                    contentDescription = strings().messages.download,
+                    onClick = {
+                        val saved = dev.plattnericus.pokyh.ui.components.saveToDownloads(context, file.name, file.mimeType, file.bytes)
+                        android.widget.Toast.makeText(context, if (saved != null) msgStrings.savedToDownloads(saved) else msgStrings.saveFailed, android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                )
+                FileActionsMenu(
+                pdf = pdf,
+                onOpenExternally = onOpenExternally,
+                onShare = {
+                    if (!dev.plattnericus.pokyh.ui.components.shareFile(context, file.name, file.mimeType, file.bytes)) {
+                        android.widget.Toast.makeText(context, msgStrings.saveFailed, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onPrint = {
+                    if (!dev.plattnericus.pokyh.ui.components.printPdf(context, file.name, file.bytes)) {
+                        android.widget.Toast.makeText(context, msgStrings.saveFailed, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+            )
             }
             val list = pages
             when {
@@ -135,5 +162,39 @@ internal fun AttachmentViewer(file: UntisClient.DownloadedAttachment, onOpenExte
                 }
             }
         }
+    }
+}
+
+/** The ⋮ beside "download": a small menu dropping down from it with what else can be done. */
+@Composable
+private fun FileActionsMenu(pdf: Boolean, onOpenExternally: () -> Unit, onShare: () -> Unit, onPrint: () -> Unit) {
+    val t = strings().messages
+    var open by remember { mutableStateOf(false) }
+    Box {
+        PokyhIconButton(icon = PokyhIcons.more, contentDescription = t.fileActions, onClick = { open = !open })
+        dev.plattnericus.pokyh.ui.components.HeaderDropdown(expanded = open, onDismiss = { open = false }, width = 248.dp) {
+            FileActionRow(PokyhIcons.openOut, t.openExternally) { open = false; onOpenExternally() }
+            FileActionRow(PokyhIcons.share, t.shareFile) { open = false; onShare() }
+            if (pdf) FileActionRow(PokyhIcons.print, t.printFile) { open = false; onPrint() }
+        }
+    }
+}
+
+@Composable
+private fun FileActionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, onClick: () -> Unit) {
+    val colors = PokyhTheme.colors
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(shape)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        androidx.compose.material3.Icon(icon, contentDescription = null, tint = colors.textSecondary, modifier = Modifier.size(20.dp))
+        Text(text, style = PokyhType.body, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

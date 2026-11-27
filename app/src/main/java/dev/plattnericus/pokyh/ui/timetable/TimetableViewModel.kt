@@ -74,6 +74,7 @@ class TimetableViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
     private val backendClient: BackendClient,
+    private val viaBackend: dev.plattnericus.pokyh.data.backend.UntisViaBackend,
     private val widgetDataBridge: WidgetDataBridge,
     private val offlineStore: OfflineStore,
 ) : ViewModel() {
@@ -108,33 +109,6 @@ class TimetableViewModel @Inject constructor(
     private val _detail = MutableStateFlow<MergedSlot?>(null)
     val detail: StateFlow<MergedSlot?> = _detail.asStateFlow()
 
-    /**
-     * The subject keys the POKYH backend has a header image for.
-     *
-     * Held as a set of keys rather than a set of URLs because the backend has no placeholder: a
-     * request for a subject it has never seen is an error, not a default image. Knowing which
-     * keys exist is what lets the detail sheet choose between a photo and its monogram fallback
-     * *before* it asks for anything — same contract the web frontend works to.
-     */
-    private val _subjectImageKeys = MutableStateFlow<Set<String>>(emptySet())
-    val subjectImageKeys: StateFlow<Set<String>> = _subjectImageKeys.asStateFlow()
-
-    /**
-     * The image URL for a subject, or null when the backend has none for it.
-     *
-     * Paired with [subjectImageHeaders] — the route rejects the key as a query parameter, so the
-     * URL alone will not load.
-     */
-    fun subjectImageUrl(subjectLong: String, subjectName: String): String? {
-        val key = backendClient.subjectImageKeyOf(subjectLong, subjectName)
-        if (key.isEmpty() || key !in _subjectImageKeys.value) return null
-        return backendClient.subjectImageUrl(key)
-    }
-
-    /** The headers a subject-image request has to carry. */
-    fun subjectImageHeaders(): Pair<String, String> =
-        backendClient.apiKeyHeaderName to backendClient.apiKeyHeaderValue
-
     /** Monday of the CURRENT calendar week (ISO-8601, Monday-first) — every [weekOffset] is
      * relative to this, exactly like iOS's `thisMonday`. */
     private val thisMonday: LocalDate by lazy {
@@ -146,7 +120,6 @@ class TimetableViewModel @Inject constructor(
         selectInitialDay()
         ensureWeek(0)
         prefetchAdjacent(0)
-        viewModelScope.launch { _subjectImageKeys.value = backendClient.subjectImageKeys() }
         // The school's breaks by name, kept on the device for offline weeks.
         viewModelScope.launch {
             val s = appState.session.value?.takeIf { it.hasUntis } ?: return@launch
@@ -359,12 +332,10 @@ class TimetableViewModel @Inject constructor(
             if (shownSource != _source.value) return
             val entries = result.value
             _pages.update { it + (offset to WeekPageState.Data(entries, result.savedAt, result.stale)) }
-            // Only a live answer is worth telling the rest of the app about: reporting subjects
-            // from a restored week would ask the backend to generate images it was already asked
-            // for, and republishing it to the widget would overwrite a fresher snapshot with an
-            // older one just because this screen happened to open offline.
+            // Only a live answer is worth telling the widget about: republishing a restored week
+            // would overwrite a fresher snapshot with an older one just because this screen
+            // happened to open offline.
             if (!result.stale && shownSource == null) {
-                reportSubjects(entries)
                 // Current week of the default account → widget stays fresh (WidgetBridge.publish).
                 if (offset == 0 && appState.isDefaultAccountActive()) widgetDataBridge.publishTimetable(entries)
             }
@@ -377,21 +348,6 @@ class TimetableViewModel @Inject constructor(
                 val message = (e as? AppError)?.message ?: e.message ?: dev.plattnericus.pokyh.core.i18n.I18n.s.common.unknownError
                 _pages.update { it + (offset to WeekPageState.Error(message)) }
             }
-        }
-    }
-
-    /**
-     * Tells the backend which subjects this timetable contains, so it can generate images for any
-     * it doesn't have yet, then re-reads the key list in case it just gained some.
-     *
-     * Fire-and-forget, and [BackendClient.reportSubjects] itself only acts once per process — it
-     * is a hint to the server, and nothing on screen waits for it.
-     */
-    private fun reportSubjects(entries: List<TimetableEntry>) {
-        if (entries.isEmpty()) return
-        viewModelScope.launch {
-            backendClient.reportSubjects(entries.map { it.subjectName to it.subjectLong })
-            _subjectImageKeys.value = backendClient.subjectImageKeys()
         }
     }
 
@@ -525,7 +481,10 @@ class TimetableViewModel @Inject constructor(
         if (!excusesRead) {
             excusesRead = true
             appState.session.value?.takeIf { it.hasUntis }?.let { s ->
-                viewModelScope.launch { runCatching { untisClient.sentExcuses(s) }.onSuccess { _sentExcuses.value = it }.onFailure { excusesRead = false } }
+                viewModelScope.launch {
+                    runCatching {
+                        appState.backendOrDevice({ token -> viaBackend.sentExcuses(s, token) }) { untisClient.sentExcuses(s) }
+                    }.onSuccess { _sentExcuses.value = it }.onFailure { excusesRead = false } }
             }
         }
         _detail.value = slot

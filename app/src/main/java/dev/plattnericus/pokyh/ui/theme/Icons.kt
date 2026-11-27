@@ -26,16 +26,17 @@ object PokyhIcons {
 
     val tabHome = Ph.House
     val tabTimetable = Ph.CalendarBlank
-    val tabSchool = Ph.GraduationCap
-    val tabGrades = Ph.ChartBar
+    // The web's tabs (components/app/nav.ts): SquaresFour for "Schule", ChartLineUp for "Noten".
+    val tabSchool = Ph.SquaresFour
+    val tabGrades = Ph.ChartLineUp
     val tabMensa = Ph.ForkKnife
 
     /** The [PhFill] twin of a tab icon, for the selected tab only. */
     fun navSelected(icon: ImageVector): ImageVector = when (icon) {
         Ph.House -> PhFill.House
         Ph.CalendarBlank -> PhFill.CalendarBlank
-        Ph.GraduationCap -> PhFill.GraduationCap
-        Ph.ChartBar -> PhFill.ChartBar
+        Ph.SquaresFour -> PhFill.SquaresFour
+        Ph.ChartLineUp -> PhFill.ChartLineUp
         Ph.ForkKnife -> PhFill.ForkKnife
         else -> icon
     }
@@ -81,6 +82,10 @@ object PokyhIcons {
     val timetable = Ph.CalendarBlank
     val calendarDay = Ph.CalendarDots
     val exam = Ph.ClipboardText
+    /** The web's class page glyphs (Phosphor bold): exams, homework, an open absence. */
+    val classExams = PhBold.Exam
+    val classHomework = PhBold.NotePencil
+    val absenceOpen = PhBold.XCircle
     val noExam = PhFill.SealCheck
     val grades = Ph.ChartBar
     val gradeTrend = Ph.ChartLineUp
@@ -96,6 +101,15 @@ object PokyhIcons {
     val holiday = Ph.Umbrella
     val weekend = Ph.Sun
     val room = Ph.MapPin
+    // The lesson popup, as the website's.
+    val lessonTeacher = Ph.ChalkboardTeacher
+    val lessonContent = Ph.BookOpenText
+    val lessonExam = Ph.ExamRegular
+    val lessonAbsent = Ph.UserMinus
+    /** The website's sheet close button (bold). */
+    val sheetClose = PhBold.X
+    val print = Ph.Printer
+    val openOut = Ph.ArrowSquareOut
     val replacement = Ph.ArrowsLeftRight
     val recent = Ph.ClockCounterClockwise
     val calculator = Ph.Function

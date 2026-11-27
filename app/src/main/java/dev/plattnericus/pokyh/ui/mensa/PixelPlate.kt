@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,8 +52,8 @@ import androidx.compose.ui.graphics.toArgb
 
 /**
  * A dish served as pixel art — the web's `components/mensa/PixelPlate.tsx`: a glazed plate, lit
- * from the top left, with its shadow dithered onto the table. The dish photo lies sharp in the
- * well, cut to the plate's pixel edge; without a photo a small pixel meal in the dish's style
+ * from the top left, with its shadow dithered onto the table. The dish photo fills the
+ * well, cut to the plate's pixel edge (see [PHOTO_WELL]); without a photo a small pixel meal in the dish's style
  * stands in. Two sizes: [PlateSize.Table] for the next dish (between fork and knife, steam rising
  * in steps, the glaze glinting now and then) and [PlateSize.Plate] for the plan's rows.
  */
@@ -79,7 +82,24 @@ private class Geometry(
     val boxX = floor(cx - rFood).toInt()
     val boxY = floor(cy - rFood).toInt()
     val boxN = ceil(cx + rFood).toInt() - boxX
+
+    // The photo's well: inside the step down from the rim, as a square in whole pixels.
+    val rWell = rRim - 1
+    val wellX = floor(cx - rWell).toInt()
+    val wellY = floor(cy - rWell).toInt()
+    val wellN = ceil(cx + rWell).toInt() - wellX
+    /** The photo's width on the scene: the well shows [PHOTO_WELL] of it each side of the middle. */
+    val shot = rWell / PHOTO_WELL
 }
+
+/**
+ * The dish photos are POKYH's own: a white plate from above on a transparent ground, filling
+ * about 96 % of the square. Put into the pixel plate as they are, they were a small plate inside
+ * the plate; so the photo fills the whole well, zoomed so its own white rim falls outside and the
+ * food lies on the pixel plate (the web's PixelPlate). The share of the photo's width the well
+ * shows: inside its own rim (its plate ends at 0.48).
+ */
+private const val PHOTO_WELL = 0.4
 
 private val TABLE = Geometry(112, 64, 56.0, 31.0, 28.5, 23.0, 19.5, 2 to 3, 3 to 5)
 private val PLATE = Geometry(36, 36, 17.0, 17.0, 15.5, 12.5, 10.5, 1 to 2, 2 to 3)
@@ -221,6 +241,23 @@ private class FoodShape(private val g: Geometry) : Shape {
             var x0 = -1
             var x1 = -1
             for (x in 0 until n) if (inFood(g, x, y)) { if (x0 < 0) x0 = x; x1 = x }
+            if (x0 < 0) continue
+            path.addRect(androidx.compose.ui.geometry.Rect(x0 * s, y * s, (x1 + 1) * s, (y + 1) * s))
+        }
+        return Outline.Generic(path)
+    }
+}
+
+/** The well's outline in whole pixels, so the photo keeps the plate's pixel edge. */
+private class WellShape(private val g: Geometry) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val n = g.wellN
+        val s = size.width / n
+        val path = Path()
+        for (y in 0 until n) {
+            var x0 = -1
+            var x1 = -1
+            for (x in 0 until n) if (dist(x + g.wellX, y + g.wellY, g.cx, g.cy) <= g.rWell) { if (x0 < 0) x0 = x; x1 = x }
             if (x0 < 0) continue
             path.addRect(androidx.compose.ui.geometry.Rect(x0 * s, y * s, (x1 + 1) * s, (y + 1) * s))
         }
@@ -426,13 +463,25 @@ fun PixelPlate(
                         )
                     }
                 }
-                if (!photo.isNullOrBlank()) {
+            }
+            if (!photo.isNullOrBlank()) {
+                // The photo fills the well up to the step down from the rim, cut to its pixel edge.
+                Box(
+                    Modifier
+                        .offset(x = unit * g.wellX, y = unit * g.wellY)
+                        .size(unit * g.wellN)
+                        .clip(WellShape(g)),
+                ) {
                     AsyncImage(
-                        model = photo,
+                        model = dev.plattnericus.pokyh.core.images.DishImages.url(photo, if (table) dev.plattnericus.pokyh.core.images.DishImages.TABLE else dev.plattnericus.pokyh.core.images.DishImages.PLATE),
                         contentDescription = null,
-                        contentScale = ContentScale.Crop,
+                        contentScale = ContentScale.Fit,
                         onSuccess = { photoShown = true },
-                        modifier = Modifier.fillMaxSize(),
+                        onError = { photoShown = false },
+                        modifier = Modifier
+                            .wrapContentSize(Alignment.TopStart, unbounded = true)
+                            .offset(x = unit * (g.cx - g.wellX - g.shot / 2).toFloat(), y = unit * (g.cy - g.wellY - g.shot / 2).toFloat())
+                            .requiredSize(unit * g.shot.toFloat()),
                     )
                 }
             }

@@ -171,6 +171,7 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
+                fillActions = true,
                 title = if (phone) null else strings().nav.timetable,
                 nav = TopBarNav.None,
                 actions = {
@@ -280,19 +281,11 @@ fun TimetableScreen(onNavigate: (String) -> Unit, viewModel: TimetableViewModel 
     }
 
     detail?.let { slot ->
-        // Resolved here rather than inside the sheet so the sheet stays a pure renderer, and so
-        // it re-resolves if the backend's key list lands while the sheet is already open.
-        val subjectImageKeys by viewModel.subjectImageKeys.collectAsStateWithLifecycle()
-        val imageUrl = remember(slot.id, subjectImageKeys) {
-            viewModel.subjectImageUrl(slot.display.subjectLong, slot.display.subjectName)
-        }
         val date = slot.display.date
         val schoolYear = if ((date / 100) % 100 >= 9) date / 10000 else date / 10000 - 1
         val lessonDetail by viewModel.lessonDetail.collectAsStateWithLifecycle()
         LessonDetailSheet(
             slot = slot,
-            imageUrl = imageUrl,
-            imageHeader = viewModel.subjectImageHeaders(),
             onDismiss = viewModel::dismissDetail,
             absences = if (viewModel.source.value != null) emptyList() else absences[schoolYear].orEmpty(),
             detailLoading = lessonDetail.loading,

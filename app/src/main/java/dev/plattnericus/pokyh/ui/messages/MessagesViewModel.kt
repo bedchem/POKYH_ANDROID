@@ -32,6 +32,7 @@ class MessagesViewModel @Inject constructor(
     private val appState: AppState,
     private val untisClient: UntisClient,
     private val offlineStore: OfflineStore,
+    private val notifications: dev.plattnericus.pokyh.core.notifications.PokyhNotifications,
 ) : ViewModel() {
 
     // ── Folder list (MessagesView) ──────────────────────────────────────────
@@ -237,6 +238,8 @@ class MessagesViewModel @Inject constructor(
     val detail: StateFlow<DetailUiState> = _detail.asStateFlow()
 
     fun loadDetail(id: Int, outgoing: Boolean = false) {
+        // Opened: its notification in the shade goes.
+        notifications.dismissMessage(id)
         val session = appState.session.value ?: return
         _detail.value = DetailUiState(loading = true)
         viewModelScope.launch {

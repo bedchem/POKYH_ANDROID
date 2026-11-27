@@ -93,6 +93,7 @@ fun SchoolHubScreen(
         containerColor = PokyhTheme.colors.bg,
         topBar = {
             PokyhTopBar(
+                fillActions = true,
                 title = strings().nav.school,
                 eyebrow = state.subtitle.ifEmpty { null },
                 nav = TopBarNav.None,

@@ -313,10 +313,11 @@ internal fun MensaBlock(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Box(Modifier.width(128.dp).aspectRatio(4f / 3f).clip(RoundedCornerShape(16.dp)).background(butter.fill), contentAlignment = Alignment.Center) {
-                    if (!lead.imageUrl.isNullOrBlank()) {
-                        AsyncImage(model = lead.imageUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                    } else {
+                // The photo is a plate on a transparent ground: shown whole, no tile behind it.
+                if (!lead.imageUrl.isNullOrBlank()) {
+                    AsyncImage(model = dev.plattnericus.pokyh.core.images.DishImages.url(lead.imageUrl, 384), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.size(96.dp))
+                } else {
+                    Box(Modifier.width(128.dp).aspectRatio(4f / 3f).clip(RoundedCornerShape(16.dp)).background(butter.fill), contentAlignment = Alignment.Center) {
                         Icon(PokyhIcons.mensa, contentDescription = null, tint = butter.ink.copy(alpha = 0.6f), modifier = Modifier.size(30.dp))
                     }
                 }
@@ -335,10 +336,10 @@ internal fun MensaBlock(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(butter.fill), contentAlignment = Alignment.Center) {
-                        if (!d.imageUrl.isNullOrBlank()) {
-                            AsyncImage(model = d.imageUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        } else {
+                    if (!d.imageUrl.isNullOrBlank()) {
+                        AsyncImage(model = dev.plattnericus.pokyh.core.images.DishImages.url(d.imageUrl, dev.plattnericus.pokyh.core.images.DishImages.PLATE), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.size(44.dp))
+                    } else {
+                        Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(butter.fill), contentAlignment = Alignment.Center) {
                             Icon(PokyhIcons.mensa, contentDescription = null, tint = butter.ink.copy(alpha = 0.6f), modifier = Modifier.size(18.dp))
                         }
                     }

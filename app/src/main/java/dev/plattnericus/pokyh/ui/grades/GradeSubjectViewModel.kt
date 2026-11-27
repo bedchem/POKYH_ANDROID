@@ -36,7 +36,11 @@ class GradeSubjectViewModel @Inject constructor(
     private val untisClient: UntisClient,
     private val offlineStore: OfflineStore,
     private val prefsStore: PreferencesStore,
+    private val notifications: dev.plattnericus.pokyh.core.notifications.PokyhNotifications,
 ) : ViewModel() {
+
+    // Opened from a new-grade notification or the list: the new-grade notifications go.
+    init { notifications.dismissGrades() }
 
     val subjectId: Int = savedStateHandle.get<Int>("subjectId") ?: 0
 

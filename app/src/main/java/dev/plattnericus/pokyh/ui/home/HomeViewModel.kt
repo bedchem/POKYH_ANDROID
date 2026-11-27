@@ -26,6 +26,7 @@ import dev.plattnericus.pokyh.data.sync.OutboxItem
 import dev.plattnericus.pokyh.data.untis.MergedSlot
 import dev.plattnericus.pokyh.data.untis.TimetableSlots
 import dev.plattnericus.pokyh.data.untis.UntisClient
+import dev.plattnericus.pokyh.data.untis.updateGradeScale
 import dev.plattnericus.pokyh.state.AppState
 import dev.plattnericus.pokyh.ui.navigation.AppTab
 import dev.plattnericus.pokyh.ui.reminders.visibleReminders
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -239,6 +241,17 @@ class HomeViewModel @Inject constructor(
             appState.session.map { it?.apiToken != null }.distinctUntilChanged().collect { hasToken ->
                 if (hasToken) loadBackendWidgets()
             }
+        }
+        // An offline session (no WebUntis token: the unlock lost the race to WebUntis) that the
+        // background sign-in just upgraded: everything from WebUntis — today, grades, exams, the
+        // absence note and whether "Abwesenheit melden" shows — loads for real now. Before, it
+        // stayed on the offline result until the app was restarted.
+        viewModelScope.launch {
+            appState.session
+                .map { it?.username to it?.bearerToken?.isNotEmpty() }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { (_, hasToken) -> if (hasToken == true) loadAll() }
         }
         // Queued Todos/Erinnerungen: count them, and reload once one has gone out.
         viewModelScope.launch {
@@ -445,7 +458,6 @@ class HomeViewModel @Inject constructor(
                     todayUnavailable = result.stale && all.isEmpty(),
                 )
             }
-            prefetchSubjectImages(all.filter { it.date >= today })
         } catch (e: AppError) {
             if (e.isSessionExpired) appState.handleSessionExpired()
             _state.update { it.copy(loadingToday = false, todaySlots = emptyList(), todayUnavailable = true) }
@@ -456,12 +468,19 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun loadGrades(session: UserSession) {
         _state.update { it.copy(loadingGrades = true) }
+        // The year's subject colours from the stored grades at once, before the timetable draws.
+        runCatching {
+            offlineStore.peek("grades-${session.studentId}-${SchoolDates.currentSchoolYear}", ListSerializer(SubjectGrades.serializer()))
+        }.getOrNull()?.let { stored -> dev.plattnericus.pokyh.ui.theme.SubjectHues.setYear(stored.value.map { it.subjectName }) }
         try {
             // Same key as the Noten tab, so either screen having loaded online is enough.
             val subjects = offlineStore.load(
                 key = "grades-${session.studentId}-${SchoolDates.currentSchoolYear}",
                 serializer = ListSerializer(SubjectGrades.serializer()),
             ) { untisClient.grades(session, session.studentId, null) }.value
+            // Subject colours for the whole year (SubjectHues.setYear), and the grading scale.
+            untisClient.updateGradeScale(session, subjects, SchoolDates.currentSchoolYear, true, offlineStore)
+            dev.plattnericus.pokyh.ui.theme.SubjectHues.setYear(subjects.map { it.subjectName })
             dev.plattnericus.pokyh.core.util.GradeEntryOrder.observe(subjects)
             // As on the web's Home (home/page.tsx parseGrades): the grades entered last, newest
             // first — not the latest exam dates (GradeEntryOrder, the web's lib/grade-order.ts).
@@ -579,32 +598,13 @@ class HomeViewModel @Inject constructor(
             // sheet show the same photos full-width. Pulling them now — while this screen is
             // already talking to the server — is what makes those screens instant, and what
             // leaves them with pictures at all when the connection is gone later.
-            imagePrefetcher.prefetch(week.flatMap { day -> day.dishes }.mapNotNull { it.imageUrl })
+            // The sizes the screens draw (DishImages): every plate's small copy, Home's large
+            // one and the next dish's, so each screen finds its own address in the cache.
+            val photos = week.flatMap { day -> day.dishes }.mapNotNull { it.imageUrl }
+            imagePrefetcher.prefetch(photos.mapNotNull { dev.plattnericus.pokyh.core.images.DishImages.url(it, dev.plattnericus.pokyh.core.images.DishImages.PLATE) })
+            imagePrefetcher.prefetch(week.take(1).flatMap { day -> day.dishes }.mapNotNull { it.imageUrl }.flatMap { listOfNotNull(dev.plattnericus.pokyh.core.images.DishImages.url(it, 384), dev.plattnericus.pokyh.core.images.DishImages.url(it, dev.plattnericus.pokyh.core.images.DishImages.TABLE)) })
         } catch (e: Exception) {
             _state.update { it.copy(loadingMensa = false) }
-        }
-    }
-
-    /**
-     * Pull the header images for the subjects in today's and tomorrow's lessons.
-     *
-     * Only those: the backend has an image per subject and a school year's worth is a lot of
-     * megabytes to fetch speculatively. The lessons a user is about to tap on are the next two
-     * days' — that is what the Home list shows and what the timetable opens on.
-     */
-    private fun prefetchSubjectImages(entries: List<TimetableEntry>) {
-        if (entries.isEmpty()) return
-        viewModelScope.launch {
-            val keys = runCatching { backendClient.subjectImageKeys() }.getOrNull() ?: return@launch
-            val urls = entries
-                .map { backendClient.subjectImageKeyOf(it.subjectLong, it.subjectName) }
-                .filter { it.isNotEmpty() && it in keys }
-                .distinct()
-                .map { backendClient.subjectImageUrl(it) }
-            imagePrefetcher.prefetch(
-                urls = urls,
-                headers = backendClient.apiKeyHeaderName to backendClient.apiKeyHeaderValue,
-            )
         }
     }
 

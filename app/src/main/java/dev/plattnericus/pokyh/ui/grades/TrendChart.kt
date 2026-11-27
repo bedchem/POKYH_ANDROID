@@ -59,9 +59,10 @@ fun TrendChart(points: List<TrendPoint>, modifier: Modifier = Modifier) {
         var sum = 0.0
         points.mapIndexed { i, p -> sum += p.value; sum / (i + 1) }
     }
-    val lowest = points.minOfOrNull { it.value } ?: 6.0
-    val yMin = floor(minOf(4.0, lowest)).coerceAtLeast(1.0)
-    val yMax = 10.0
+    // The school's scale (core/util/GradeScale.kt): from its best mark to the critical fails (or the worst given), better up.
+    val scale = dev.plattnericus.pokyh.core.util.GradeScales.current
+    val yMin = if (scale.higherIsBetter) floor(minOf(scale.critical, points.minOfOrNull { it.value } ?: scale.pass)).coerceAtLeast(scale.min) else scale.min
+    val yMax = if (scale.higherIsBetter) scale.max else kotlin.math.ceil(maxOf(scale.critical, points.maxOfOrNull { it.value } ?: scale.pass)).coerceAtMost(scale.max)
     val axisW = 22.dp
     val chartH = 200.dp
     val avgColor = gradeColor(running.lastOrNull() ?: 6.0)
@@ -81,7 +82,10 @@ fun TrendChart(points: List<TrendPoint>, modifier: Modifier = Modifier) {
                 val left = axisW.toPx()
                 val w = size.width - left
                 val h = size.height
-                fun y(v: Double) = (h - (v.coerceIn(yMin, yMax) - yMin) / (yMax - yMin) * h).toFloat()
+                fun y(v: Double): Float {
+                    val t = (v.coerceIn(yMin, yMax) - yMin) / (yMax - yMin).takeIf { it != 0.0 }.let { it ?: 1.0 }
+                    return (h - (if (scale.higherIsBetter) t else 1 - t) * h).toFloat()
+                }
                 // The band under 6.
                 drawRect(Brand.danger.copy(alpha = 0.07f), topLeft = Offset(left, y(6.0)), size = Size(w, h - y(6.0)))
                 // A line at every grade.
@@ -108,7 +112,7 @@ fun TrendChart(points: List<TrendPoint>, modifier: Modifier = Modifier) {
                 }
                 points.forEachIndexed { i, p ->
                     val c = Offset(xOf(i, points.size, w, left), y(p.value))
-                    val tone = if (p.value < 6) Brand.danger else colors.textPrimary
+                    val tone = if (scale.certain && !scale.passes(p.value)) Brand.danger else colors.textPrimary
                     val r = if (selected == i) 6.dp.toPx() else 4.5.dp.toPx()
                     if (p.own) {
                         drawCircle(colors.card, r, c)

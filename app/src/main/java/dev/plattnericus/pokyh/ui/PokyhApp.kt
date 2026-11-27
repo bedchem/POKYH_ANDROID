@@ -1,5 +1,6 @@
 package dev.plattnericus.pokyh.ui
 
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,22 +77,56 @@ fun PokyhApp(appState: AppState) {
     // throughout that flow, so no Authed->Authed "transition" fires here).
     var previousPhase by remember { mutableStateOf(phase) }
     var showSuccessFlash by remember { mutableStateOf(false) }
+    // Signed in at the end of the intro: its own "Sieht gut aus!" with the mascot and confetti
+    // in place of the plain tick.
+    var showIntroSuccess by remember { mutableStateOf(false) }
     LaunchedEffect(phase) {
         if (phase == AppState.Phase.Authed && previousPhase != AppState.Phase.Authed) {
+            val intro = dev.plattnericus.pokyh.ui.login.IntroCelebration.pending.value
+            dev.plattnericus.pokyh.ui.login.IntroCelebration.pending.value = false
             showSuccessFlash = true
+            showIntroSuccess = intro
             // Long enough for the tick to finish being drawn and register as finished.
             // At 500ms the stroke was still travelling when the overlay disappeared.
-            delay(950)
+            delay(if (intro) 2300 else 950)
             showSuccessFlash = false
+            showIntroSuccess = false
         }
         previousPhase = phase
     }
 
     Box(Modifier.fillMaxSize().background(PokyhTheme.colors.bg)) {
-        when (phase) {
-            AppState.Phase.Login -> dev.plattnericus.pokyh.ui.login.LoginScreen()
-            AppState.Phase.Lock -> dev.plattnericus.pokyh.ui.lock.LockScreen()
-            AppState.Phase.Authed -> AuthedShell(appState)
+        // An account saved from before this version: first a one-time greeting and its school to
+        // confirm, *then* whatever comes next (the lock screen, the app, or the sign-in form if a
+        // password is due anyway). Shown instead of that screen, so the lock screen's fingerprint
+        // prompt waits for it. The sign-in itself is never touched.
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val accounts by appState.accounts.collectAsStateWithLifecycle()
+        val session by appState.session.collectAsStateWithLifecycle()
+        // Read again on every phase change: a first sign-in through the intro marked it seen.
+        var welcomed by remember(phase) { mutableStateOf(dev.plattnericus.pokyh.ui.login.IntroPrefs.seen(context)) }
+        val greet = !welcomed && accounts.isNotEmpty() && !showSuccessFlash
+        androidx.compose.animation.AnimatedContent(
+            targetState = greet,
+            transitionSpec = {
+                androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(450, delayMillis = 100)) togetherWith
+                    androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(250))
+            },
+            label = "updateWelcome",
+        ) { showGreeting ->
+            if (showGreeting) {
+                val account = accounts.firstOrNull { it.username.equals(session?.username, ignoreCase = true) }
+                    ?: accounts.firstOrNull()
+                // An account without a stored school signs in at the default one (as everywhere).
+                val school = account?.school ?: dev.plattnericus.pokyh.data.model.School.Default
+                dev.plattnericus.pokyh.ui.login.UpdateWelcome(school = school, onDone = { welcomed = true })
+            } else {
+                when (phase) {
+                    AppState.Phase.Login -> dev.plattnericus.pokyh.ui.login.LoginScreen()
+                    AppState.Phase.Lock -> dev.plattnericus.pokyh.ui.lock.LockScreen()
+                    AppState.Phase.Authed -> AuthedShell(appState)
+                }
+            }
         }
 
         if (busy && phase == AppState.Phase.Authed) {
@@ -122,8 +157,17 @@ fun PokyhApp(appState: AppState) {
             )
         }
 
-        if (showSuccessFlash) {
+        if (showSuccessFlash && !showIntroSuccess) {
             SuccessFlash()
+        }
+        // The intro's own "Sieht gut aus!", fading away over the app once it has had its moment.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showIntroSuccess,
+            // No fade in: it takes over from the intro on the same background, seamlessly.
+            enter = androidx.compose.animation.EnterTransition.None,
+            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(500)),
+        ) {
+            dev.plattnericus.pokyh.ui.login.IntroSuccess()
         }
 
         // Update prompt from GitHub releases — in every phase, since an outdated app that can't

@@ -265,7 +265,9 @@ jobs:
           fi
           [ "$failed" -eq 0 ] || exit 1
 
-          (cd dist && sha256sum "$APK_NAME" > "$APK_NAME.sha256")
+          # The APK's hash goes into this run's summary only. The release gets the APK alone:
+          # a separate .sha256 file beside it confused people downloading the app.
+          apk_sha=$(sha256sum "$apk" | cut -d ' ' -f 1)
           size=$(stat -c %s "$apk")
           echo "Signing certificate SHA-256: $cert"
           {
@@ -276,7 +278,7 @@ jobs:
             echo "| Package | \`$package\` |"
             echo "| versionName / versionCode | $name / $code |"
             echo "| Size | $size bytes |"
-            echo "| APK SHA-256 | \`$(cut -d ' ' -f 1 "dist/$APK_NAME.sha256")\` |"
+            echo "| APK SHA-256 | \`$apk_sha\` |"
             echo "| Signing certificate SHA-256 | \`$cert\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -327,9 +329,9 @@ jobs:
             while IFS= read -r name; do echo "  - $name"; done <<< "$others"
             exit 1
           fi
-          gh release upload "$TAG" "dist/$APK_NAME" "dist/$APK_NAME.sha256" --clobber
+          gh release upload "$TAG" "dist/$APK_NAME" --clobber
           if [ "$(apks)" != "$APK_NAME" ]; then
             echo "::error::After the upload the release should have exactly one APK, $APK_NAME."
             exit 1
           fi
-          echo "Attached $APK_NAME and $APK_NAME.sha256 to $TAG."
+          echo "Attached $APK_NAME to $TAG."

@@ -2,6 +2,14 @@
 
 package dev.plattnericus.pokyh.ui.grades
 
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -112,41 +120,20 @@ fun GradesScreen(
     var yearMenuOpen by remember { mutableStateOf(false) }
 
     val g = strings().grades
-    val dashboard = remember(subjects, g) { buildGradesDashboard(subjects, todayLocalDate()) }
+    val dashboard = remember(subjects, g, dev.plattnericus.pokyh.core.util.GradeScales.current) { buildGradesDashboard(subjects, todayLocalDate()) }
+    // Each time the tab is shown: the new-grade notifications go.
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.onShown() }
 
     Scaffold(
         modifier = Modifier.appBackground(),
         containerColor = PokyhTheme.colors.bg,
         topBar = {
+            // Only the web's top bar stays; "Noten" and the year scroll with the page, as there.
             PokyhTopBar(
-                title = g.schoolYearTitle(year),
+                fillActions = true,
+                title = null,
                 nav = TopBarNav.None,
                 actions = {
-                    Box {
-                        PokyhMenuButton(
-                            label = "$year/${(year + 1) % 100}",
-                            expanded = yearMenuOpen,
-                            onClick = { yearMenuOpen = true },
-                        )
-                        DropdownMenu(expanded = yearMenuOpen, onDismissRequest = { yearMenuOpen = false }) {
-                            viewModel.availableYears.forEach { y ->
-                                DropdownMenuItem(
-                                    text = { Text("$y / ${y + 1}", style = PokyhType.body) },
-                                    trailingIcon = {
-                                        if (y == year) {
-                                            Icon(
-                                                imageVector = PokyhIcons.check,
-                                                contentDescription = null,
-                                                tint = PokyhTheme.colors.accentText,
-                                                modifier = Modifier.size(16.dp),
-                                            )
-                                        }
-                                    },
-                                    onClick = { viewModel.selectYear(y); yearMenuOpen = false },
-                                )
-                            }
-                        }
-                    }
                     TabRootActions(
                         avatarContent = { CurrentUserAvatar() },
                         unreadMessages = rememberUnreadMessageCount(),
@@ -168,6 +155,8 @@ fun GradesScreen(
                     subjects = subjects,
                     sort = sort,
                     year = year,
+                    years = viewModel.availableYears,
+                    onYearChange = viewModel::selectYear,
                     onSortChange = viewModel::selectSort,
                     onSubjectClick = onSubjectClick,
                 )
@@ -183,6 +172,8 @@ private fun GradesContent(
     subjects: List<SubjectGrades>,
     sort: GradesViewModel.SortMode,
     year: Int,
+    years: List<Int>,
+    onYearChange: (Int) -> Unit,
     onSortChange: (GradesViewModel.SortMode) -> Unit,
     onSubjectClick: (lessonId: Int, year: Int) -> Unit,
 ) {
@@ -214,44 +205,68 @@ private fun GradesContent(
     var expanded by remember { mutableStateOf(setOf<Int>()) }
     val allExpanded = sortedSubjects.isNotEmpty() && expanded.size == sortedSubjects.size
 
+    val colors = PokyhTheme.colors
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = PokyhSpacing.screenH)
-            .padding(bottom = PokyhSpacing.xxxl),
-        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
+            .padding(top = 16.dp, bottom = 80.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.xxs)) {
-            DashboardEyebrow(dashboard)
-            AsOfLabel(savedAt = freshness.savedAt, stale = freshness.stale)
+        // The web's page head (grades/page.tsx, `.page-head`), stacked on phones: "Noten", the
+        // school year with the summary under it, the year picker below; 28dp to the cards.
+        Column(Modifier.fadeIn(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column {
+                Text(
+                    strings().nav.grades,
+                    style = PokyhType.largeTitle.copy(fontSize = 34.sp, lineHeight = 36.sp, letterSpacing = (-0.05).em),
+                    color = colors.textPrimary,
+                )
+                Spacer(Modifier.size(8.dp))
+                // Just the school year: the counts and dates are on the cards below.
+                Text(
+                    g.schoolYearTitle(year),
+                    style = PokyhType.body.copy(fontSize = 15.sp, lineHeight = 22.sp),
+                    color = colors.textSecondary,
+                )
+                AsOfLabel(savedAt = freshness.savedAt, stale = freshness.stale)
+            }
+            WebSelect(
+                label = "$year / ${year + 1}",
+                options = years.map { y -> "$y / ${y + 1}" to (y == year) },
+                onPick = { i -> onYearChange(years[i]) },
+                minWidth = 132.dp,
+            )
         }
+        Spacer(Modifier.size(28.dp))
 
         StatCardGrid(dashboard)
+        Spacer(Modifier.size(44.dp))
 
         Column(modifier = Modifier.fadeIn(160)) {
-            PokyhSectionHeader(
-                title = g.subjects,
-                trailing = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
-                    ) {
-                        SortMenu(sort = sort, onSortChange = onSortChange)
-                        PokyhTextButton(
-                            text = if (allExpanded) g.collapseAll else g.expandAll,
-                            onClick = {
-                                expanded = if (allExpanded) {
-                                    emptySet()
-                                } else {
-                                    sortedSubjects.map { it.first.lessonId }.toSet()
-                                }
-                            },
-                        )
-                    }
-                },
+            // `.timeline-head`, stacked on phones: "Fächer" at 22, then the sort and expand buttons.
+            Text(
+                g.subjects,
+                style = PokyhType.title2.copy(fontSize = 22.sp, lineHeight = 26.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.035).em),
+                color = colors.textPrimary,
             )
-            Spacer(Modifier.size(PokyhSpacing.headerContent))
+            Spacer(Modifier.size(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val modes = GradesViewModel.SortMode.entries
+                WebSelect(
+                    label = sortLabel(sort),
+                    options = modes.map { sortLabel(it) to (it == sort) },
+                    onPick = { i -> onSortChange(modes[i]) },
+                    minWidth = 150.dp,
+                )
+                WebButton(
+                    text = if (allExpanded) g.collapseAll else g.expandAll,
+                    onClick = {
+                        expanded = if (allExpanded) emptySet() else sortedSubjects.map { it.first.lessonId }.toSet()
+                    },
+                )
+            }
+            Spacer(Modifier.size(14.dp))
 
             if (sortedSubjects.isEmpty()) {
                 // Only reachable when WebUntis returns no lessons at all for the year — a
@@ -260,9 +275,20 @@ private fun GradesContent(
                     PixelState(title = g.emptyTitle, note = g.noSubjects, sprite = PixelSprite.Empty, compact = true)
                 }
             } else {
-                PokyhCard(padding = 0.dp) {
+                // `.timeline-list`: the surface, 26dp corners, 8dp in; rows of 18dp corners with
+                // thin rules between them, inset 14dp.
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(colors.card)
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                ) {
                     sortedSubjects.forEachIndexed { index, (subject, avg) ->
-                        if (index > 0) PokyhRowSeparator(startInset = 0.dp)
+                        if (index > 0) {
+                            Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(1.dp).background(colors.separator))
+                        }
                         SubjectExpandableRow(
                             subject = subject,
                             average = avg,
@@ -284,64 +310,127 @@ private fun GradesContent(
 }
 
 /**
- * The four dashboard cards as a 2x2 grid: Durchschnitt and Notenverhältnis on the first row,
- * Verteilung and Kürzlich on the second.
+ * The four cards as the pushed 2.1 grid: **square tiles**, two by two, 12dp apart. On a tablet
+ * (720dp and wider) all four sit in one row instead, so a tile stays tile-sized there too.
  *
- * Two things make it hold together on every screen size:
- *
- *  - **Square tiles.** Every card is `weight(1f).aspectRatio(1f)`, so all four are the same
- *    size on any screen and the grid reads as a grid. Measuring them at `IntrinsicSize.Min`
- *    instead — letting each row size to its tallest card — was the first attempt, and it gave
- *    four tall rectangles of three different heights whose content sat at the top with the
- *    bottom third empty. A fixed square is both more regular and easier to fill, and the cards
- *    fill it: their middle section takes the slack (see `CardBody`).
- *  - **Weights, not fixed widths.** The columns are `weight(1f)` either side of one
- *    [PokyhSpacing.md] gutter, so the grid is the content width minus one gap, whatever that
- *    width is — phone, large phone, or the capped measure [readableContent] applies on a tablet.
- *
- * The cards themselves re-pitch for the narrower column rather than dropping content; see
- * `StatSize` in GradesStatCards.kt.
+ * Every tile is as tall as it is wide. Only when the content truly needs more (a very large
+ * system font) do all four grow together, so nothing is cut and they stay the same size.
  */
 @Composable
-private fun StatCardGrid(dashboard: GradesDashboard, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
-        ) {
-            AverageStatCard(
-                dashboard = dashboard,
-                compact = true,
-                modifier = Modifier.weight(1f).aspectRatio(1f).fadeIn(),
-            )
-            RatioStatCard(
-                dashboard = dashboard,
-                compact = true,
-                modifier = Modifier.weight(1f).aspectRatio(1f).fadeIn(40),
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
-        ) {
-            DistributionStatCard(
-                dashboard = dashboard,
-                compact = true,
-                modifier = Modifier.weight(1f).aspectRatio(1f).fadeIn(80),
-            )
-            RecentStatCard(
-                dashboard = dashboard,
-                compact = true,
-                modifier = Modifier.weight(1f).aspectRatio(1f).fadeIn(120),
-            )
+private fun StatCardGrid(dashboard: GradesDashboard) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val gap = PokyhSpacing.md
+        val perRow = if (maxWidth >= 720.dp) 4 else 2
+        androidx.compose.runtime.CompositionLocalProvider(LocalStatCompact provides true) {
+            androidx.compose.ui.layout.Layout(
+                content = {
+                    AverageStatCard(dashboard = dashboard, modifier = Modifier.fadeIn())
+                    RatioStatCard(dashboard = dashboard, modifier = Modifier.fadeIn(40))
+                    DistributionStatCard(dashboard = dashboard, modifier = Modifier.fadeIn(80))
+                    RecentStatCard(dashboard = dashboard, modifier = Modifier.fadeIn(120))
+                },
+            ) { measurables, constraints ->
+                val gapPx = gap.roundToPx()
+                val tileW = (constraints.maxWidth - gapPx * (perRow - 1)) / perRow
+                // The distribution card is left out: its ring sizes itself to whatever height
+                // the tile leaves, so it would otherwise ask for its own width again on top.
+                val needed = measurables.filterIndexed { i, _ -> i != 2 }.maxOf { it.minIntrinsicHeight(tileW) }
+                val tileH = maxOf(tileW, needed)
+                val placeables = measurables.map { it.measure(androidx.compose.ui.unit.Constraints.fixed(tileW, tileH)) }
+                val rows = (placeables.size + perRow - 1) / perRow
+                layout(constraints.maxWidth, rows * tileH + (rows - 1) * gapPx) {
+                    placeables.forEachIndexed { i, p ->
+                        p.place(x = (i % perRow) * (tileW + gapPx), y = (i / perRow) * (tileH + gapPx))
+                    }
+                }
+            }
         }
     }
 }
 
-/** The dashboard's loading state: the 2x2 grid and the Fächer list, in outline. */
+/** The web's select button (grades/page.tsx, `.sort-select`): 40dp, the surface, 12dp corners, 14sp, a caret. */
+@Composable
+private fun WebSelect(label: String, options: List<Pair<String, Boolean>>, onPick: (Int) -> Unit, minWidth: androidx.compose.ui.unit.Dp) {
+    var open by remember { mutableStateOf(false) }
+    val caret by animateFloatAsState(if (open) 180f else 0f, tween(200), label = "selectCaret")
+    Box {
+        WebButton(
+            text = label,
+            onClick = { open = true },
+            modifier = Modifier.widthIn(min = minWidth),
+            trailing = { Icon(PokyhIcons.expandMenu, contentDescription = null, tint = PokyhTheme.colors.textPrimary, modifier = Modifier.size(14.dp).rotate(caret)) },
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            options.forEachIndexed { i, (text, selected) ->
+                val tone = dev.plattnericus.pokyh.ui.theme.PokyhDecorative.periwinkle(PokyhTheme.colors.isDark)
+                DropdownMenuItem(
+                    text = { Text(text, style = PokyhType.callout.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold), color = if (selected) tone.ink else PokyhTheme.colors.textPrimary) },
+                    // The chosen option on the periwinkle tone, as the web's `.custom-select-item.selected`.
+                    modifier = Modifier.padding(horizontal = 6.dp).clip(RoundedCornerShape(10.dp)).background(if (selected) tone.fill else Color.Transparent),
+                    onClick = { onPick(i); open = false },
+                )
+            }
+        }
+    }
+}
+
+/** The web's `.expand-all` / `.details-btn`: 40dp, the surface, 12dp corners, 14sp at 650. */
+@Composable
+private fun WebButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    fill: Color = PokyhTheme.colors.card,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = modifier
+            .height(40.dp)
+            .clip(shape)
+            .background(fill)
+            .pressHighlight(interaction, shape)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        // The web's `justify-content: space-between; gap: 8px`.
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text,
+            style = PokyhType.callout.copy(fontSize = 14.sp, fontWeight = FontWeight(650)),
+            color = PokyhTheme.colors.textPrimary,
+            maxLines = 1,
+        )
+        if (trailing != null) {
+            Box(Modifier.padding(start = 8.dp)) { trailing() }
+        }
+    }
+}
+
+/** The tone of a grade band, as the web colours averages (`.timeline-avg.v-*`): sage, butter, blush. */
+@Composable
+private fun bandTone(band: GradeBand) = when (band) {
+    GradeBand.Excellent, GradeBand.Positive -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.sage(PokyhTheme.colors.isDark)
+    GradeBand.Negative -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.butter(PokyhTheme.colors.isDark)
+    GradeBand.Critical -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.blush(PokyhTheme.colors.isDark)
+    GradeBand.Neutral -> dev.plattnericus.pokyh.ui.theme.DecorativeTone(PokyhTheme.colors.cardAlt, PokyhTheme.colors.textPrimary)
+}
+
+/** The web's `.grade-value` inks: `--success-ink`, `--warning-ink`, `--danger-ink`. */
+@Composable
+private fun valueInk(band: GradeBand): Color {
+    val dark = PokyhTheme.colors.isDark
+    return when (band) {
+        GradeBand.Excellent, GradeBand.Positive -> if (dark) Color(0xFF34D399) else Color(0xFF047857)
+        GradeBand.Negative -> if (dark) Color(0xFFFBBF24) else Color(0xFFA15C07)
+        GradeBand.Critical -> PokyhTheme.colors.dangerText
+        GradeBand.Neutral -> PokyhTheme.colors.textPrimary
+    }
+}
+
+/** The dashboard's loading state: the four cards and the Fächer list, in outline. */
 @Composable
 private fun GradesSkeleton() {
     Column(
@@ -349,16 +438,16 @@ private fun GradesSkeleton() {
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = PokyhSpacing.screenH)
-            .padding(top = PokyhSpacing.md, bottom = PokyhSpacing.xxxl),
+            .padding(top = 16.dp, bottom = PokyhSpacing.xxxl),
         verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
     ) {
-        SkeletonBlock(height = 11.dp, width = 210.dp)
-        Column(verticalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SkeletonBlock(height = 36.dp, width = 160.dp)
+            SkeletonBlock(height = 14.dp, width = 260.dp)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             repeat(2) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
-                ) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md)) {
                     StatCardSkeleton(modifier = Modifier.weight(1f).aspectRatio(1f), tall = true)
                     StatCardSkeleton(modifier = Modifier.weight(1f).aspectRatio(1f), tall = true)
                 }
@@ -384,37 +473,6 @@ private fun GradesSkeleton() {
                         SkeletonBlock(height = 16.dp, width = 30.dp)
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SortMenu(sort: GradesViewModel.SortMode, onSortChange: (GradesViewModel.SortMode) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        PokyhMenuButton(
-            label = sortLabel(sort),
-            leadingIcon = PokyhIcons.sort,
-            expanded = open,
-            onClick = { open = true },
-        )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            GradesViewModel.SortMode.entries.forEach { mode ->
-                DropdownMenuItem(
-                    text = { Text(sortLabel(mode), style = PokyhType.body) },
-                    trailingIcon = {
-                        if (sort == mode) {
-                            Icon(
-                                imageVector = PokyhIcons.check,
-                                contentDescription = null,
-                                tint = PokyhTheme.colors.accentText,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                    },
-                    onClick = { onSortChange(mode); open = false },
-                )
             }
         }
     }
@@ -453,45 +511,49 @@ private fun SubjectExpandableRow(
         label = "subjectChevron",
     )
 
+    val rowShape = RoundedCornerShape(18.dp)
     Column(modifier = Modifier.fillMaxWidth()) {
+        // `.timeline-row`: 64dp, 12dp in, the subject on its tone, the average in a band-toned pill.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .pressHighlight(interactionSource, shape = null)
+                .clip(rowShape)
+                .pressHighlight(interactionSource, rowShape)
                 .clickable(interactionSource = interactionSource, indication = null, onClick = onToggle)
-                .heightIn(min = 56.dp)
-                .padding(horizontal = PokyhSpacing.card, vertical = PokyhSpacing.md),
+                .heightIn(min = 64.dp)
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.sm),
-            ) {
-                PokyhFittedText(
+            Box(Modifier.weight(1f)) {
+                Text(
                     text = subject.subjectName,
-                    style = PokyhType.callout.semibold(),
+                    style = PokyhType.callout.copy(fontSize = 14.5.sp, fontWeight = FontWeight.Bold),
                     color = tone.ink,
                     maxLines = 1,
-                    // fill = false so a short name keeps a short chip; the count takes the rest.
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .weight(1f, fill = false)
-                        .background(tone.fill, PokyhShapes.xs)
-                        .padding(horizontal = PokyhSpacing.sm, vertical = 4.dp),
-                )
-                Text(
-                    text = strings().grades.gradeCount(subject.grades.size),
-                    style = PokyhType.caption,
-                    color = colors.textTertiary,
-                    maxLines = 1,
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(tone.fill)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
                 )
             }
-            Text(
-                text = if (average > 0) Fmt.num(average) else "–",
-                style = PokyhType.title3.monospacedDigits(),
-                color = if (average > 0) bandColor(gradeBand(average)) else colors.textSecondary,
-            )
+            val band = if (average > 0) bandTone(gradeBand(average)) else null
+            Box(
+                Modifier
+                    .widthIn(min = 58.dp)
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(band?.fill ?: colors.cardAlt)
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (average > 0) Fmt.num(average) else "-",
+                    style = PokyhType.headline.copy(fontSize = 15.5.sp, fontWeight = FontWeight.ExtraBold).monospacedDigits(),
+                    color = band?.ink ?: colors.textSecondary,
+                )
+            }
             Icon(
                 imageVector = PokyhIcons.expandMenu,
                 contentDescription = if (isExpanded) strings().grades.collapse else strings().grades.expand,
@@ -507,36 +569,33 @@ private fun SubjectExpandableRow(
             exit = fadeOut(tween(PokyhMotion.durationFast)) +
                 shrinkVertically(tween(PokyhMotion.durationStandard)),
         ) {
+            // `.timeline-panel`: the inset tone, 18dp corners, the grades and "Details" on the surface.
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // The subject's own pastel, at a fraction, so an expanded row reads as
-                    // belonging to the badge above it rather than as a grey drawer.
-                    .background(tone.fill.copy(alpha = if (colors.isDark) 0.55f else 0.85f))
-                    .padding(horizontal = PokyhSpacing.card)
-                    .padding(top = PokyhSpacing.sm, bottom = PokyhSpacing.md),
+                    .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 8.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(colors.cardAlt)
+                    .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 14.dp),
             ) {
                 if (subject.grades.isEmpty()) {
                     Text(
                         text = strings().grades.noSingleGrades,
-                        style = PokyhType.footnote,
+                        style = PokyhType.footnote.copy(fontSize = 14.sp),
                         color = colors.textTertiary,
-                        modifier = Modifier.padding(vertical = PokyhSpacing.sm),
+                        modifier = Modifier.padding(vertical = 8.dp),
                     )
                 } else {
                     subject.grades.sortedByDescending { it.date }.forEach { grade ->
                         GradeDetailRow(grade)
                     }
                 }
-                Spacer(Modifier.size(PokyhSpacing.md))
-                // Right-aligned with a real fill: it's the one action in this panel, and left-
-                // aligned label-only text read as another grade row.
+                Spacer(Modifier.size(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    PokyhSecondaryButton(
+                    WebButton(
                         text = strings().grades.openDetails,
-                        icon = PokyhIcons.chevronRight,
                         onClick = onOpenDetails,
-                        compact = true,
+                        trailing = { Icon(PokyhIcons.chevronRight, contentDescription = null, tint = colors.textPrimary, modifier = Modifier.size(14.dp)) },
                     )
                 }
             }
@@ -548,29 +607,32 @@ private fun SubjectExpandableRow(
 @Composable
 private fun GradeDetailRow(grade: GradeEntry) {
     val colors = PokyhTheme.colors
+    // `.grade-row` on phones: 60dp date, the name, the mark; 12dp apart, 9dp above and below.
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = PokyhSpacing.sm),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.md),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
             text = Fmt.dateShort(grade.date),
-            style = PokyhType.caption.monospacedDigits(),
-            color = colors.textTertiary,
-            modifier = Modifier.width(58.dp),
+            style = PokyhType.caption.copy(fontSize = 13.sp).monospacedDigits(),
+            color = colors.textSecondary,
+            modifier = Modifier.width(60.dp),
         )
         Text(
             text = gradeDisplay(grade),
-            style = PokyhType.footnote,
-            color = colors.textSecondary,
+            style = PokyhType.footnote.copy(fontSize = 14.5.sp, fontWeight = FontWeight(550)),
+            color = colors.textPrimary,
             modifier = Modifier.weight(1f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Text(
             text = Fmt.num(grade.markDisplayValue),
-            style = PokyhType.headline.monospacedDigits(),
-            color = bandColor(gradeBand(grade.markDisplayValue)),
+            style = PokyhType.headline.copy(fontSize = 15.5.sp, fontWeight = FontWeight.ExtraBold).monospacedDigits(),
+            color = valueInk(gradeBand(grade.markDisplayValue)),
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            modifier = Modifier.widthIn(min = 48.dp),
         )
     }
 }

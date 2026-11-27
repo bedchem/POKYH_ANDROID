@@ -47,6 +47,9 @@ enum class MascotFocus { User, Password }
 
 enum class MascotEventKind { Autofill, Error, Tap }
 
+/** The step of the first-run intro the mascot is on (IntroFlow.kt), when no field has the focus. */
+enum class IntroScene { Welcome, Search, Searching, SearchTyping, SearchFound, SearchNone, Picked, Choose, Saved, ReactSchool, ReactUser, ReactPassword, Angry }
+
 /** Something that happened, numbered so the same kind twice still counts twice. */
 data class MascotEvent(val kind: MascotEventKind, val n: Long)
 
@@ -60,6 +63,8 @@ data class LoginMascotState(
     val event: MascotEvent? = null,
     /** Back on the saved accounts (the Lock screen): it waves and says so. */
     val welcomeBack: Boolean = false,
+    /** On the intro: its own look per step (a wave, the magnifier, a cheer). */
+    val scene: IntroScene? = null,
 )
 
 private enum class Phase { Surprise, Thumb, Error, Mad }
@@ -72,6 +77,7 @@ private sealed interface Say {
     data object Back : Say
     /** Tapped too often. */
     data object TooMuch : Say
+    data object Saved : Say
 }
 
 private data class Look(val figure: MascotLook, val say: Say? = null)
@@ -145,6 +151,7 @@ private fun lookFor(s: LoginMascotState, phase: Phase?): Look {
             when {
                 name.isNotEmpty() && WordFilter.isOffensive(name) -> angry
                 s.welcomeBack -> Look(MascotLook(pose(Eyes.Happy, 0 to 0, Mouth.Smile, Arms.Wave), wave = true), Say.Back)
+                s.scene != null -> sceneLook(s.scene, s.keys)
                 else -> Look(MascotLook(pose(Eyes.Open, 1 to 0, Mouth.Smile, Arms.Down), blink = true))
             }
         }
@@ -159,6 +166,7 @@ private fun text(t: LoginStrings, say: Say): String = when (say) {
     Say.Angry -> t.mascotAngry
     Say.Back -> t.mascotBack
     Say.TooMuch -> t.mascotTooMuch
+    Say.Saved -> t.mascotSaved
 }
 
 private fun sayKey(say: Say): String = when (say) {
@@ -167,6 +175,7 @@ private fun sayKey(say: Say): String = when (say) {
     Say.Angry -> "angry"
     Say.Back -> "back"
     Say.TooMuch -> "toomuch"
+    Say.Saved -> "saved"
 }
 
 /** The drawing's width: the mascot and room beside it for a bubble on up to three lines. */
@@ -199,13 +208,18 @@ fun LoginMascotBadge(
     val motionKey = when (motion) {
         MascotMotion.Hop -> "h${state.keys}"
         MascotMotion.Bob -> "bob"
-        else -> "$motion${state.event?.n ?: 0}"
+        else -> "$motion${state.scene}${state.event?.n ?: 0}"
     }
-    val speech = look.say?.let { bubble(text(t, it), Mascot.W - 2, 17, BADGE_W - Mascot.W - 4) }
-    val top = minOf(TOP, speech?.let { it.top() - 1 } ?: 0)
-    val layers = buildList {
-        addAll(mascotLayers(look.figure, motionKey, marksBeside = true))
-        if (speech != null) add(PixelLayer(speech, listOf(Px.pop), startKey = "say:${sayKey(look.say)}"))
+    // Built once per look: the sprites are new objects each time, and each new one is turned into
+    // a bitmap again, so rebuilding them on every recomposition (each key, each frame) stuttered.
+    val words = look.say?.let { text(t, it) }
+    val (top, layers) = remember(look, motionKey, words) {
+        val speech = words?.let { bubble(it, Mascot.W - 2, 17, BADGE_W - Mascot.W - 4) }
+        val top = minOf(TOP, speech?.let { it.top() - 1 } ?: 0)
+        top to buildList {
+            addAll(mascotLayers(look.figure, motionKey, marksBeside = true))
+            if (speech != null) add(PixelLayer(speech, listOf(Px.pop), startKey = "say:${look.say?.let { sayKey(it) }}"))
+        }
     }
     val tap = if (onTap != null) {
         Modifier.clickable(
@@ -255,7 +269,7 @@ private fun CenteredMascot(look: Look, state: LoginMascotState, onTap: (() -> Un
     val motionKey = when (motion) {
         MascotMotion.Hop -> "h${state.keys}"
         MascotMotion.Bob -> "bob"
-        else -> "$motion${state.event?.n ?: 0}"
+        else -> "$motion${state.scene}${state.event?.n ?: 0}"
     }
     val tap = if (onTap != null) {
         Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = t.mascotTapLabel, onClick = onTap)
@@ -263,14 +277,42 @@ private fun CenteredMascot(look: Look, state: LoginMascotState, onTap: (() -> Un
         Modifier
     }
     val signs = look.figure.anger || look.figure.mark != null || look.figure.think
-    val speech = look.say?.let { bubbleAbove(text(t, it), Mascot.W / 2, if (signs) TAIL_Y_SIGNS else TAIL_Y, CENTERED_LINE) }
-    val layers = buildList {
-        addAll(mascotLayers(look.figure, motionKey, marksBeside = false))
-        if (speech != null) add(PixelLayer(speech, listOf(Px.pop), startKey = "say:${sayKey(look.say)}"))
+    // Built once per look (see LoginMascotBadge): new sprites would be turned into bitmaps again.
+    val words = look.say?.let { text(t, it) }
+    val layers = remember(look, motionKey, words, signs) {
+        val speech = words?.let { bubbleAbove(it, Mascot.W / 2, if (signs) TAIL_Y_SIGNS else TAIL_Y, CENTERED_LINE) }
+        buildList {
+            addAll(mascotLayers(look.figure, motionKey, marksBeside = false))
+            if (speech != null) add(PixelLayer(speech, listOf(Px.pop), startKey = "say:${look.say?.let { sayKey(it) }}"))
+        }
     }
     PixelArt(
         scene = PixelScene(CENTERED_W, Mascot.H - CENTERED_TOP, layers, x0 = Mascot.W / 2 - CENTERED_W / 2, y0 = CENTERED_TOP),
         modifier = modifier.widthIn(max = maxWidth).then(tap),
         clip = false,
     )
+}
+
+/**
+ * The intro's own looks: a jump and a wave to say hello, the magnifier while the school is
+ * looked for (thinking once the search runs), a curious look at the choice of sign-in, and a
+ * cheer with a jump when everything is saved.
+ */
+private fun sceneLook(scene: IntroScene, keys: Int = 0): Look = when (scene) {
+    IntroScene.Welcome -> Look(MascotLook(pose(Eyes.Happy, 0 to 0, Mouth.Grin, Arms.Wave), wave = true, motion = MascotMotion.Jump), Say.Hello)
+    IntroScene.Search -> Look(MascotLook(pose(Eyes.Open, 1 to 0, Mouth.Smile, Arms.Lens), blink = true))
+    IntroScene.Searching -> Look(MascotLook(pose(Eyes.Open, -1 to 0, Mouth.O, Arms.Lens), think = true))
+    // The web's school search (Hallway.tsx): the magnifier while typing, "!" with results,
+    // "?" when there are none; a cheer with a jump once one is picked.
+    IntroScene.SearchTyping -> Look(MascotLook(pose(Eyes.Open, 1 to 0, Mouth.O, Arms.Lens), motion = if (keys > 0) MascotMotion.Hop else MascotMotion.Bob))
+    IntroScene.SearchFound -> Look(MascotLook(pose(Eyes.Open, 1 to 0, Mouth.Grin, Arms.Lens), mark = '!', motion = if (keys > 0) MascotMotion.Hop else MascotMotion.Bob))
+    IntroScene.SearchNone -> Look(MascotLook(pose(Eyes.Open, 0 to 0, Mouth.Wobble, Arms.Lens), mark = '?', motion = if (keys > 0) MascotMotion.Hop else MascotMotion.Bob))
+    IntroScene.Picked -> Look(MascotLook(pose(Eyes.Happy, 0 to 0, Mouth.Grin, Arms.Cheer), motion = MascotMotion.Jump))
+    IntroScene.Choose -> Look(MascotLook(pose(Eyes.Open, 0 to 1, Mouth.Smile, Arms.Down), blink = true, mark = '?'))
+    IntroScene.Saved -> Look(MascotLook(pose(Eyes.Happy, 0 to 0, Mouth.Grin, Arms.Cheer), motion = MascotMotion.Jump), Say.Saved)
+    // The answers between the questions: the headline under it says the words, so no bubble.
+    IntroScene.ReactSchool -> Look(MascotLook(pose(Eyes.Happy, 0 to 0, Mouth.Grin, Arms.Thumb), motion = MascotMotion.Jump))
+    IntroScene.ReactUser -> Look(MascotLook(pose(Eyes.Happy, 0 to 0, Mouth.Grin, Arms.Wave), wave = true, motion = MascotMotion.Jump))
+    IntroScene.ReactPassword -> Look(MascotLook(pose(Eyes.Closed, 0 to 0, Mouth.Smile, Arms.Cover), motion = MascotMotion.Hop))
+    IntroScene.Angry -> Look(MascotLook(pose(Eyes.Angry, 0 to 0, Mouth.Frown, Arms.Fists), anger = true, motion = MascotMotion.Fume))
 }

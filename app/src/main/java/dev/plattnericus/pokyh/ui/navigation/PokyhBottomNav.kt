@@ -41,28 +41,31 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import dev.plattnericus.pokyh.ui.theme.PokyhDecorative
 
 data class PokyhNavItem(val tab: AppTab, val icon: ImageVector, val label: String, val badge: Int = 0)
 
+/** The web's bar (components/app/shell.module.css, `.bar`): a squircle, 40px at the top. */
+private val BarShape = dev.plattnericus.pokyh.ui.theme.TopSmoothCornerShape(40.dp)
+
+/** The web's active pill (`.pill`): a fixed 64 × 32 in the periwinkle tone. */
+private val PillWidth = 64.dp
+private val PillHeight = 32.dp
+private val TabHeight = 56.dp
+
 /**
- * The bottom navigation.
- *
- * Its own [PokyhColors.nav] fill, anchored to the bottom edge with only its top corners rounded
- * ([PokyhShapes.topXxl]) and lifted at [PokyhElevation.level3] — so it reads as a surface the
- * page slides *under*, which is exactly what it is. It used to share the card fill, and a card
- * ending right above it merged with it into one shape; the separate tone keeps them apart
- * without a border.
- *
- * Selection is shown three ways at once, which is deliberate — a tab bar is the one control in
- * the app where "where am I" must be readable at a glance and without color vision:
- *
- *   1. the glyph swaps from Phosphor regular to its filled twin ([PokyhIcons.navSelected]),
- *   2. an accent-tinted tile appears behind it,
- *   3. the label goes accent-colored and its width animates a touch wider.
- *
- * Labels stay visible on every tab rather than only the selected one: with five destinations,
- * icon-only tabs are a guessing game, and a row of labels reads as a designed bar instead of a
- * row of loose glyphs.
+ * The bottom navigation, as the web's phone bar (components/app/AppShell.tsx, `BottomBar`):
+ * the nav tone, its top corners rounded, 8dp around the tabs. The current tab sits on a
+ * periwinkle pill that glides from tab to tab (the web's shared `layoutId`), its glyph filled
+ * and the glyph and label in periwinkle ink; the others in the quiet ink-3.
  */
 @Composable
 fun PokyhBottomNav(
@@ -71,24 +74,88 @@ fun PokyhBottomNav(
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    val colors = PokyhTheme.colors
+    val tone = PokyhDecorative.periwinkle(colors.isDark)
+    val index = items.indexOfFirst { it.tab == selected }
+    // The pill's place, in tabs: animated so it glides rather than jumps (the web's GLIDE spring).
+    val at by animateFloatAsState(
+        targetValue = index.coerceAtLeast(0).toFloat(),
+        animationSpec = spring(dampingRatio = 0.86f, stiffness = 520f),
+        label = "tabPill",
+    )
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .floatingSurface(shape = PokyhShapes.topXxl, color = PokyhTheme.colors.nav)
-            .clip(PokyhShapes.topXxl)
+            .shadow(14.dp, BarShape, clip = false, ambientColor = Color.Black.copy(alpha = 0.25f), spotColor = Color.Black.copy(alpha = 0.25f))
+            .background(colors.nav, BarShape)
             .navigationBarsPadding()
-            .padding(horizontal = PokyhSpacing.sm, vertical = PokyhSpacing.md),
-        horizontalArrangement = Arrangement.spacedBy(PokyhSpacing.xs),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(8.dp),
     ) {
-        items.forEach { item ->
-            PokyhBottomNavItem(
-                item = item,
-                isSelected = item.tab == selected,
-                onClick = { onSelect(item.tab) },
-                modifier = Modifier.weight(1f),
+        val tabWidth = maxWidth / items.size.coerceAtLeast(1)
+        if (index >= 0) {
+            // The pill sits where the tab's own pill box is: centred, 3dp from the tab's top.
+            Box(
+                Modifier
+                    .offset(x = tabWidth * at + (tabWidth - PillWidth) / 2, y = (TabHeight - PillHeight - 4.dp - 14.dp) / 2)
+                    .size(PillWidth, PillHeight)
+                    .background(tone.fill, PokyhShapes.pill),
             )
         }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            items.forEach { item ->
+                BarTab(item = item, isSelected = item.tab == selected, onClick = { onSelect(item.tab) }, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** One tab of the bar (the web's `.tab`): the 64 × 32 pill box, 4dp, the label; 56dp tall. */
+@Composable
+private fun BarTab(item: PokyhNavItem, isSelected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = PokyhTheme.colors
+    val tone = PokyhDecorative.periwinkle(colors.isDark)
+    val ink by animateColorAsState(
+        targetValue = if (isSelected) tone.ink else colors.textTertiary,
+        animationSpec = tween(250),
+        label = "tabInk",
+    )
+    Column(
+        modifier = modifier
+            .height(TabHeight)
+            // No rounded clip here: it cut the corners off a label as wide as the tab
+            // ("Stundenplan"), and the tab has no ripple for it to shape anyway.
+            .selectable(
+                selected = isSelected,
+                onClick = onClick,
+                role = Role.Tab,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+    ) {
+        Box(Modifier.size(PillWidth, PillHeight), contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = if (isSelected) PokyhIcons.navSelected(item.icon) else item.icon,
+                contentDescription = item.label,
+                tint = ink,
+                modifier = Modifier.size(22.dp),
+            )
+            if (item.badge > 0) {
+                // The web's badge: its left edge 8dp right of the middle, 2dp from the top, ringed in the bar's tone.
+                dev.plattnericus.pokyh.ui.components.UnreadBadge(
+                    count = item.badge,
+                    ring = colors.nav,
+                    modifier = Modifier.align(Alignment.TopStart).offset(x = PillWidth / 2 + 8.dp - 2.dp, y = (-3).dp),
+                )
+            }
+        }
+        PokyhFittedText(
+            text = item.label,
+            style = PokyhType.navLabel.copy(fontSize = 11.5.sp, lineHeight = 14.sp, fontWeight = FontWeight(650), letterSpacing = (-0.005).em),
+            color = ink,
+            maxLines = 1,
+        )
     }
 }
 
@@ -153,9 +220,6 @@ fun PokyhSideNav(
     }
 }
 
-private val IndicatorWidthUnselected = 44.dp
-private val IndicatorWidthSelected = 58.dp
-
 @Composable
 private fun PokyhBottomNavItem(
     item: PokyhNavItem,
@@ -167,21 +231,18 @@ private fun PokyhBottomNavItem(
     val interactionSource = remember { MutableInteractionSource() }
     val spec = tween<Color>(PokyhMotion.durationStandard)
 
+    val tone = PokyhDecorative.periwinkle(colors.isDark)
     val indicatorColor by animateColorAsState(
-        targetValue = if (isSelected) colors.accentTint else Color.Transparent,
+        targetValue = if (isSelected) tone.fill else tone.fill.copy(alpha = 0f),
         animationSpec = spec,
         label = "navIndicator",
     )
     val contentColor by animateColorAsState(
-        targetValue = if (isSelected) colors.accentText else colors.textTertiary,
+        targetValue = if (isSelected) tone.ink else colors.textTertiary,
         animationSpec = spec,
         label = "navContent",
     )
-    val indicatorWidth by animateDpAsState(
-        targetValue = if (isSelected) IndicatorWidthSelected else IndicatorWidthUnselected,
-        animationSpec = tween(PokyhMotion.durationStandard),
-        label = "navIndicatorWidth",
-    )
+    val indicatorWidth = PillWidth
 
     Column(
         modifier = modifier
@@ -219,7 +280,7 @@ private fun PokyhBottomNavItem(
         Spacer(Modifier.size(PokyhSpacing.xs))
         PokyhFittedText(
             text = item.label,
-            style = PokyhType.navLabel,
+            style = PokyhType.navLabel.copy(fontSize = 11.5.sp, lineHeight = 14.sp, fontWeight = FontWeight(650)),
             color = contentColor,
             maxLines = 1,
         )

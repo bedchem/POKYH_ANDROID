@@ -146,13 +146,15 @@ private data class TeacherRow(
     val removed: Boolean,
 )
 
-/** The web's three tones for a grade: from 6.4 sage, from 6 butter, below blush. */
+/** The web's three tones for a grade, on the school's scale: passing well sage, just passing butter, failing blush. */
 @Composable
 private fun gradeTone(v: Double): dev.plattnericus.pokyh.ui.theme.DecorativeTone {
     val dark = PokyhTheme.colors.isDark
+    val s = dev.plattnericus.pokyh.core.util.GradeScales.current
     return when {
-        v >= 6.4 -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.sage(dark)
-        v >= 6 -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.butter(dark)
+        !s.certain -> dev.plattnericus.pokyh.ui.theme.DecorativeTone(PokyhTheme.colors.cardAlt, PokyhTheme.colors.textPrimary)
+        s.passesWell(v) -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.sage(dark)
+        s.passes(v) -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.butter(dark)
         else -> dev.plattnericus.pokyh.ui.theme.PokyhDecorative.blush(dark)
     }
 }
@@ -206,8 +208,8 @@ private fun GradeSubjectContent(
     }
     val liveAvg = remember(liveValues) { GradeMath.averageOf(liveValues) }
     val teacherAvg = remember(teacherRows) { GradeMath.averageOf(teacherRows.map { it.value }) }
-    val positive = remember(liveValues) { liveValues.count { it >= 6 } }
-    val negative = remember(liveValues) { liveValues.count { it < 6 } }
+    val positive = remember(liveValues) { liveValues.count { dev.plattnericus.pokyh.core.util.GradeScales.current.passes(it) } }
+    val negative = remember(liveValues) { liveValues.size - positive }
     val hasDraft = !draft.isEmpty
 
     // Chronologically: the teacher's grades by date, the own ones after them.
@@ -216,7 +218,9 @@ private fun GradeSubjectContent(
             draft.customGrades.map { TrendPoint(it, null, dev.plattnericus.pokyh.core.i18n.I18n.s.grades.ownGrade, own = true) }
     }
     val trend = remember(chronological) {
-        if (chronological.size < 2) 0 else (chronological.last().value - chronological.first().value).let { if (kotlin.math.abs(it) < 0.3) 0 else if (it > 0) 1 else -1 }
+        // Rising means getting better: a falling number where 1 is best (core/util/GradeScale.kt).
+        val sign = if (dev.plattnericus.pokyh.core.util.GradeScales.current.higherIsBetter) 1 else -1
+        if (chronological.size < 2) 0 else ((chronological.last().value - chronological.first().value) * sign).let { if (kotlin.math.abs(it) < 0.3) 0 else if (it > 0) 1 else -1 }
     }
     val targetResult = remember(targetInput, liveValues) { GradeMath.target(targetInput, liveValues) }
     val wide = dev.plattnericus.pokyh.ui.theme.widthClass() != dev.plattnericus.pokyh.ui.theme.WidthClass.Compact

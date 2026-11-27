@@ -25,6 +25,9 @@ import dev.plattnericus.pokyh.data.model.AbsenceReason
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,6 +94,8 @@ class AbsencesViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val appState: AppState,
     private val untisClient: UntisClient,
+    /** Excusing, reporting, the sent excuses and the letter: through pokyh-backend where it can ([AppState.backendOrDevice]). */
+    private val viaBackend: dev.plattnericus.pokyh.data.backend.UntisViaBackend,
     private val offlineStore: OfflineStore,
 ) : ViewModel() {
 
@@ -177,6 +182,22 @@ class AbsencesViewModel @Inject constructor(
     init {
         checkCanReport()
         loadExcuses()
+        // Opened while the unlock was still offline (the saved session has no WebUntis token, so
+        // the list, the report button and the excuses all came back empty): once the background
+        // sign-in brings the token, load them for real instead of waiting for an app restart.
+        viewModelScope.launch {
+            appState.session
+                .map { it?.username to it?.bearerToken?.isNotEmpty() }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { (_, hasToken) ->
+                    if (hasToken == true) {
+                        load()
+                        checkCanReport()
+                        loadExcuses()
+                    }
+                }
+        }
     }
 
     private fun checkCanReport() {
@@ -195,7 +216,11 @@ class AbsencesViewModel @Inject constructor(
             val key = "excuses-${session.studentId}"
             val serializer = ListSerializer(UntisClient.SentExcuse.serializer())
             runCatching { offlineStore.peek(key, serializer) }.getOrNull()?.let { _excuses.value = it.value }
-            runCatching { offlineStore.load(key, serializer) { untisClient.sentExcuses(session) } }
+            runCatching {
+                offlineStore.load(key, serializer) {
+                    appState.backendOrDevice({ token -> viaBackend.sentExcuses(session, token) }) { untisClient.sentExcuses(session) }
+                }
+            }
                 .getOrNull()?.let { _excuses.value = it.value }
         }
     }
@@ -205,7 +230,9 @@ class AbsencesViewModel @Inject constructor(
         val session = appState.session.value ?: return
         _form.value = FormState()
         viewModelScope.launch {
-            val meta = runCatching { untisClient.absenceMeta(session) }.getOrNull()
+            val meta = runCatching {
+                appState.backendOrDevice({ token -> viaBackend.absenceMeta(session, token) }) { untisClient.absenceMeta(session) }
+            }.getOrNull()
             val today = dev.plattnericus.pokyh.core.util.todayLocalDate()
             val week = runCatching {
                 offlineStore.peek(
@@ -252,7 +279,11 @@ class AbsencesViewModel @Inject constructor(
     }
 
     fun report(startDate: Int, startTime: Int, endDate: Int, endTime: Int, reasonId: Int, text: String) =
-        save { session -> untisClient.reportAbsence(session, startDate, startTime, endDate, endTime, reasonId, text.trim()) }
+        save { session ->
+            appState.backendOrDevice({ token ->
+                viaBackend.reportAbsence(session, token, startDate, startTime, endDate, endTime, reasonId, text.trim())
+            }) { untisClient.reportAbsence(session, startDate, startTime, endDate, endTime, reasonId, text.trim()) }
+        }
 
     /**
      * "Entschuldigen": a message with the reason and the note to the class teachers, in the app's
@@ -265,7 +296,10 @@ class AbsencesViewModel @Inject constructor(
         _form.value = _form.value.copy(saving = true, error = null)
         viewModelScope.launch {
             try {
-                val result = untisClient.excuseByMessage(session, absences, reason, text.trim(), I18n.lang.value)
+                val lang = I18n.lang.value
+                val result = appState.backendOrDevice({ token ->
+                    viaBackend.excuse(session, token, absences, reason, text.trim(), lang)
+                }) { untisClient.excuseByMessage(session, absences, reason, text.trim(), lang) }
                 _form.value = _form.value.copy(saving = false, done = true, excuse = result)
                 result.excuse?.let { sent -> _sentNow.value = _sentNow.value + sent }
                 // Saved in WebUntis instead (no message allowed): the absence itself changed.
@@ -304,6 +338,55 @@ class AbsencesViewModel @Inject constructor(
         }
     }
 
+    // ── Löschen ──────────────────────────────────────────────────────────────
+    // An upcoming absence that is not excused yet (one reported by mistake) can be deleted: asked
+    // once more on its row, then sent. The backend checks the same with WebUntis.
+
+    /** The row being deleted: asked ([busy] false), on its way, or with the reason it failed. */
+    data class DeleteState(val id: Int, val busy: Boolean = false, val error: String? = null)
+
+    private val _deleting = MutableStateFlow<DeleteState?>(null)
+    val deleting: StateFlow<DeleteState?> = _deleting.asStateFlow()
+
+    /** Whether [a] may be deleted: not begun yet, not excused, and the account may report absences. */
+    fun canDelete(a: AbsenceEntry): Boolean {
+        if (!_canReport.value || a.isExcused) return false
+        val now = java.time.LocalDateTime.now()
+        val nowNum = (now.year * 10000L + now.monthValue * 100 + now.dayOfMonth) * 10000 + now.hour * 100 + now.minute
+        return a.startDate * 10000L + a.startTime > nowNum
+    }
+
+    fun askDelete(a: AbsenceEntry) {
+        if (_deleting.value?.busy == true) return
+        _deleting.value = DeleteState(a.id)
+    }
+
+    fun cancelDelete() {
+        if (_deleting.value?.busy != true) _deleting.value = null
+    }
+
+    fun confirmDelete(a: AbsenceEntry) {
+        val session = appState.session.value ?: return
+        if (_deleting.value?.busy == true) return
+        _deleting.value = DeleteState(a.id, busy = true)
+        viewModelScope.launch {
+            try {
+                appState.backendOrDevice({ token -> viaBackend.deleteAbsences(session, token, listOf(a.id)) }) {
+                    untisClient.deleteAbsences(session, listOf(a.id))
+                }
+                _deleting.value = null
+                _absences.value = _absences.value.filterNot { it.id == a.id }
+                recompute()
+                load()
+            } catch (e: AppError) {
+                if (e.isSessionExpired) appState.handleSessionExpired()
+                _deleting.value = DeleteState(a.id, error = if (e.isSessionExpired) I18n.s.common.sessionExpired else e.message ?: I18n.s.absences.delFailed)
+            } catch (e: Exception) {
+                _deleting.value = DeleteState(a.id, error = I18n.s.absences.delFailed)
+            }
+        }
+    }
+
     fun formError(message: String) {
         _form.value = _form.value.copy(error = message)
     }
@@ -317,7 +400,12 @@ class AbsencesViewModel @Inject constructor(
         _letter.value = LetterState(loading = true)
         viewModelScope.launch {
             try {
-                val file = untisClient.excuseLetter(session, y * 10000 + 901, (y + 1) * 10000 + 630, open)
+                val start = y * 10000 + 901
+                val end = (y + 1) * 10000 + 630
+                val name = "${I18n.s.absences.letter} $y-${"%02d".format((y + 1) % 100)}.pdf"
+                val file = appState.backendOrDevice({ token ->
+                    viaBackend.excuseLetter(session, token, start, end, open, name)
+                }) { untisClient.excuseLetter(session, start, end, open) }
                 _letter.value = LetterState()
                 onFile(file)
             } catch (e: AppError) {

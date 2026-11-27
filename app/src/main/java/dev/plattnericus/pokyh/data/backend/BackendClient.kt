@@ -514,7 +514,6 @@ class BackendClient @Inject constructor(
         dishCache.removeAll()
         ratingsCache.removeAll()
         _ratingUpdates.value = emptyMap()
-        subjectImageCache.removeAll()
     }
 
     /**
@@ -627,102 +626,6 @@ class BackendClient @Inject constructor(
 
     private suspend fun readDishesFromDisk(): List<Dish>? =
         diskCache.read(dishDiskKey, String.serializer())?.let { parseDishes(it) }
-
-    // ── Fach-Bilder ─────────────────────────────────────────────────────────
-    //
-    // Das Backend hat für viele Fächer ein Titelbild. Es liefert aber KEINEN Platzhalter für
-    // Fächer ohne Bild — ein Abruf auf einen unbekannten Key endet im Fehler. Deshalb wird
-    // zuerst die Liste der vorhandenen Keys geholt und erst dann eine Bild-URL gebaut; genau so
-    // macht es auch das Web-Frontend (`api.subjectImages`).
-
-    @Serializable
-    private data class SubjectImageRow(val subject: String)
-
-    /** Lange TTL: die Liste ändert sich, wenn das Backend neue Bilder generiert — also selten. */
-    private val subjectImageCache = TtlCache<String, Set<String>>(ttlMillis = 6 * 60 * 60 * 1000L)
-    private val subjectImageKey = "subject-images"
-    private val subjectImageMutex = Mutex()
-
-    /**
-     * Die Fach-Keys, für die ein Bild existiert. Leer bei jedem Fehler — ein fehlendes Bild ist
-     * kein Fehlerzustand, den ein Screen anzeigen müsste.
-     */
-    suspend fun subjectImageKeys(): Set<String> {
-        subjectImageCache.get(subjectImageKey)?.let { return it }
-        return subjectImageMutex.withLock {
-            subjectImageCache.get(subjectImageKey)?.let { return@withLock it }
-            val keys = runCatching {
-                decode<List<SubjectImageRow>>(request(Config.Routes.subjectImages))
-                    .map { it.subject.lowercase().trim() }
-                    .toSet()
-            }.getOrDefault(emptySet())
-            subjectImageCache.set(subjectImageKey, keys)
-            keys
-        }
-    }
-
-    /**
-     * Der Cache-Key eines Fachs: bevorzugt der Langname, sonst das Kürzel — kleingeschrieben und
-     * getrimmt. Muss exakt der Bildung im Web-Frontend entsprechen, sonst zeigen die beiden Apps
-     * unterschiedliche (oder gar keine) Bilder für dasselbe Fach.
-     */
-    fun subjectImageKeyOf(subjectLong: String, subjectName: String): String =
-        (subjectLong.ifBlank { subjectName }).lowercase().trim()
-
-    /**
-     * Die Bild-URL zu einem Key.
-     *
-     * OHNE `?apiKey=`-Query-Parameter: diese Route akzeptiert den Schlüssel ausschließlich als
-     * Header und antwortet sonst mit
-     * `400 {"error":"Use X-API-Key header for this route"}`. (Das Web-Frontend hängt den Key an
-     * die Query, weil ein `<img src>` keine Header setzen kann — auf Android kann der
-     * Image-Loader das, also wird hier der Weg genommen, den der Server tatsächlich unterstützt.)
-     *
-     * Aufrufer laden die URL mit [apiKeyHeaderName]/[apiKeyHeaderValue] als Header, siehe
-     * `LessonDetailSheet`.
-     */
-    fun subjectImageUrl(key: String): String =
-        Config.backendURL + Config.Routes.subjectImages + "/" + key.urlEncoded()
-
-    /** Header-Name des Backend-API-Schlüssels — für Anfragen, die nicht über [request] laufen
-     * (Bild-Loads). */
-    val apiKeyHeaderName: String get() = "X-API-Key"
-
-    /** Header-Wert dazu. Liegt hier statt in der UI, damit `BuildConfig` nicht quer durch die
-     * Schichten gelesen wird. */
-    val apiKeyHeaderValue: String get() = BuildConfig.BACKEND_API_KEY
-
-    /**
-     * Meldet dem Backend, welche Fächer es an dieser Schule gibt, damit es fehlende Bilder
-     * nachgenerieren kann. Best effort und höchstens einmal pro Prozess: das ist ein Hinweis an
-     * den Server, kein Feature dieser App.
-     */
-    suspend fun reportSubjects(entries: List<Pair<String, String>>) {
-        if (subjectsReported || entries.isEmpty()) return
-        subjectsReported = true
-        val unique = LinkedHashMap<String, JsonObject>()
-        for ((shortName, longName) in entries) {
-            if (shortName.isBlank() && longName.isBlank()) continue
-            val key = subjectImageKeyOf(longName, shortName)
-            if (key.isEmpty() || unique.containsKey(key)) continue
-            unique[key] = buildJsonObject {
-                put("key", key)
-                put("longName", longName.ifBlank { shortName })
-                put("shortName", shortName)
-            }
-        }
-        if (unique.isEmpty()) return
-        val payload = buildJsonObject {
-            putJsonArray("subjects") { unique.values.forEach { add(it) } }
-        }
-        runCatching {
-            request(Config.Routes.subjectImages + "/report", method = "POST", jsonBody = payload.toString())
-        }
-        // A fresh report may have produced new images, so the key list is no longer current.
-        subjectImageCache.remove(subjectImageKey)
-    }
-
-    private var subjectsReported = false
 
     // ── Bewertungen ─────────────────────────────────────────────────────────
 

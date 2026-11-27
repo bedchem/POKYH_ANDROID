@@ -3,6 +3,7 @@ package dev.plattnericus.pokyh.ui.grades
 import dev.plattnericus.pokyh.data.model.GradeEntry
 import dev.plattnericus.pokyh.data.model.SubjectGrades
 import kotlin.math.PI
+import kotlin.math.roundToInt
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -100,17 +101,22 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
         .flatMap { s -> s.grades.map { Flat(it, s.subjectName) } }
         .sortedBy { it.entry.date }
 
+    // The school's scale (core/util/GradeScale.kt): in Germany or Austria 1 is the best mark.
+    val scale = dev.plattnericus.pokyh.core.util.GradeScales.current
     val values = allGrades.map { it.entry.markDisplayValue }.filter { it > 0 }
     val overallAvg = if (values.isEmpty()) 0.0 else values.sum() / values.size
-    val bestGrade = values.maxOrNull() ?: 0.0
+    val bestGrade = values.reduceOrNull { a, b -> scale.better(a, b) } ?: 0.0
     val latestGradeDate = allGrades.lastOrNull()?.entry?.date ?: 0
 
-    val pos = values.count { it >= 6 }
-    val neg = values.count { it < 6 }
+    val pos = values.count { scale.passes(it) }
+    val neg = values.size - pos
     val passRate = if (values.isEmpty()) 0.0 else pos.toDouble() / values.size * 100
 
-    val distribution = MutableList(10) { 0 }
-    values.forEach { v -> distribution[gradeBucket(v) - 1] += 1 }
+    // One bucket per whole mark of the scale (1 to 10, 1 to 6, 0 to 15 points).
+    val lowest = scale.min.roundToInt()
+    val buckets = scale.max.roundToInt() - lowest + 1
+    val distribution = MutableList(buckets) { 0 }
+    values.forEach { v -> distribution[(gradeBucket(v) - lowest).coerceIn(0, buckets - 1)] += 1 }
     val modeIdx = distribution.indexOf(distribution.max())
 
     val sortedVals = values.sorted()
@@ -156,13 +162,17 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
     // Y is scaled to the data's own range (padded), not to 1..10 — otherwise a spread of 6.8 to
     // 7.1 renders as a flat line.
     val validAvgs = cumulativeAvgs.filter { it > 0 }
-    val minA = validAvgs.minOrNull() ?: 1.0
-    val maxA = validAvgs.maxOrNull() ?: 10.0
+    val minA = validAvgs.minOrNull() ?: scale.min
+    val maxA = validAvgs.maxOrNull() ?: scale.max
     val rangePad = max(0.4, (maxA - minA) * 0.3)
-    val dataMin = max(1.0, minA - rangePad)
-    val dataMax = min(10.0, maxA + rangePad)
-    fun toSparkY(v: Double): Float =
-        if (dataMax == dataMin) 30f else (54 - ((v - dataMin) / (dataMax - dataMin)) * 48).toFloat()
+    val dataMin = max(scale.min, minA - rangePad)
+    val dataMax = min(scale.max, maxA + rangePad)
+    // Better is up on every scale (where 1 is best, a falling average climbs).
+    fun toSparkY(v: Double): Float {
+        if (dataMax == dataMin) return 30f
+        val t = (v - dataMin) / (dataMax - dataMin)
+        return (54 - (if (scale.higherIsBetter) t else 1 - t) * 48).toFloat()
+    }
 
     val sparkXs = cumulativeAvgs.indices.map { i ->
         if (cumulativeAvgs.size <= 1) 100f else (i.toFloat() / (cumulativeAvgs.size - 1)) * SparkGeometry.WIDTH
@@ -196,7 +206,7 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
         .take(3)
         .map { RecentGradeItem(it.entry.id, it.subjectName, it.entry.markDisplayValue, it.entry.date) }
 
-    val donutSegments = buildDonutSegments(distribution, values.size)
+    val donutSegments = buildDonutSegments(distribution, values.size, lowest, scale.higherIsBetter)
 
     return GradesDashboard(
         allCount = allGrades.size,
@@ -208,7 +218,7 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
         neg = neg,
         passRate = passRate,
         distribution = distribution,
-        mode = modeIdx + 1,
+        mode = modeIdx + lowest,
         median = median,
         sigma = sigma,
         delta = delta,
@@ -227,10 +237,10 @@ internal fun buildGradesDashboard(subjects: List<SubjectGrades>, today: LocalDat
  * around the exact half.
  */
 /** The whole grade a value counts as: rounded half up, as the web's `Math.round` (6,5 → 7). */
-internal fun gradeBucket(value: Double): Int = kotlin.math.floor(value + 0.5).toInt().coerceIn(1, 10)
+internal fun gradeBucket(value: Double): Int = kotlin.math.floor(value + 0.5).toInt()
 
-/** Walks grades 10 → 1 so the ring reads best-first clockwise from the top, like the web. */
-private fun buildDonutSegments(distribution: List<Int>, total: Int): List<DonutSegment> {
+/** Walks the marks best-first (10 → 1 in Italy, 1 → 6 in Germany) so the ring reads best-first clockwise from the top, like the web. */
+private fun buildDonutSegments(distribution: List<Int>, total: Int, lowest: Int, higherIsBetter: Boolean): List<DonutSegment> {
     if (total == 0) return emptyList()
     val gap = 0.035f
     val outerEdge = DonutGeometry.RADIUS + DonutGeometry.STROKE / 2 + 1
@@ -239,10 +249,11 @@ private fun buildDonutSegments(distribution: List<Int>, total: Int): List<DonutS
 
     val segments = mutableListOf<DonutSegment>()
     var startAngle = (-PI / 2).toFloat()
-    for (i in 9 downTo 0) {
+    val order = if (higherIsBetter) distribution.indices.reversed() else distribution.indices
+    for (i in order) {
         val count = distribution[i]
         if (count == 0) continue
-        val grade = i + 1
+        val grade = i + lowest
         val sweep = max(0.01f, (count.toFloat() / total) * (PI * 2).toFloat() - gap)
         val midAngle = startAngle + sweep / 2
         segments += DonutSegment(
@@ -267,13 +278,15 @@ private fun polar(radius: Float, angle: Float): Pair<Float, Float> =
  * ≥9 excellent, ≥6 positive, >4 negative, else critical. Distinct from the continuous
  * [dev.plattnericus.pokyh.ui.theme.gradeColor] ramp, which is for a single grade's own tint.
  */
-enum class GradeBand { Excellent, Positive, Negative, Critical }
+enum class GradeBand { Excellent, Positive, Negative, Critical, Neutral }
 
-fun gradeBand(value: Double): GradeBand = when {
-    value >= 9 -> GradeBand.Excellent
-    value >= 6 -> GradeBand.Positive
-    value > 4 -> GradeBand.Negative
-    else -> GradeBand.Critical
+/** The mark on the school's scale (core/util/GradeScale.kt); [GradeBand.Neutral] when the scale is not known for sure. */
+fun gradeBand(value: Double, scale: dev.plattnericus.pokyh.core.util.GradeScale = dev.plattnericus.pokyh.core.util.GradeScales.current): GradeBand = when {
+    !scale.certain -> GradeBand.Neutral
+    scale.isExcellent(value) -> GradeBand.Excellent
+    scale.passes(value) -> GradeBand.Positive
+    scale.isCritical(value) -> GradeBand.Critical
+    else -> GradeBand.Negative
 }
 
 /** `fmtUntisDateLong` — "21. Mai 2026" for a `YYYYMMDD` int. */

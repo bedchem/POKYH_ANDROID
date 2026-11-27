@@ -12,6 +12,9 @@ class MessagesStrings(
     val attachmentFailed: String,
     val noAppFor: (String) -> String,
     val download: String,
+    /** After saving an attachment: where it went. */
+    val savedToDownloads: (String) -> String,
+    val saveFailed: String,
     val message: String,
     val reply: String,
     val replyFailed: String,
@@ -86,6 +89,13 @@ class MessagesStrings(
     val tapToReload: String,
     val needsConfirm: String,
     val openExternally: String,
+    /** The file viewer's ⋮ menu: its name, sharing and printing. */
+    val fileActions: String,
+    /** The notification after a file was saved to Downloads; tapping it opens the file. */
+    val downloadedTitle: String,
+    val downloadedTap: String,
+    val shareFile: String,
+    val printFile: String,
 )
 
 val MessagesDe = MessagesStrings(
@@ -99,6 +109,8 @@ val MessagesDe = MessagesStrings(
     attachmentFailed = "Der Anhang konnte nicht geladen werden.",
     noAppFor = { "Keine App gefunden, die „$it“ öffnen kann." },
     download = "Herunterladen",
+    savedToDownloads = { "„$it“ unter Downloads gespeichert" },
+    saveFailed = "Speichern hat nicht geklappt",
     message = "Nachricht",
     reply = "Antworten",
     replyFailed = "Antwort konnte nicht vorbereitet werden.",
@@ -173,6 +185,11 @@ val MessagesDe = MessagesStrings(
     tapToReload = "Tippen zum erneuten Laden",
     needsConfirm = "Bestätigung erbeten",
     openExternally = "In anderer App öffnen",
+    fileActions = "Weitere Aktionen",
+    downloadedTitle = "Heruntergeladen",
+    downloadedTap = "Tippen zum Öffnen",
+    shareFile = "Teilen",
+    printFile = "Drucken",
 )
 
 val MessagesIt = MessagesStrings(
@@ -186,6 +203,8 @@ val MessagesIt = MessagesStrings(
     attachmentFailed = "Impossibile caricare l’allegato.",
     noAppFor = { "Nessuna app trovata che possa aprire «$it»." },
     download = "Scarica",
+    savedToDownloads = { "«$it» salvato in Download" },
+    saveFailed = "Salvataggio non riuscito",
     message = "Messaggio",
     reply = "Rispondi",
     replyFailed = "Impossibile preparare la risposta.",
@@ -260,6 +279,11 @@ val MessagesIt = MessagesStrings(
     tapToReload = "Tocca per ricaricare",
     needsConfirm = "Conferma richiesta",
     openExternally = "Apri in un’altra app",
+    fileActions = "Altre azioni",
+    downloadedTitle = "Scaricato",
+    downloadedTap = "Tocca per aprire",
+    shareFile = "Condividi",
+    printFile = "Stampa",
 )
 
 val MessagesEn = MessagesStrings(
@@ -273,6 +297,8 @@ val MessagesEn = MessagesStrings(
     attachmentFailed = "The attachment couldn’t be loaded.",
     noAppFor = { "No app found that can open “$it”." },
     download = "Download",
+    savedToDownloads = { "\"$it\" saved to Downloads" },
+    saveFailed = "Couldn't save it",
     message = "Message",
     reply = "Reply",
     replyFailed = "The reply couldn’t be prepared.",
@@ -347,4 +373,9 @@ val MessagesEn = MessagesStrings(
     tapToReload = "Tap to reload",
     needsConfirm = "Confirmation requested",
     openExternally = "Open in another app",
+    fileActions = "More actions",
+    downloadedTitle = "Downloaded",
+    downloadedTap = "Tap to open",
+    shareFile = "Share",
+    printFile = "Print",
 )

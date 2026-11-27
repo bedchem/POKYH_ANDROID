@@ -133,7 +133,15 @@ class MensaViewModel @Inject constructor(
     private val appState: AppState,
     private val backendClient: BackendClient,
     private val dishRatingsLive: DishRatingsLive,
+    private val imagePrefetcher: dev.plattnericus.pokyh.core.images.ImagePrefetcher,
 ) : ViewModel() {
+
+    /** The photos load as soon as the menu is in, not one by one as the plates scroll into view. */
+    private fun preload(groups: List<MensaSchedule.DayGroup>) {
+        val photos = groups.flatMap { g -> g.dishes }.mapNotNull { it.imageUrl }
+        imagePrefetcher.prefetch(photos.mapNotNull { dev.plattnericus.pokyh.core.images.DishImages.url(it, dev.plattnericus.pokyh.core.images.DishImages.PLATE) })
+        groups.firstOrNull()?.dishes?.mapNotNull { dev.plattnericus.pokyh.core.images.DishImages.url(it.imageUrl, dev.plattnericus.pokyh.core.images.DishImages.TABLE) }?.let { imagePrefetcher.prefetch(it) }
+    }
     val mensaAvailable: StateFlow<Boolean?> = backendClient.mensaAvailable
 
     data class UiState(
@@ -171,7 +179,7 @@ class MensaViewModel @Inject constructor(
                     if (state.groups.isNotEmpty()) {
                         state
                     } else {
-                        state.copy(groups = MensaSchedule.days(cached), loading = false, ratings = state.ratings)
+                        state.copy(groups = MensaSchedule.days(cached), loading = false, ratings = state.ratings).also { preload(it.groups) }
                     }
                 }
                 seedRatingsFromCache(cached.map { it.id })
@@ -215,6 +223,7 @@ class MensaViewModel @Inject constructor(
             runCatching { backendClient.dishes() }
                 .onSuccess { dishes ->
                     _ui.update { it.copy(loading = false, error = null, groups = MensaSchedule.days(dishes)) }
+                    preload(_ui.value.groups)
                     loadRatings(dishes.map { it.id })
                 }
                 .onFailure { e ->

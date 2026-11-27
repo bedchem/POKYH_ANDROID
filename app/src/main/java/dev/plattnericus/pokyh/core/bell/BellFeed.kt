@@ -131,11 +131,11 @@ object BellFeed {
         val recent = mutableListOf<Item>()
 
         for (g in input.grades.orEmpty()) {
-            // When it was entered, when that is known; else the day of the exam.
-            val entered = g.enteredAt > 0
-            val at = if (entered) g.enteredAt else untisDay(g.date)
+            // The day of the exam, as the web dates it (lib/bell-feed.ts): both platforms then
+            // hold the same items, and "seen" (synced through the account) matches on both.
+            val at = untisDay(g.date)
             if (g.value <= 0 || at < since || at > now) continue
-            recent += Item("grade:${g.id}", Source.Grades, Kind.Grade, at, allDay = !entered, title = g.subject, sub = g.examType, target = BellTarget.Grade(g.lessonId), value = g.value)
+            recent += Item("grade:${g.id}", Source.Grades, Kind.Grade, at, allDay = true, title = g.subject, sub = g.examType, target = BellTarget.Grade(g.lessonId), value = g.value)
         }
         for (m in input.messages.orEmpty()) {
             if (m.sent <= 0 || m.sent < since) continue

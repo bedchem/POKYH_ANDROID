@@ -12,7 +12,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -43,7 +49,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.plattnericus.pokyh.core.i18n.I18n
 import dev.plattnericus.pokyh.core.i18n.Lang
 import dev.plattnericus.pokyh.core.i18n.strings
-import dev.plattnericus.pokyh.ui.components.HeaderDropdown
 import dev.plattnericus.pokyh.ui.components.TabRootAvatarSize
 import dev.plattnericus.pokyh.ui.navigation.PokyhDestinations
 import dev.plattnericus.pokyh.ui.settings.WebSignInDialogs
@@ -66,10 +71,11 @@ private const val WebsiteUrl = "https://pokyh.com"
 private val RowShape = RoundedCornerShape(12.dp)
 
 /**
- * The account as a picture in a tab's header that opens a small menu dropping down from it — the
- * web's `AccountMenu` (components/app/AppShell.tsx) as phones show it: the account on top, then
- * the profile, the settings, light or dark, the public start page, scanning the website's QR code
- * to sign in there, signing out (the first tap asks, the second signs out) and the language.
+ * The account as a picture in a tab's header that opens the account page over the whole screen, as
+ * apps do: the account on top, then the profile, the settings, light or dark, scanning the
+ * website's QR code to sign in there, signing out (the first tap asks, the second signs out) and
+ * the language — the entries of the web's `AccountMenu` (components/app/AppShell.tsx). Back or
+ * the close button leave it.
  */
 @Composable
 fun AccountMenuButton(
@@ -82,6 +88,7 @@ fun AccountMenuButton(
     val session by viewModel.session.collectAsStateWithLifecycle()
     val lang by I18n.lang.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
+    var avatarOpen by remember { mutableStateOf(false) }
     val webSignIn = rememberWebSignIn(viewModel.appState)
 
     // Signing out: the first tap asks, the second does it; the question goes away by itself.
@@ -122,25 +129,38 @@ fun AccountMenuButton(
             CurrentUserAvatar()
         }
 
-        HeaderDropdown(expanded = open, onDismiss = { open = false }) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+        FullScreenPage(open = open, onDismiss = { open = false }, closeLabel = strings().common.close) {
+            // The account, large, as the top of an account page.
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                CurrentUserAvatar(size = 40.dp)
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        name.ifEmpty { "…" },
-                        style = PokyhType.callout.bold(),
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(detail, style = PokyhType.caption, color = colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // Tapped, the picture opens large, as on the profile.
+                val avatarInteraction = remember { MutableInteractionSource() }
+                Box(
+                    Modifier
+                        .clip(PokyhShapes.pill)
+                        .clickable(
+                            interactionSource = avatarInteraction,
+                            indication = null,
+                            enabled = session != null,
+                            role = Role.Image,
+                            onClickLabel = name,
+                        ) { avatarOpen = true },
+                ) {
+                    CurrentUserAvatar(size = 84.dp)
                 }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    name.ifEmpty { "…" },
+                    style = PokyhType.title2.bold(),
+                    color = colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(detail, style = PokyhType.subheadline, color = colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            MenuGap()
             MenuRow(PokyhIcons.profile, t.profile) { go(PokyhDestinations.PROFILE) }
             MenuRow(PokyhIcons.settings, t.settings) { go(PokyhDestinations.SETTINGS) }
             MenuRow(if (colors.isDark) PokyhIcons.themeLight else PokyhIcons.themeDark, t.actionTheme) {
@@ -173,11 +193,60 @@ fun AccountMenuButton(
         }
     }
     WebSignInDialogs(webSignIn)
+    session?.takeIf { avatarOpen }?.let { s -> AvatarViewerDialog(session = s, onDismiss = { avatarOpen = false }) }
+}
+
+/**
+ * A page over the whole screen (a dialog without the platform's margins), drawn under the status
+ * and navigation bars and padded clear of them, with a close button on top. Back closes it.
+ */
+@Composable
+private fun FullScreenPage(open: Boolean, onDismiss: () -> Unit, closeLabel: String, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    if (!open) return
+    val colors = PokyhTheme.colors
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.bg)
+                .windowInsetsPadding(WindowInsets.systemBars),
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+            ) {
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    // The same grey button as "back" in the app's headers.
+                    dev.plattnericus.pokyh.ui.components.PokyhIconButton(
+                        icon = PokyhIcons.close,
+                        contentDescription = closeLabel,
+                        onClick = onDismiss,
+                        tinted = true,
+                    )
+                }
+                content()
+            }
+            // The app's version at the very bottom, so the page doesn't end in empty space.
+            Column(
+                Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("v${dev.plattnericus.pokyh.BuildConfig.VERSION_NAME}", style = PokyhType.footnote, color = colors.textTertiary)
+                Text("POKYH", style = PokyhType.footnote.semibold(), color = colors.textTertiary)
+            }
+        }
+    }
 }
 
 /** The menu's groups stand apart by space, not by a rule. */
 @Composable
-private fun MenuGap() = Spacer(Modifier.height(6.dp))
+private fun MenuGap() = Spacer(Modifier.height(14.dp))
 
 @Composable
 private fun MenuRow(
@@ -193,7 +262,7 @@ private fun MenuRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(52.dp)
             .clip(RowShape)
             .background(fill)
             .pressHighlight(interaction, RowShape)
@@ -205,11 +274,11 @@ private fun MenuRow(
         if (busy) {
             CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = colors.textSecondary)
         } else {
-            Icon(icon, contentDescription = null, tint = if (danger) Brand.danger else colors.textSecondary, modifier = Modifier.size(19.dp))
+            Icon(icon, contentDescription = null, tint = if (danger) Brand.danger else colors.textSecondary, modifier = Modifier.size(21.dp))
         }
         Text(
             text,
-            style = PokyhType.subheadline.semibold().copy(fontSize = 14.5.sp),
+            style = PokyhType.body.semibold(),
             color = if (danger) Brand.danger else colors.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

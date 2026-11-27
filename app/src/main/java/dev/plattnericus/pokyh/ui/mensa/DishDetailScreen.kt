@@ -66,8 +66,8 @@ fun DishDetailScreen(
         containerColor = colors.bg,
         topBar = {
             PokyhTopBar(
-                // The name stands large under the picture, as on the web.
-                title = dish?.category?.ifEmpty { null } ?: strings().mensa.dish,
+                // As on the web: only the way back above the photo; the name stands large under it.
+                title = strings().mensa.backToPlan,
                 nav = TopBarNav.Back(onBack),
             )
         },
@@ -84,16 +84,8 @@ fun DishDetailScreen(
                         .padding(bottom = PokyhSpacing.xxxl),
                     verticalArrangement = Arrangement.spacedBy(PokyhSpacing.section),
                 ) {
-                    // The photo large; without one the dish on its pixel plate, as on the web.
-                    if (!dish.imageUrl.isNullOrBlank()) {
-                        DishImage(
-                            dish = dish,
-                            height = 210.dp,
-                            modifier = Modifier.clip(PokyhShapes.xxl).fadeIn(),
-                        )
-                    } else {
-                        PixelPlate(style = foodStyleOf(dish), seed = dish.id, modifier = Modifier.fillMaxWidth().fadeIn())
-                    }
+                    // The photo large, square and whole; without one the dish on its pixel plate, as on the web.
+                    DishPhoto(dish, Modifier.fadeIn())
 
                     // The day it's served, the name, the stars and kcal, the text and the diet tags.
                     Column(

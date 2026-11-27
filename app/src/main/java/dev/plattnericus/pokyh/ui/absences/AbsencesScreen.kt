@@ -115,6 +115,7 @@ fun AbsencesScreen(
     val canReport by viewModel.canReport.collectAsStateWithLifecycle()
     val letter by viewModel.letter.collectAsStateWithLifecycle()
     val excuses by viewModel.excuses.collectAsStateWithLifecycle()
+    val deleting by viewModel.deleting.collectAsStateWithLifecycle()
     var yearMenuExpanded by remember { mutableStateOf(false) }
     var reporting by remember { mutableStateOf(false) }
     var reportOpened by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
@@ -279,6 +280,11 @@ fun AbsencesScreen(
                                                 sent = sent,
                                                 canExcuse = canReport && !a.isExcused && sent == null,
                                                 onExcuse = { excusing = a to listOf(title, subText(a)).filter { it.isNotEmpty() }.joinToString(" · ") },
+                                                canDelete = canReport && viewModel.canDelete(a),
+                                                deleteState = deleting?.takeIf { it.id == a.id },
+                                                onAskDelete = { viewModel.askDelete(a) },
+                                                onConfirmDelete = { viewModel.confirmDelete(a) },
+                                                onCancelDelete = viewModel::cancelDelete,
                                                 onOpenMessage = { id -> onNavigate(PokyhDestinations.messageDetail(id, reply = false)) },
                                                 onOpenInTimetable = { viewModel.openInTimetable(a.startDate) },
                                             )
@@ -533,6 +539,12 @@ private fun AbsenceRow(
     sent: UntisClient.SentExcuse?,
     canExcuse: Boolean,
     onExcuse: () -> Unit,
+    /** An upcoming absence that is not excused yet: "Löschen", asked once more on the row. */
+    canDelete: Boolean,
+    deleteState: AbsencesViewModel.DeleteState?,
+    onAskDelete: () -> Unit,
+    onConfirmDelete: () -> Unit,
+    onCancelDelete: () -> Unit,
     onOpenMessage: (Int) -> Unit,
     onOpenInTimetable: () -> Unit,
 ) {
@@ -590,6 +602,7 @@ private fun AbsenceRow(
                     }
                     if (line.isNotEmpty()) Text(line, style = PokyhType.footnote, color = colors.textSecondary)
                 }
+                deleteState?.error?.let { Text(it, style = PokyhType.footnote.semibold(), color = Brand.danger) }
             }
         }
         FlowRow(
@@ -618,6 +631,24 @@ private fun AbsenceRow(
             if (canExcuse) {
                 val p = PokyhDecorative.periwinkle(colors.isDark)
                 StatusChip(text = t.exAction, icon = null, fill = p.fill, ink = p.ink, onClick = onExcuse)
+            }
+            if (canDelete) {
+                if (deleteState != null && deleteState.error == null) {
+                    // Asked once more on the row; nothing goes before the second tap.
+                    StatusChip(
+                        text = strings().absences.delConfirm,
+                        icon = PokyhIcons.delete,
+                        fill = Brand.danger,
+                        ink = Color.White,
+                        onClick = if (deleteState.busy) null else onConfirmDelete,
+                    )
+                    if (!deleteState.busy) {
+                        StatusChip(text = t.delCancel, icon = null, fill = colors.cardAlt, ink = colors.textPrimary, onClick = onCancelDelete)
+                    }
+                } else {
+                    val b = PokyhDecorative.blush(colors.isDark)
+                    StatusChip(text = t.delAction, icon = PokyhIcons.delete, fill = b.fill, ink = b.ink, onClick = onAskDelete)
+                }
             }
             StatusChip(text = t.timetableShort, icon = PokyhIcons.timetable, fill = colors.cardAlt, ink = colors.textPrimary, onClick = onOpenInTimetable)
         }

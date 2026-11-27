@@ -74,7 +74,7 @@ class PokyhNotifications @Inject constructor(
                     body = body,
                     group = MESSAGE_GROUP,
                     number = unread.size,
-                    route = PokyhDestinations.messageDetail(m.id),
+                    route = PokyhDestinations.messageDetail(m.id, reply = true),
                 )
             }
             // A summary only earns its place once there are several — one message plus a summary
@@ -91,7 +91,37 @@ class PokyhNotifications @Inject constructor(
             }
         }
         prefsStore.setSeenMessageIds(seen + messages.map { it.id })
+        // Read meanwhile (here or on another device, the website): their notifications go.
+        messages.filter { it.isRead }.forEach { cancel(idFor("msg", it.id)) }
+        settleGroup(MESSAGE_GROUP, idFor("msg-summary", 0))
         return unread.size
+    }
+
+    /** The message is open: its notification goes (and the stack header, when it was the last). */
+    fun dismissMessage(id: Int) {
+        cancel(idFor("msg", id))
+        settleGroup(MESSAGE_GROUP, idFor("msg-summary", 0))
+    }
+
+    /** The grades were looked at (the Noten tab or a subject): the new-grade notifications go. */
+    fun dismissGrades() {
+        runCatching {
+            val nm = context.getSystemService(NotificationManager::class.java)
+            nm.activeNotifications.filter { it.notification.group == GRADE_GROUP }.forEach { nm.cancel(it.id) }
+        }
+    }
+
+    private fun cancel(id: Int) {
+        runCatching { NotificationManagerCompat.from(context).cancel(id) }
+    }
+
+    /** A group's stack header goes with its last notification. */
+    private fun settleGroup(group: String, summaryId: Int) {
+        runCatching {
+            val nm = context.getSystemService(NotificationManager::class.java)
+            val left = nm.activeNotifications.count { it.notification.group == group && it.id != summaryId }
+            if (left == 0) nm.cancel(summaryId)
+        }
     }
 
     // ── Neue Noten erkennen → Hinweis ───────────────────────────────────────
@@ -106,6 +136,7 @@ class PokyhNotifications @Inject constructor(
                         idFor("grade", grade.id),
                         dev.plattnericus.pokyh.core.i18n.I18n.s.system.newGrade,
                         "${subject.subjectName}: ${Fmt.num(grade.markDisplayValue)}",
+                        group = GRADE_GROUP,
                         route = PokyhDestinations.gradeSubject(subject.lessonId, SchoolDates.currentSchoolYear),
                     )
                 }
@@ -245,6 +276,9 @@ class PokyhNotifications @Inject constructor(
 
         /** Groups all message notifications into one collapsible stack. */
         private const val MESSAGE_GROUP = "pokyh_messages"
+
+        /** The new-grade notifications, so looking at the grades clears them together. */
+        private const val GRADE_GROUP = "pokyh_grades"
 
         /** [Brand.accent] as an ARGB int — the accent tint the system applies to the small icon
          * and the notification's accent line. Duplicated as a literal because this class is
